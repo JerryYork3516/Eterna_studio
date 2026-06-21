@@ -5,6 +5,9 @@ import { useCanvasStore } from "@/store/canvas-store";
 
 type CanvasNodeData = {
   schemaNode: WorkflowNode;
+  viewLabel?: string;
+  viewIndex?: number;
+  groupLabel?: string;
 };
 
 function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
@@ -17,8 +20,8 @@ function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
 
 export function LayerContainerNode({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
-  const { schemaNode } = data as CanvasNodeData;
-  const label = translate(language, schemaNode.title_key, schemaNode.title_fallback);
+  const { schemaNode, viewLabel, viewIndex, groupLabel } = data as CanvasNodeData;
+  const label = viewLabel ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const moduleTier = typeof schemaNode.data?.module_tier === "string" ? schemaNode.data.module_tier : null;
   const reviewStatus =
@@ -30,10 +33,14 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
   return (
     <div className={`layer-node lock-${schemaNode.lock_level} ${moduleTier ? `tier-${moduleTier}` : ""} ${selected ? "is-selected" : ""}`}>
       <Handle type="target" position={Position.Top} id="p_in" className="flow-handle" />
+      {groupLabel ? <div className="layer-node__group">{groupLabel}</div> : null}
       <div className="layer-node__header">
         <div>
           <div className="layer-node__eyebrow">{translate(language, "node.type.layer_container")}</div>
-          <div className="layer-node__title">{label}</div>
+          <div className="layer-node__title">
+            {viewIndex ? <span>L{viewIndex}</span> : null}
+            {label}
+          </div>
         </div>
         <div className="layer-node__badges">
           {moduleTier ? <span className="tier-pill">{moduleTier}</span> : null}
@@ -51,6 +58,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
         <span>{translate(language, "field.review")}</span>
         <strong>{reviewStatus}</strong>
       </div>
+      <Handle type="target" position={Position.Left} id="p_left_in" className="flow-handle flow-handle-left" />
       <Handle type="source" position={Position.Bottom} id="p_out" className="flow-handle" />
     </div>
   );
