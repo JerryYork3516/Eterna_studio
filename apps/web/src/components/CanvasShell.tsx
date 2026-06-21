@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Background,
   Controls,
@@ -25,8 +25,10 @@ const nodeTypes = {
 };
 
 const libraryNodeTypes: NodeType[] = ["input", "transform", "model", "agent", "review", "output", "export"];
+const fallbackTemplateTypes = ["blank", "persona_builder", "agent", "knowledge_pipeline", "review_pipeline"];
 
 type BottomTab = "logs" | "artifacts" | "preview";
+type DrawerId = "layers" | "inspector" | BottomTab;
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 
 type LayerSummary = {
@@ -95,6 +97,8 @@ function makeFlowNode(schemaNode: WorkflowNode, offset?: { x: number; y: number 
 export function CanvasShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
+  const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
+  const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(false);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [workspaceTabs, setWorkspaceTabs] = useState<string[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
@@ -132,6 +136,16 @@ export function CanvasShell() {
     () => nodes.find((node) => node.node_id === selectedNodeId) ?? null,
     [nodes, selectedNodeId]
   );
+  const templateOptions = useMemo(() => {
+    const loadedTypes = new Set(templates.map((template) => template.template_type));
+    const mergedTypes = [...templates.map((template) => template.template_type)];
+    for (const templateType of fallbackTemplateTypes) {
+      if (!loadedTypes.has(templateType)) {
+        mergedTypes.push(templateType);
+      }
+    }
+    return mergedTypes;
+  }, [templates]);
 
   const layerNodes = useMemo(
     () =>
@@ -314,6 +328,7 @@ export function CanvasShell() {
       setValidation(result);
       appendLog(`${t("status.validated")}: ${result.package.status}`);
       setBottomTab("logs");
+      setActiveDrawer("logs");
     } catch (error) {
       appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
     }
@@ -331,6 +346,7 @@ export function CanvasShell() {
       setArtifacts(runArtifacts);
       appendLog(`${t("status.mockRun")}: ${String(result.run.status ?? "-")}`);
       setBottomTab("artifacts");
+      setActiveDrawer("artifacts");
     } catch (error) {
       appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
     }
@@ -347,6 +363,7 @@ export function CanvasShell() {
       setExportPreview(result.preview);
       appendLog(`${t("status.exportPreview")}: ${result.preview.export_kind}`);
       setBottomTab("preview");
+      setActiveDrawer("preview");
     } catch (error) {
       appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
     }
@@ -382,6 +399,9 @@ export function CanvasShell() {
       setActiveWorkspaceId(layer.node.node_id);
       setWorkspaceMode(mode);
       setWorkspaceTabs((tabs) => (tabs.includes(layer.node.node_id) ? tabs : [...tabs, layer.node.node_id]));
+      if (mode === "right") {
+        setActiveDrawer("inspector");
+      }
       if (mode === "window") {
         setFloatingLayerIds((ids) => (ids.includes(layer.node.node_id) ? ids : [...ids, layer.node.node_id]));
       }
@@ -422,6 +442,16 @@ export function CanvasShell() {
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       setSelectedNode(node.id);
+      const layer = layerById.get(node.id);
+      if (layer) {
+        setActiveLayerId(layer.node.node_id);
+      }
+    },
+    [layerById, setSelectedNode]
+  );
+
+  const handleNodeDoubleClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
       const layer = layerById.get(node.id);
       if (layer) {
         openLayerWorkspace(layer, "inline");
@@ -468,22 +498,47 @@ export function CanvasShell() {
   const rightDockLayer = workspaceMode === "right" ? selectedLayer : null;
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const inlineLayer = workspaceMode === "inline" ? selectedLayer : null;
+  const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
+  const toggleDrawer = useCallback(
+    (drawer: DrawerId) => {
+      setActiveDrawer((current) => (current === drawer ? null : drawer));
+      if (drawer === "logs" || drawer === "artifacts" || drawer === "preview") {
+        setBottomTab(drawer);
+      }
+    },
+    []
+  );
 
   return (
     <main className="canvas-shell">
       <header className="top-toolbar">
         <div className="brand">
-          <strong>{t("app.title")}</strong>
-          <span>{t("app.subtitle")}</span>
-        </div>
-        <div className="run-bar" aria-label="Export validate mock run">
-          <button onClick={handleSave}>{t("toolbar.save")}</button>
-          <button onClick={handleLoad}>{t("toolbar.load")}</button>
-          <button onClick={handleValidate}>{t("toolbar.validate")}</button>
-          <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
-          <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
+          <div className="brand-copy">
+            <strong>{t("app.title")}</strong>
+            <span>{t("app.subtitle")}</span>
+          </div>
+          <label className="template-select">
+            <span>{t("panel.templates")}</span>
+            <select
+              value={workflow?.template_type ?? "blank"}
+              onChange={(event) => handleTemplateClick(event.target.value)}
+            >
+              {templateOptions.map((templateType) => (
+                <option key={templateType} value={templateType}>
+                  {t(`template.${templateType}`, templateType)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="toolbar-actions">
+          <div className="run-bar" aria-label="Export validate mock run">
+            <button onClick={handleSave}>{t("toolbar.save")}</button>
+            <button onClick={handleLoad}>{t("toolbar.load")}</button>
+            <button onClick={handleValidate}>{t("toolbar.validate")}</button>
+            <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
+            <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
+          </div>
           <label className="language-select">
             <span>{t("toolbar.language")}</span>
             <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
@@ -504,54 +559,34 @@ export function CanvasShell() {
         </div>
       </header>
 
-      <section className="workspace-grid">
-        <aside className="panel left-panel">
+      <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""}`}>
+        <aside className={`panel left-panel ${nodeLibraryCollapsed ? "is-collapsed" : ""}`}>
+          <button className="library-toggle" onClick={() => setNodeLibraryCollapsed((collapsed) => !collapsed)}>
+            {nodeLibraryCollapsed ? ">" : "<"}
+          </button>
           <section className="panel-section">
             <div className="section-title">
-              <h2>{t("panel.nodeLibrary")}</h2>
+              <h2>{nodeLibraryCollapsed ? t("panel.nodeLibrary").slice(0, 1) : t("panel.nodeLibrary")}</h2>
               <span>{libraryNodeTypes.length}</span>
             </div>
-            <div className="node-library">
-              {libraryNodeTypes.map((type) => (
-                <div key={type} className={`library-item node-kind-${type}`}>
-                  <span>{t(`node.type.${type}`, type)}</span>
-                  <small>{type}</small>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="section-title">
-              <h2>{t("panel.layerNavigator", "Layer Navigator")}</h2>
-              <span>{layerSummaries.length}/13</span>
-            </div>
-            <LayerNavigator
-              layers={layerSummaries}
-              activeLayerId={activeLayer?.node.node_id ?? null}
-              collapsedLayerIds={collapsedLayerIds}
-              t={t}
-              onOpen={openLayerWorkspace}
-              onToggle={toggleLayerCollapsed}
-            />
-          </section>
-
-          <section className="panel-section">
-            <div className="section-title">
-              <h2>{t("panel.templates")}</h2>
-            </div>
-            <div className="template-list">
-              {templates.map((template) => (
-                <button
-                  key={template.template_type}
-                  className={workflow?.template_type === template.template_type ? "is-active" : ""}
-                  onClick={() => handleTemplateClick(template.template_type)}
-                  disabled={!apiReady && template.template_type === "persona_builder"}
-                >
-                  {t(`template.${template.template_type}`, template.name)}
-                </button>
-              ))}
-            </div>
+            {nodeLibraryCollapsed ? (
+              <div className="node-library mini">
+                {libraryNodeTypes.map((type) => (
+                  <div key={type} className={`library-item node-kind-${type}`} title={t(`node.type.${type}`, type)}>
+                    <span>{type.slice(0, 1).toUpperCase()}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="node-library">
+                {libraryNodeTypes.map((type) => (
+                  <div key={type} className={`library-item node-kind-${type}`}>
+                    <span>{t(`node.type.${type}`, type)}</span>
+                    <small>{type}</small>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </aside>
 
@@ -572,6 +607,9 @@ export function CanvasShell() {
                 onClose={closeWorkspaceTab}
               />
               <div className={`canvas-stage ${splitLayer ? "is-split" : ""} ${inlineLayer ? "has-inline-workspace" : ""}`}>
+                {inlineLayer ? (
+                  <LayerWorkspacePanel layer={inlineLayer} edges={edges} t={t} mode="inline" onOpen={openLayerWorkspace} />
+                ) : null}
                 <div className="flow-stage">
                   <ReactFlow
                     nodes={flowNodes}
@@ -583,19 +621,17 @@ export function CanvasShell() {
                     onNodesChange={handleNodesChange}
                     onEdgesChange={handleEdgesChange}
                     onNodeClick={handleNodeClick}
+                    onNodeDoubleClick={handleNodeDoubleClick}
                     onPaneClick={handlePaneClick}
                     onNodeDragStop={handleNodeDragStop}
                   >
-                    <Background color="#314158" gap={24} />
+                    <Background color="#3a3a3a" gap={24} />
                     <Controls />
                     <MiniMap pannable zoomable />
                   </ReactFlow>
                 </div>
                 {splitLayer ? (
                   <LayerWorkspacePanel layer={splitLayer} edges={edges} t={t} mode="split" onOpen={openLayerWorkspace} />
-                ) : null}
-                {inlineLayer ? (
-                  <LayerWorkspacePanel layer={inlineLayer} edges={edges} t={t} mode="inline" onOpen={openLayerWorkspace} />
                 ) : null}
               </div>
               {floatingLayerIds.map((id, index) => {
@@ -627,39 +663,148 @@ export function CanvasShell() {
             </div>
           )}
         </section>
+      </section>
 
-        <aside className="panel right-panel">
-          <div className="section-title">
-            <h2>{t("panel.parameters")}</h2>
-            <span>{rightDockLayer ? t("workspace.right", "Right panel") : t("workspace.inspector", "Inspector")}</span>
-          </div>
+      <FloatingDock activeDrawer={activeDrawer} t={t} onToggle={toggleDrawer} />
+
+      {activeDrawer === "layers" ? (
+        <FloatingSidePanel
+          title={t("panel.layerNavigator", "Layer Navigator")}
+          meta={`${layerSummaries.length}/13`}
+          onClose={() => setActiveDrawer(null)}
+        >
+          <LayerNavigator
+            layers={layerSummaries}
+            activeLayerId={activeLayer?.node.node_id ?? null}
+            collapsedLayerIds={collapsedLayerIds}
+            t={t}
+            onOpen={openLayerWorkspace}
+            onToggle={toggleLayerCollapsed}
+          />
+        </FloatingSidePanel>
+      ) : null}
+
+      {activeDrawer === "inspector" ? (
+        <FloatingSidePanel
+          title={t("panel.parameters")}
+          meta={rightDockLayer ? t("workspace.right", "Right panel") : t("workspace.inspector", "Inspector")}
+          onClose={() => setActiveDrawer(null)}
+        >
           {rightDockLayer ? (
             <LayerWorkspacePanel layer={rightDockLayer} edges={edges} t={t} mode="right" onOpen={openLayerWorkspace} />
           ) : (
             <ParameterPanel node={selectedNode} workflow={workflow} t={t} />
           )}
-        </aside>
-      </section>
+        </FloatingSidePanel>
+      ) : null}
 
-      <section className="bottom-panel">
-        <div className="bottom-tabs">
-          <button className={bottomTab === "logs" ? "is-active" : ""} onClick={() => setBottomTab("logs")}>
-            {t("panel.logs")}
-          </button>
-          <button className={bottomTab === "artifacts" ? "is-active" : ""} onClick={() => setBottomTab("artifacts")}>
-            {t("panel.artifacts")}
-          </button>
-          <button className={bottomTab === "preview" ? "is-active" : ""} onClick={() => setBottomTab("preview")}>
-            {t("panel.exportPreview")}
-          </button>
-        </div>
-        {bottomTab === "logs" ? <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} /> : null}
-        {bottomTab === "artifacts" ? (
-          <JsonPanel value={artifacts.length ? artifacts : null} emptyText={t("panel.noArtifacts")} />
-        ) : null}
-        {bottomTab === "preview" ? <JsonPanel value={exportPreview} emptyText={t("panel.noPreview")} /> : null}
-      </section>
+      {outputDrawer ? (
+        <FloatingBottomPanel
+          activeTab={bottomTab}
+          t={t}
+          onTab={(tab) => {
+            setBottomTab(tab);
+            setActiveDrawer(tab);
+          }}
+          onClose={() => setActiveDrawer(null)}
+        >
+          {bottomTab === "logs" ? <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} /> : null}
+          {bottomTab === "artifacts" ? (
+            <JsonPanel value={artifacts.length ? artifacts : null} emptyText={t("panel.noArtifacts")} />
+          ) : null}
+          {bottomTab === "preview" ? <JsonPanel value={exportPreview} emptyText={t("panel.noPreview")} /> : null}
+        </FloatingBottomPanel>
+      ) : null}
     </main>
+  );
+}
+
+function FloatingDock({
+  activeDrawer,
+  t,
+  onToggle
+}: {
+  activeDrawer: DrawerId | null;
+  t: (key: string, fallback?: string) => string;
+  onToggle: (drawer: DrawerId) => void;
+}) {
+  const dockItems: { id: DrawerId; label: string }[] = [
+    { id: "layers", label: t("panel.layerNavigator", "Layers") },
+    { id: "inspector", label: t("workspace.inspector", "Inspector") },
+    { id: "logs", label: t("panel.logs") },
+    { id: "artifacts", label: t("panel.artifacts") },
+    { id: "preview", label: t("panel.exportPreview") }
+  ];
+
+  return (
+    <nav className="floating-dock" aria-label="Floating workspace dock">
+      {dockItems.map((item) => (
+        <button key={item.id} className={activeDrawer === item.id ? "is-active" : ""} onClick={() => onToggle(item.id)}>
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function FloatingSidePanel({
+  title,
+  meta,
+  children,
+  onClose
+}: {
+  title: string;
+  meta?: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="floating-side-panel">
+      <div className="floating-panel-header">
+        <div>
+          <h2>{title}</h2>
+          {meta ? <span>{meta}</span> : null}
+        </div>
+        <button onClick={onClose}>x</button>
+      </div>
+      <div className="floating-panel-body">{children}</div>
+    </aside>
+  );
+}
+
+function FloatingBottomPanel({
+  activeTab,
+  t,
+  children,
+  onTab,
+  onClose
+}: {
+  activeTab: BottomTab;
+  t: (key: string, fallback?: string) => string;
+  children: ReactNode;
+  onTab: (tab: BottomTab) => void;
+  onClose: () => void;
+}) {
+  const tabs: { id: BottomTab; label: string }[] = [
+    { id: "logs", label: t("panel.logs") },
+    { id: "artifacts", label: t("panel.artifacts") },
+    { id: "preview", label: t("panel.exportPreview") }
+  ];
+
+  return (
+    <section className="floating-bottom-panel">
+      <div className="bottom-tabs">
+        {tabs.map((tab) => (
+          <button key={tab.id} className={activeTab === tab.id ? "is-active" : ""} onClick={() => onTab(tab.id)}>
+            {tab.label}
+          </button>
+        ))}
+        <button className="drawer-close" onClick={onClose}>
+          x
+        </button>
+      </div>
+      <div className="bottom-drawer-body">{children}</div>
+    </section>
   );
 }
 
@@ -853,7 +998,7 @@ function LayerWorkspacePanel({
             nodesConnectable={false}
             elementsSelectable={false}
           >
-            <Background color="#243247" gap={18} />
+            <Background color="#383838" gap={18} />
             <Controls />
           </ReactFlow>
         ) : (
