@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { translate } from "@/i18n";
 import type { WorkflowNode } from "@/lib/schema-types";
+import { getNodeDefinition } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
 
 type CanvasNodeData = {
@@ -22,6 +23,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
   const { schemaNode, viewLabel, viewIndex, groupLabel } = data as CanvasNodeData;
   const label = viewLabel ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
+  const typeLabel = getNodeDefinition(schemaNode.type)?.label ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const moduleTier = typeof schemaNode.data?.module_tier === "string" ? schemaNode.data.module_tier : null;
   const reviewStatus =
@@ -36,7 +38,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
       {groupLabel ? <div className="layer-node__group">{groupLabel}</div> : null}
       <div className="layer-node__header">
         <div>
-          <div className="layer-node__eyebrow">{translate(language, "node.type.layer_container")}</div>
+          <div className="layer-node__eyebrow">{typeLabel}</div>
           <div className="layer-node__title">
             {viewIndex ? <span>L{viewIndex}</span> : null}
             {label}

@@ -578,6 +578,7 @@ pre {
 }
 
 .canvas-stage {
+  position: relative;
   display: grid;
   height: calc(100% - 44px);
   min-height: 0;
@@ -1107,121 +1108,6 @@ pre {
   transform: translateY(-1px);
 }
 
-.submodule-card.is-selected {
-  border-color: rgba(122, 162, 247, 0.95);
-  background: linear-gradient(145deg, rgba(42, 43, 46, 0.98), rgba(34, 45, 71, 0.96));
-  box-shadow:
-    0 0 0 1px rgba(122, 162, 247, 0.35),
-    0 0 18px rgba(122, 162, 247, 0.22);
-}
-
-.submodule-tooltip {
-  position: absolute;
-  right: 14px;
-  top: 58px;
-  z-index: 3;
-  display: grid;
-  gap: 4px;
-  max-width: 280px;
-  border: 1px solid rgba(122, 162, 247, 0.26);
-  border-radius: 8px;
-  background: rgba(17, 24, 39, 0.96);
-  box-shadow: var(--shadow);
-  padding: 10px 12px;
-  pointer-events: none;
-}
-
-.submodule-tooltip strong {
-  color: #f8fbff;
-  font-size: 12px;
-}
-
-.submodule-tooltip span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.submodule-selection-indicator {
-  position: absolute;
-  inset: auto 14px 10px auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 12px rgba(122, 162, 247, 0.8);
-}
-
-.workspace-main {
-  position: relative;
-  display: grid;
-  gap: 12px;
-  min-height: 0;
-}
-
-.workspace-main.has-detail-panel {
-  grid-template-columns: minmax(0, 1fr) 260px;
-  align-items: stretch;
-}
-
-.module-detail-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid rgba(122, 162, 247, 0.3);
-  border-radius: 8px;
-  background: rgba(26, 26, 26, 0.88);
-}
-
-.module-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  border-bottom: 1px solid var(--border);
-  padding: 10px 10px 8px;
-}
-
-.module-detail-header p,
-.module-detail-header h4 {
-  margin: 0;
-}
-
-.module-detail-header p {
-  color: var(--muted);
-  font-size: 10px;
-  text-transform: uppercase;
-}
-
-.module-detail-header h4 {
-  color: #f8fbff;
-  font-size: 13px;
-}
-
-.module-detail-header button {
-  width: 28px;
-  min-height: 26px;
-  padding: 0;
-}
-
-.module-detail-body {
-  display: grid;
-  gap: 10px;
-  min-height: 0;
-  overflow: auto;
-  padding: 10px;
-}
-
-.module-detail-placeholder {
-  min-height: 72px;
-  border: 1px dashed rgba(122, 162, 247, 0.28);
-  border-radius: 8px;
-  background: rgba(122, 162, 247, 0.04);
-  color: var(--muted);
-  padding: 12px;
-  font-size: 12px;
-}
-
 .submodule-card.tier-core {
   border-color: rgba(79, 140, 255, 0.72);
 }
@@ -1359,25 +1245,37 @@ pre {
 
 .floating-dock {
   position: absolute;
-  top: 82px;
+  top: calc(50% - 129px);
   right: 16px;
   z-index: 30;
   display: grid;
   gap: 8px;
-  width: 118px;
+  width: 54px;
   border: 1px solid rgba(74, 85, 104, 0.7);
   border-radius: 8px;
   background: rgba(32, 33, 35, 0.9);
   box-shadow: var(--shadow);
   padding: 8px;
   backdrop-filter: blur(16px);
+  cursor: grab;
+  user-select: none;
+}
+
+.floating-dock:active {
+  cursor: grabbing;
 }
 
 .floating-dock button {
+  display: grid;
+  width: 38px;
+  height: 38px;
   justify-content: center;
-  min-height: 30px;
-  padding: 0 8px;
-  font-size: 11px;
+  align-items: center;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .floating-dock button.is-active {
@@ -1614,4 +1512,145 @@ dd {
   .folder-layer {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Embedded in-app module sub-canvas, docked to fill the workspace stage */
+.module-canvas-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #131318;
+  z-index: 30;
+  overflow: hidden;
+}
+.module-canvas-panel__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #26262e;
+  background: #17171d;
+}
+.module-canvas-panel__bar p {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a8a96;
+}
+.module-canvas-panel__bar h3 {
+  margin: 2px 0;
+  font-size: 16px;
+}
+.module-canvas-panel__bar span {
+  font-size: 11px;
+  color: #8a8a96;
+}
+.module-canvas-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+.module-canvas-panel__actions button {
+  background: #1f1f26;
+  color: #e6e6ea;
+  border: 1px solid #34343d;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.module-canvas-panel__actions button:hover {
+  background: #2a2a33;
+}
+.module-canvas-panel__close {
+  font-weight: 600;
+}
+.module-canvas-panel__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  min-height: 0;
+}
+.module-canvas-panel__flow {
+  position: relative;
+  min-height: 0;
+}
+.module-canvas-panel__inspector {
+  border-left: 1px solid #26262e;
+  padding: 14px;
+  overflow: auto;
+  background: #15151a;
+}
+.module-canvas-panel__inspector h4 {
+  margin-top: 0;
+  font-size: 13px;
+}
+.module-canvas-panel__inspector dl {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+}
+.module-canvas-panel__inspector dt {
+  color: #8a8a96;
+  font-size: 11px;
+}
+.module-canvas-panel__inspector dd {
+  margin: 0;
+  font-size: 12px;
+  word-break: break-all;
+}
+.module-canvas-panel__inspector pre {
+  background: #0f0f12;
+  border: 1px solid #26262e;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 11px;
+  overflow: auto;
+}
+.module-canvas-panel__empty {
+  color: #8a8a96;
+  font-size: 12px;
+  padding: 16px 0;
+}
+
+/* Module tab in the workspace tab strip (browser-tab style) */
+.workspace-tabs .tab-strip button.is-module.is-active {
+  border-color: #5b6cff;
+  background: #1f2330;
+}
+
+/* Module tab: Chrome-like drag-reorder + pin-to-left */
+.workspace-tabs .tab-strip button.is-module {
+  cursor: grab;
+}
+.workspace-tabs .tab-strip button.is-module.is-dragging {
+  opacity: 0.5;
+}
+.workspace-tabs .tab-strip button.is-module .module-tab-pin {
+  font-style: normal;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+.workspace-tabs .tab-strip button.is-module .module-tab-pin:hover {
+  opacity: 1;
+}
+
+/* Breadcrumb acts as a "back to main canvas" button */
+.workspace-tabs .breadcrumb-home {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: 4px 8px;
+}
+.workspace-tabs .breadcrumb-home:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.workspace-tabs .breadcrumb-home.is-active {
+  border-color: #5b6cff;
+  background: rgba(91, 108, 255, 0.12);
 }

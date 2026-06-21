@@ -11,6 +11,7 @@ import type {
   WorkflowNode
 } from "@/lib/schema-types";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
+import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 
 type LogLevel = RunLog["level"];
 
@@ -19,9 +20,6 @@ type CanvasState = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   selectedNodeId: string | null;
-  selectedModuleId: string | null;
-  setSelectedModuleId: (moduleId: string | null) => void;
-  __debugStoreId?: string;
   logs: RunLog[];
   artifacts: Artifact[];
   language: Language;
@@ -31,6 +29,7 @@ type CanvasState = {
   exportPreview: ExportPreview | null;
   apiReady: boolean;
   setWorkflow: (workflow: Workflow) => void;
+  hydrateWorkflow: () => void;
   setSelectedNode: (nodeId: string | null) => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   removeEdges: (edgeIds: string[]) => void;
@@ -44,15 +43,11 @@ type CanvasState = {
   clearRunOutput: () => void;
 };
 
-const DEBUG_STORE_ID = "canvas-store-singleton";
-
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   workflow: null,
   nodes: [],
   edges: [],
   selectedNodeId: null,
-  selectedModuleId: null,
-  __debugStoreId: DEBUG_STORE_ID,
   logs: [],
   artifacts: [],
   language: "zh",
@@ -63,32 +58,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   apiReady: false,
   setWorkflow: (workflow) => {
     const safeWorkflow = sanitizeWorkflow(workflow);
+    saveWorkflow(safeWorkflow);
     set({
       workflow: safeWorkflow,
       nodes: safeWorkflow.nodes ?? [],
       edges: safeWorkflow.edges ?? [],
       selectedNodeId: null,
-      selectedModuleId: null,
-      __debugStoreId: DEBUG_STORE_ID,
       currentTemplate: safeWorkflow.template_type,
       language: safeWorkflow.metadata?.ui_language === "en" ? "en" : "zh"
     });
   },
-  setSelectedNode: (nodeId) => set({ selectedNodeId: nodeId && get().nodes.some((node) => node.node_id === nodeId) ? nodeId : null }),
-  setSelectedModuleId: (moduleId) => {
-    console.log("STORE_setSelectedModuleId", { moduleId, current: get().selectedModuleId, storeId: get().__debugStoreId });
-    set({ selectedModuleId: moduleId });
+  hydrateWorkflow: () => {
+    if (get().workflow) {
+      return;
+    }
+    const persisted = loadWorkflow();
+    if (!persisted) {
+      return;
+    }
+    set({
+      workflow: persisted,
+      nodes: persisted.nodes ?? [],
+      edges: persisted.edges ?? [],
+      currentTemplate: persisted.template_type,
+      language: persisted.metadata?.ui_language === "en" ? "en" : "zh"
+    });
   },
+  setSelectedNode: (nodeId) => set({ selectedNodeId: nodeId }),
   updateNodePosition: (nodeId, position) => {
     const nodes = get().nodes.map((node) => (node.node_id === nodeId ? { ...node, position } : node));
     const workflow = get().workflow;
     const safeWorkflow = workflow ? withUpdatedWorkflowGraph(workflow, nodes, get().edges) : workflow;
+    if (safeWorkflow) {
+      saveWorkflow(safeWorkflow);
+    }
     set({
       nodes: safeWorkflow?.nodes ?? nodes,
       edges: safeWorkflow?.edges ?? get().edges,
-      workflow: safeWorkflow,
-      selectedNodeId: get().selectedNodeId && nodes.some((node) => node.node_id === get().selectedNodeId) ? get().selectedNodeId : null,
-      selectedModuleId: get().selectedModuleId && nodes.some((node) => node.node_id === get().selectedModuleId) ? get().selectedModuleId : null
+      workflow: safeWorkflow
     });
   },
   removeEdges: (edgeIds) => {
@@ -98,6 +105,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const workflow = get().workflow;
     const edges = get().edges.filter((edge) => !edgeIds.includes(edge.edge_id));
     const safeWorkflow = workflow ? withUpdatedWorkflowGraph(workflow, get().nodes, edges) : workflow;
+    if (safeWorkflow) {
+      saveWorkflow(safeWorkflow);
+    }
     set({
       nodes: safeWorkflow?.nodes ?? get().nodes,
       edges: safeWorkflow?.edges ?? edges,
@@ -120,16 +130,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       workflow: nextWorkflow,
       nodes: nextWorkflow?.nodes ?? get().nodes,
       edges: nextWorkflow?.edges ?? get().edges,
-      currentTemplate: nextWorkflow?.template_type ?? get().currentTemplate,
-      selectedNodeId:
-        get().selectedNodeId && (nextWorkflow?.nodes ?? get().nodes).some((node) => node.node_id === get().selectedNodeId)
-          ? get().selectedNodeId
-          : null,
-      selectedModuleId:
-        get().selectedModuleId && (nextWorkflow?.nodes ?? get().nodes).some((node) => node.node_id === get().selectedModuleId)
-          ? get().selectedModuleId
-          : null,
-      __debugStoreId: DEBUG_STORE_ID
+      currentTemplate: nextWorkflow?.template_type ?? get().currentTemplate
     });
   },
   setTemplates: (templates) => set({ templates }),

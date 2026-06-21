@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
+  addEdge,
   Background,
   Controls,
   Handle,
   MiniMap,
   Position,
   ReactFlow,
+  useEdgesState,
+  useNodesState,
+  type Connection,
   type Edge,
   type EdgeChange,
   type Node,
@@ -14,9 +18,12 @@ import {
   type OnNodeDrag
 } from "@xyflow/react";
 import { translate, type Language } from "@/i18n";
+import { executeWorkflow } from "@/engine/executeWorkflow";
 import { api } from "@/lib/api";
-import type { Artifact, NodeType, Workflow, WorkflowNode } from "@/lib/schema-types";
+import type { Artifact, NodeType, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
 import { downloadWorkflow, readWorkflowFile, withUpdatedWorkflowGraph } from "@/lib/workflow";
+import { loadModuleCanvas, saveModuleCanvas } from "@/lib/persistence";
+import { getNodeDefinition } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard } from "@/components/canvas/WorkflowNodeCard";
@@ -112,6 +119,10 @@ function dataNumber(node: WorkflowNode, key: string) {
 
 function getLayerIndex(node: WorkflowNode) {
   return dataNumber(node, "layer_index");
+}
+
+function getNodeTypeLabel(type: string, t: (key: string, fallback?: string) => string) {
+  return getNodeDefinition(type)?.label ?? t(`node.type.${type}`, type);
 }
 
 function inferNodeLayerIndex(node: WorkflowNode, layers: WorkflowNode[]) {
@@ -278,7 +289,6 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
 }
 
 export function CanvasShell() {
-  console.log("CanvasShell mount");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
@@ -293,14 +303,13 @@ export function CanvasShell() {
   const [floatingNodeIds, setFloatingNodeIds] = useState<string[]>([]);
   const [draggedNodeIds, setDraggedNodeIds] = useState<Set<string>>(() => new Set());
   const [folderNodePositions, setFolderNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [moduleTabs, setModuleTabs] = useState<string[]>([]);
+  const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
   const {
     workflow,
     nodes,
     edges,
     logs,
-    selectedModuleId,
-    setSelectedModuleId,
-    __debugStoreId,
     artifacts,
     language,
     templates,
@@ -308,6 +317,7 @@ export function CanvasShell() {
     exportPreview,
     apiReady,
     setWorkflow,
+    hydrateWorkflow,
     setSelectedNode,
     updateNodePosition,
     removeEdges,
@@ -323,19 +333,6 @@ export function CanvasShell() {
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
-  const selectedNode = useMemo(
-    () => nodes.find((node) => node.node_id === selectedNodeId) ?? null,
-    [nodes, selectedNodeId]
-  );
-  const selectedModule = useMemo(
-    () => nodes.find((node) => node.node_id === selectedModuleId) ?? null,
-    [nodes, selectedModuleId]
-  );
-  console.log("PANEL_READ_selectedModuleId", {
-    selectedModuleId,
-    storeId: __debugStoreId,
-    selectedModule: selectedModule?.node_id ?? null
-  });
   const templateOptions = useMemo(() => {
     const loadedTypes = new Set(templates.map((template) => template.template_type));
     const mergedTypes = [...templates.map((template) => template.template_type)];
@@ -381,12 +378,60 @@ export function CanvasShell() {
     [language, layerNodes, nodes]
   );
 
+  // UI-only module placeholders are generated client-side (makeUiModuleFlowNodes)
+  // and never live in store.nodes, so resolve the selected node against both sets.
+  const uiModuleNodes = useMemo(
+    () =>
+      layerSummaries.flatMap((layer) =>
+        makeUiModuleFlowNodes(layer).map((node) => (node.data as { schemaNode: WorkflowNode }).schemaNode)
+      ),
+    [layerSummaries]
+  );
+  const selectedNode = useMemo(
+    () =>
+      nodes.find((node) => node.node_id === selectedNodeId) ??
+      uiModuleNodes.find((node) => node.node_id === selectedNodeId) ??
+      null,
+    [nodes, uiModuleNodes, selectedNodeId]
+  );
+  const resolveModuleNode = useCallback(
+    (id: string) => nodes.find((node) => node.node_id === id) ?? uiModuleNodes.find((node) => node.node_id === id) ?? null,
+    [nodes, uiModuleNodes]
+  );
+  const moduleTabItems = useMemo(
+    () =>
+      moduleTabs.map((id) => {
+        const node = resolveModuleNode(id);
+        return { id, label: node ? translate(language, node.title_key, node.title_fallback) : id };
+      }),
+    [language, moduleTabs, resolveModuleNode]
+  );
+  const activeModuleNode = useMemo(
+    () => (activeModuleTabId ? resolveModuleNode(activeModuleTabId) : null),
+    [activeModuleTabId, resolveModuleNode]
+  );
+  const activeModuleSubnodes = useMemo(
+    () =>
+      activeModuleTabId
+        ? nodes.filter(
+            (node) =>
+              node.node_id !== activeModuleTabId &&
+              (node.data?.parent_module === activeModuleTabId || node.data?.parent_layer === activeModuleTabId)
+          )
+        : [],
+    [activeModuleTabId, nodes]
+  );
+
   const layerById = useMemo(
     () => new Map(layerSummaries.map((layer) => [layer.node.node_id, layer])),
     [layerSummaries]
   );
   const selectedLayer = activeWorkspaceId ? layerById.get(activeWorkspaceId) ?? null : null;
   const activeLayer = activeLayerId ? layerById.get(activeLayerId) ?? null : selectedLayer;
+
+  useEffect(() => {
+    hydrateWorkflow();
+  }, [hydrateWorkflow]);
 
   useEffect(() => {
     if (workflow?.template_type) {
@@ -471,12 +516,42 @@ export function CanvasShell() {
 
   const handleChildModulePreview = useCallback(
     (node: WorkflowNode) => {
-      setSelectedNode(node.node_id);
-      setFloatingNodeIds((ids) => (ids.includes(node.node_id) ? ids : [...ids, node.node_id]));
-      appendLog(`${t("status.modulePreview", "Module preview opened")}: ${t(node.title_key, node.title_fallback)}`);
+      setModuleTabs((tabs) => (tabs.includes(node.node_id) ? tabs : [...tabs, node.node_id]));
+      setActiveModuleTabId(node.node_id);
+      setActiveDrawer(null);
+      appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${t(node.title_key, node.title_fallback)}`);
     },
-    [appendLog, setSelectedNode, t]
+    [appendLog, t]
   );
+
+  const closeModuleTab = useCallback(
+    (id: string) => {
+      const index = moduleTabs.indexOf(id);
+      const next = moduleTabs.filter((tabId) => tabId !== id);
+      setModuleTabs(next);
+      setActiveModuleTabId((current) => (current === id ? next[Math.max(0, index - 1)] ?? null : current));
+      appendLog(`${t("status.moduleCanvasClosed", "Module canvas closed")}: ${id}`);
+    },
+    [appendLog, moduleTabs, t]
+  );
+
+  const reorderModuleTab = useCallback((fromId: string, toId: string) => {
+    setModuleTabs((tabs) => {
+      const from = tabs.indexOf(fromId);
+      const to = tabs.indexOf(toId);
+      if (from === -1 || to === -1 || from === to) {
+        return tabs;
+      }
+      const next = [...tabs];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const pinModuleTab = useCallback((id: string) => {
+    setModuleTabs((tabs) => (!tabs.includes(id) || tabs[0] === id ? tabs : [id, ...tabs.filter((tabId) => tabId !== id)]));
+  }, []);
 
   const getLayerDisplayPosition = useCallback(
     (layerNode: WorkflowNode, displayIndex: number) => {
@@ -664,6 +739,8 @@ export function CanvasShell() {
         setFloatingNodeIds([]);
         setDraggedNodeIds(new Set());
         setFolderNodePositions({});
+        setModuleTabs([]);
+        setActiveModuleTabId(null);
         appendLog(`${t("status.loaded")}: ${loaded.name}`);
       } catch (error) {
         appendLog(`${t("error.file")}: ${(error as Error).message}`, "error");
@@ -743,6 +820,8 @@ export function CanvasShell() {
           setFloatingNodeIds([]);
           setDraggedNodeIds(new Set());
           setFolderNodePositions({});
+          setModuleTabs([]);
+          setActiveModuleTabId(null);
           setActiveDrawer("layers");
           appendLog(t("status.personaLoaded"));
         } catch (error) {
@@ -762,7 +841,6 @@ export function CanvasShell() {
   const openLayerWorkspace = useCallback(
     (layer: LayerSummary, mode: WorkspaceMode) => {
       setSelectedNode(layer.node.node_id);
-      setSelectedModuleId(null);
       setActiveLayerId(layer.node.node_id);
       setActiveWorkspaceId(layer.node.node_id);
       setWorkspaceMode(mode);
@@ -813,6 +891,7 @@ export function CanvasShell() {
         return;
       }
       setSelectedNode(node.id);
+      setActiveDrawer("inspector");
       const layer = layerById.get(node.id);
       if (layer) {
         setActiveLayerId(layer.node.node_id);
@@ -899,6 +978,86 @@ export function CanvasShell() {
     [appendLog, t, updateNodePosition]
   );
 
+  // Canvas <-> Workflow JSON sync. Every structural edit rebuilds the workflow
+  // graph and commits it through setWorkflow, so workflow.nodes / workflow.edges
+  // stay the single source of truth.
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!workflow || !connection.source || !connection.target) {
+        return;
+      }
+      const isSchemaNode = (id: string) => nodes.some((node) => node.node_id === id);
+      if (!isSchemaNode(connection.source) || !isSchemaNode(connection.target)) {
+        return;
+      }
+      const newEdge = {
+        edge_id: `edge_${Date.now()}_${Math.round(Math.random() * 10000)}`,
+        source: connection.source,
+        target: connection.target,
+        source_port: connection.sourceHandle || "p_out",
+        target_port: connection.targetHandle || "p_in"
+      } as unknown as WorkflowEdge;
+      setWorkflow(withUpdatedWorkflowGraph(workflow, nodes, [...edges, newEdge]));
+      appendLog(`${t("status.edgeAdded", "Edge added")}: ${connection.source} -> ${connection.target}`);
+    },
+    [appendLog, edges, nodes, setWorkflow, t, workflow]
+  );
+
+  const handleNodesDelete = useCallback(
+    (deleted: Node[]) => {
+      if (!workflow) {
+        return;
+      }
+      const removedIds = new Set(
+        deleted.map((node) => node.id).filter((id) => nodes.some((candidate) => candidate.node_id === id))
+      );
+      if (!removedIds.size) {
+        return;
+      }
+      const nextNodes = nodes.filter((node) => !removedIds.has(node.node_id));
+      const nextEdges = edges.filter((edge) => !removedIds.has(edge.source) && !removedIds.has(edge.target));
+      setWorkflow(withUpdatedWorkflowGraph(workflow, nextNodes, nextEdges));
+      appendLog(`${t("status.nodeDeleted", "Node deleted")}: ${[...removedIds].join(", ")}`);
+    },
+    [appendLog, edges, nodes, setWorkflow, t, workflow]
+  );
+
+  const handleAddNode = useCallback(
+    (type: NodeType) => {
+      if (!workflow) {
+        appendLog(t("error.noWorkflow"), "warn");
+        return;
+      }
+      const category =
+        type === "input"
+          ? "source"
+          : type === "output" || type === "export"
+            ? "sink"
+            : type === "layer_container"
+              ? "container"
+              : "processing";
+      const newNode = {
+        node_id: `nd_${type}_${Date.now()}`,
+        type,
+        category,
+        title_key: `node.type.${type}`,
+        title_fallback: type,
+        position: { x: 160, y: -160 },
+        lock_level: "editable",
+        locale: null,
+        data: {},
+        ports: {
+          inputs: [{ port_id: "p_in", name: "in", direction: "in" }],
+          outputs: [{ port_id: "p_out", name: "out", direction: "out" }]
+        },
+        validation: null
+      } as unknown as WorkflowNode;
+      setWorkflow(withUpdatedWorkflowGraph(workflow, [...nodes, newNode], edges));
+      appendLog(`${t("status.nodeAdded", "Node added")}: ${type}`);
+    },
+    [appendLog, edges, nodes, setWorkflow, t, workflow]
+  );
+
   const rightDockLayer = workspaceMode === "right" ? selectedLayer : null;
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
@@ -981,7 +1140,20 @@ export function CanvasShell() {
             {nodeLibraryCollapsed ? (
               <div className="node-library mini">
                 {libraryNodeTypes.map((type) => (
-                  <div key={type} className={`library-item node-kind-${type}`} title={t(`node.type.${type}`, type)}>
+                  <div
+                    key={type}
+                    role="button"
+                    tabIndex={0}
+                    className={`library-item node-kind-${type}`}
+                    title={getNodeTypeLabel(type, t)}
+                    onClick={() => handleAddNode(type)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleAddNode(type);
+                      }
+                    }}
+                  >
                     <span>{collapsedNodeLabels[type][language]}</span>
                   </div>
                 ))}
@@ -989,8 +1161,20 @@ export function CanvasShell() {
             ) : (
               <div className="node-library">
                 {libraryNodeTypes.map((type) => (
-                  <div key={type} className={`library-item node-kind-${type}`}>
-                    <span>{t(`node.type.${type}`, type)}</span>
+                  <div
+                    key={type}
+                    role="button"
+                    tabIndex={0}
+                    className={`library-item node-kind-${type}`}
+                    onClick={() => handleAddNode(type)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleAddNode(type);
+                      }
+                    }}
+                  >
+                    <span>{getNodeTypeLabel(type, t)}</span>
                     <small>{type}</small>
                   </div>
                 ))}
@@ -1007,13 +1191,21 @@ export function CanvasShell() {
                 tabs={workspaceTabs}
                 activeId={activeWorkspaceId}
                 mode={workspaceMode}
+                moduleTabs={moduleTabItems}
+                activeModuleId={activeModuleTabId}
                 t={t}
                 onSelect={(id) => {
                   setActiveWorkspaceId(id);
                   setActiveLayerId(id);
                   setSelectedNode(id);
+                  setActiveModuleTabId(null);
                 }}
                 onClose={closeWorkspaceTab}
+                onReturnToMain={() => setActiveModuleTabId(null)}
+                onSelectModule={setActiveModuleTabId}
+                onCloseModule={closeModuleTab}
+                onReorderModule={reorderModuleTab}
+                onPinModule={pinModuleTab}
               />
               <div className={`canvas-stage ${splitLayer ? "is-split" : ""}`}>
                 <div className="flow-stage">
@@ -1026,6 +1218,8 @@ export function CanvasShell() {
                     maxZoom={1.6}
                     onNodesChange={handleNodesChange}
                     onEdgesChange={handleEdgesChange}
+                    onConnect={handleConnect}
+                    onNodesDelete={handleNodesDelete}
                     onNodeClick={handleNodeClick}
                     onNodeDoubleClick={handleNodeDoubleClick}
                     onPaneClick={handlePaneClick}
@@ -1045,6 +1239,16 @@ export function CanvasShell() {
                     onOpen={openLayerWorkspace}
                     onSelectNode={handleChildModuleSelect}
                     onPreviewNode={handleChildModulePreview}
+                  />
+                ) : null}
+                {activeModuleNode ? (
+                  <ModuleCanvasPanel
+                    key={activeModuleNode.node_id}
+                    moduleNode={activeModuleNode}
+                    initialSubnodes={activeModuleSubnodes}
+                    language={language}
+                    t={t}
+                    onClose={() => closeModuleTab(activeModuleNode.node_id)}
                   />
                 ) : null}
               </div>
@@ -1126,7 +1330,7 @@ export function CanvasShell() {
           meta={rightDockLayer ? t("workspace.right", "Right panel") : t("workspace.inspector", "Inspector")}
           onClose={() => setActiveDrawer(null)}
         >
-          {rightDockLayer ? (
+          {rightDockLayer && (!selectedNode || selectedNode.type === "layer_container") ? (
             <LayerWorkspacePanel
               layer={rightDockLayer}
               edges={edges}
@@ -1137,7 +1341,12 @@ export function CanvasShell() {
               onPreviewNode={handleChildModulePreview}
             />
           ) : (
-            <ParameterPanel node={selectedNode} workflow={workflow} t={t} />
+            <ParameterPanel
+              node={selectedNode}
+              displayLabel={selectedNode ? layerById.get(selectedNode.node_id)?.displayLabel : undefined}
+              workflow={workflow}
+              t={t}
+            />
           )}
         </FloatingSidePanel>
       ) : null}
@@ -1179,12 +1388,68 @@ function FloatingDock({
     { id: "artifacts", label: t("panel.artifacts") },
     { id: "preview", label: t("panel.exportPreview") }
   ];
+  const dockIcons: Record<DrawerId, string> = {
+    layers: "L",
+    inspector: "I",
+    logs: "R",
+    artifacts: "A",
+    preview: "P"
+  };
+  const [dockOffset, setDockOffset] = useState({ x: 0, y: 0 });
+  const suppressClickRef = useRef(false);
+
+  const handleDockMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startOffset = dockOffset;
+      suppressClickRef.current = false;
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const x = moveEvent.clientX - startX;
+        const y = moveEvent.clientY - startY;
+        if (Math.abs(x) + Math.abs(y) > 3) {
+          suppressClickRef.current = true;
+        }
+        setDockOffset({ x: startOffset.x + x, y: startOffset.y + y });
+      };
+      const handleMouseUp = () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [dockOffset]
+  );
 
   return (
-    <nav className="floating-dock" aria-label="Floating workspace dock">
+    <nav
+      className="floating-dock"
+      style={{ transform: `translate(${dockOffset.x}px, ${dockOffset.y}px)` }}
+      aria-label="Floating workspace dock"
+      onMouseDown={handleDockMouseDown}
+    >
       {dockItems.map((item) => (
-        <button key={item.id} className={activeDrawer === item.id ? "is-active" : ""} onClick={() => onToggle(item.id)}>
-          {item.label}
+        <button
+          key={item.id}
+          className={activeDrawer === item.id ? "is-active" : ""}
+          title={item.label}
+          aria-label={item.label}
+          onClick={() => {
+            if (!suppressClickRef.current) {
+              onToggle(item.id);
+            }
+          }}
+        >
+          <span aria-hidden="true">{dockIcons[item.id]}</span>
         </button>
       ))}
     </nav>
@@ -1313,25 +1578,45 @@ function WorkspaceTabs({
   tabs,
   activeId,
   mode,
+  moduleTabs,
+  activeModuleId,
   t,
   onSelect,
-  onClose
+  onClose,
+  onReturnToMain,
+  onSelectModule,
+  onCloseModule,
+  onReorderModule,
+  onPinModule
 }: {
   layers: Map<string, LayerSummary>;
   tabs: string[];
   activeId: string | null;
   mode: WorkspaceMode;
+  moduleTabs: { id: string; label: string }[];
+  activeModuleId: string | null;
   t: (key: string, fallback?: string) => string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onReturnToMain: () => void;
+  onSelectModule: (id: string) => void;
+  onCloseModule: (id: string) => void;
+  onReorderModule: (fromId: string, toId: string) => void;
+  onPinModule: (id: string) => void;
 }) {
+  const [dragModuleId, setDragModuleId] = useState<string | null>(null);
   return (
     <div className="workspace-tabs">
-      <div className="breadcrumb">
+      <button
+        type="button"
+        className={`breadcrumb breadcrumb-home ${activeModuleId ? "" : "is-active"}`}
+        onClick={onReturnToMain}
+        title={t("workspace.backToCanvas", "Back to main canvas")}
+      >
         <span>{t("field.workflow")}</span>
         <span>/</span>
         <strong>{activeId ? layers.get(activeId)?.displayLabel ?? "Pipeline" : "Pipeline"}</strong>
-      </div>
+      </button>
       <div className="tab-strip">
         {tabs.map((id) => {
           const layer = layers.get(id);
@@ -1362,6 +1647,66 @@ function WorkspaceTabs({
             </button>
           );
         })}
+        {moduleTabs.map((moduleTab) => (
+          <button
+            key={moduleTab.id}
+            className={`is-module ${activeModuleId === moduleTab.id ? "is-active" : ""} ${dragModuleId === moduleTab.id ? "is-dragging" : ""}`}
+            draggable
+            onClick={() => onSelectModule(moduleTab.id)}
+            onDragStart={() => setDragModuleId(moduleTab.id)}
+            onDragEnd={() => setDragModuleId(null)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (dragModuleId && dragModuleId !== moduleTab.id) {
+                onReorderModule(dragModuleId, moduleTab.id);
+              }
+              setDragModuleId(null);
+            }}
+          >
+            <i
+              role="button"
+              tabIndex={0}
+              className="module-tab-pin"
+              title={t("workspace.modulePin", "Pin to left")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onPinModule(moduleTab.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onPinModule(moduleTab.id);
+                }
+              }}
+            >
+              ⤒
+            </i>
+            <span>{moduleTab.label}</span>
+            <small>{t("workspace.moduleTab", "module")}</small>
+            <b
+              role="button"
+              tabIndex={0}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onCloseModule(moduleTab.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onCloseModule(moduleTab.id);
+                }
+              }}
+            >
+              x
+            </b>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -1385,29 +1730,11 @@ function LayerWorkspacePanel({
   onPreviewNode: (node: WorkflowNode) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [hoveredModuleId, setHoveredModuleId] = useState<string | null>(null);
-  const nodes = useCanvasStore((state) => state.nodes);
-  const selectedModuleId = useCanvasStore((state) => state.selectedModuleId);
-  const setSelectedModuleId = useCanvasStore((state) => state.setSelectedModuleId);
   const label = layer.displayLabel;
   const parameterCount = Object.keys(layer.node.data ?? {}).length;
-  const selectedModule = nodes.find((node) => node.node_id === selectedModuleId) ?? null;
-  const hoveredModule = nodes.find((node) => node.node_id === hoveredModuleId) ?? null;
-  console.log("RIGHT_PANEL_RENDER", { selectedModuleId, panelNodeId: selectedModule?.node_id ?? null });
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedModuleId(null);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedModuleId]);
 
   return (
-    <section className={`layer-workspace mode-${mode} tier-${layer.tier} ${selectedModule ? "has-module-detail" : ""}`}>
+    <section className={`layer-workspace mode-${mode} tier-${layer.tier}`}>
       <div className="workspace-header">
         <div className="folder-group-title">
           <span className="folder-icon" aria-hidden="true">
@@ -1435,75 +1762,25 @@ function LayerWorkspacePanel({
         <span>{t("field.childrenCount")}: {layer.childNodes.length}</span>
       </div>
       {!collapsed ? (
-        <div className={`workspace-main ${selectedModuleId ? "has-detail-panel" : ""}`}>
-          <div className="submodule-rail">
-            {layer.childNodes.length ? (
-              <>
-                {layer.childNodes.slice(0, 6).map((node) => {
-                  const moduleTier = dataString(node, "module_tier", layer.tier);
-                  const isSelected = selectedModuleId === node.node_id;
-                  return (
-                    <button
-                      key={node.node_id}
-                      className={`submodule-card tier-${moduleTier} ${isSelected ? "is-selected" : ""}`}
-                      onClick={() => {
-                        console.log("MODULE_CLICK", node.node_id);
-                        setSelectedModuleId(node.node_id);
-                        onSelectNode(node);
-                      }}
-                      onMouseEnter={() => setHoveredModuleId(node.node_id)}
-                      onMouseLeave={() => setHoveredModuleId((current) => (current === node.node_id ? null : current))}
-                      onFocus={() => setHoveredModuleId(node.node_id)}
-                      onBlur={() => setHoveredModuleId((current) => (current === node.node_id ? null : current))}
-                      onDoubleClick={() => onPreviewNode(node)}
-                      aria-pressed={isSelected}
-                      aria-label={t(node.title_key, node.title_fallback)}
-                    >
-                      <span className="submodule-name">{t(node.title_key, node.title_fallback)}</span>
-                      <span className="submodule-tier">{moduleTier}</span>
-                    </button>
-                  );
-                })}
-                {hoveredModule ? (
-                  <div className="submodule-tooltip" role="tooltip">
-                    <strong>{t(hoveredModule.title_key, hoveredModule.title_fallback)}</strong>
-                    <span>
-                      {t("field.type")}: {hoveredModule.type}
-                    </span>
-                    <span>
-                      Tier: {dataString(hoveredModule, "module_tier", layer.tier)}
-                    </span>
-                  </div>
-                ) : null}
-                {selectedModule ? <span className="submodule-selection-indicator" aria-hidden="true" /> : null}
-              </>
-            ) : (
-              <div className="empty-node-canvas">0 modules</div>
-            )}
-          </div>
-
-          {selectedModule ? (
-            <aside className="module-detail-panel" aria-label={t("workspace.moduleDetail", "Module detail panel")}>
-              <div className="module-detail-header">
-                <div>
-                  <p>{t("workspace.moduleDetail", "Module detail panel")}</p>
-                  <h4>{t(selectedModule.title_key, selectedModule.title_fallback)}</h4>
-                </div>
-                <button onClick={() => setSelectedModuleId(null)}>X</button>
-              </div>
-              <div className="module-detail-body">
-                <dl>
-                  <dt>{t("field.name", "Name")}</dt>
-                  <dd>{t(selectedModule.title_key, selectedModule.title_fallback)}</dd>
-                  <dt>Tier</dt>
-                  <dd>{dataString(selectedModule, "module_tier", layer.tier)}</dd>
-                  <dt>Parent layer</dt>
-                  <dd>{label}</dd>
-                </dl>
-                <div className="module-detail-placeholder">{t("workspace.moduleDetailPlaceholder", "Placeholder content")}</div>
-              </div>
-            </aside>
-          ) : null}
+        <div className="submodule-rail">
+          {layer.childNodes.length ? (
+            layer.childNodes.slice(0, 6).map((node) => {
+              const moduleTier = dataString(node, "module_tier", layer.tier);
+              return (
+                <button
+                  key={node.node_id}
+                  className={`submodule-card tier-${moduleTier}`}
+                  onClick={() => onSelectNode(node)}
+                  onDoubleClick={() => onPreviewNode(node)}
+                >
+                  <span className="submodule-name">{t(node.title_key, node.title_fallback)}</span>
+                  <span className="submodule-tier">{moduleTier}</span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="empty-node-canvas">0 modules</div>
+          )}
         </div>
       ) : (
         <div className="folder-collapsed">{t("workspace.emptyFolder", "empty folder layer")}</div>
@@ -1559,7 +1836,7 @@ function FloatingNodeCanvas({
       <div className="node-canvas-shell">
         <div className="node-canvas-title">
           <span>{t("workspace.nodeCanvas", "Node canvas")}</span>
-          <small>{t(`node.type.${node.type}`, node.type)}</small>
+          <small>{getNodeTypeLabel(node.type, t)}</small>
         </div>
         {flowPreviewNodes.length ? (
           <ReactFlow
@@ -1630,12 +1907,220 @@ function FloatingWorkspace({
   );
 }
 
+// Ensure a node exposes at least one in/out port so WorkflowNodeCard renders
+// connectable handles inside the module canvas (handles use ids p_in / p_out).
+function ensurePorts(node: WorkflowNode): WorkflowNode {
+  const inputs = node.ports?.inputs?.length ? node.ports.inputs : [{ port_id: "p_in" }];
+  const outputs = node.ports?.outputs?.length ? node.ports.outputs : [{ port_id: "p_out" }];
+  return { ...node, ports: { ...(node.ports ?? {}), inputs, outputs } } as unknown as WorkflowNode;
+}
+
+// Embedded, in-app module sub-canvas. Module-scoped state only: it owns its own
+// ReactFlow nodes/edges (useNodesState/useEdgesState) and never touches the canvas
+// store, so it does not render or mutate the 13-layer workflow. Unmounting on close
+// destroys all of its state.
+function ModuleCanvasPanel({
+  moduleNode,
+  initialSubnodes,
+  language,
+  t,
+  onClose
+}: {
+  moduleNode: WorkflowNode;
+  initialSubnodes: WorkflowNode[];
+  language: Language;
+  t: (key: string, fallback?: string) => string;
+  onClose: () => void;
+}) {
+  const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
+
+  // Restore this module's sub-canvas from localStorage if it was edited before;
+  // otherwise seed it from the module node + its subnodes.
+  const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
+    const snapshot = loadModuleCanvas(moduleNode.node_id);
+    if (snapshot) {
+      return { nodes: snapshot.nodes as Node[], edges: snapshot.edges as Edge[] };
+    }
+    const seeds = [moduleNode, ...initialSubnodes];
+    return {
+      nodes: seeds.map((node, index) => ({
+        id: node.node_id,
+        type: "workflowNode",
+        position:
+          node.position && (node.position.x || node.position.y) ? node.position : { x: 120, y: 70 + index * 130 },
+        data: { schemaNode: ensurePorts(node) }
+      })),
+      edges: []
+    };
+  }, [moduleNode, initialSubnodes]);
+
+  const [moduleNodes, , onModuleNodesChange] = useNodesState(initialGraph.nodes);
+  const [moduleEdges, setModuleEdges, onModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
+  const [selectedId, setSelectedId] = useState<string>(moduleNode.node_id);
+  const [executionResult, setExecutionResult] = useState<unknown>(null);
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const addedRef = useRef(0);
+
+  // Persist every structural change (add / connect / move / data) for this module.
+  useEffect(() => {
+    saveModuleCanvas(moduleNode.node_id, { nodes: moduleNodes, edges: moduleEdges });
+  }, [moduleNode.node_id, moduleNodes, moduleEdges]);
+
+  const onConnect = useCallback(
+    (connection: Connection) => setModuleEdges((eds) => addEdge({ ...connection, type: "smoothstep" }, eds)),
+    [setModuleEdges]
+  );
+
+  const handleAddNode = useCallback(() => {
+    addedRef.current += 1;
+    const seq = addedRef.current;
+    const id = `${moduleNode.node_id}_new_${seq}`;
+    const schemaNode = ensurePorts({
+      node_id: id,
+      type: "transform",
+      category: "processing",
+      title_key: id,
+      title_fallback: `Node ${seq}`,
+      position: { x: 0, y: 0 },
+      lock_level: "editable",
+      locale: null,
+      data: { parent_module: moduleNode.node_id, status: "draft" },
+      ports: { inputs: [], outputs: [] },
+      validation: null
+    } as unknown as WorkflowNode);
+    onModuleNodesChange([
+      {
+        type: "add",
+        item: {
+          id,
+          type: "workflowNode",
+          position: { x: 360, y: 80 + moduleNodes.length * 70 },
+          data: { schemaNode }
+        }
+      }
+    ]);
+    setSelectedId(id);
+  }, [moduleNode.node_id, moduleNodes.length, onModuleNodesChange]);
+
+  const selectedSchema = useMemo(() => {
+    const found = moduleNodes.find((node) => node.id === selectedId);
+    return (found?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode ?? null;
+  }, [moduleNodes, selectedId]);
+
+  const handleRunWorkflow = useCallback(() => {
+    const rawInput = window.prompt("Workflow input", JSON.stringify({ input: "string" }, null, 2));
+    if (rawInput === null) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(rawInput) as { input?: unknown };
+      const executableNodes = moduleNodes
+        .map((node) => (node.data as { schemaNode?: WorkflowNode }).schemaNode)
+        .filter((node): node is WorkflowNode => Boolean(node && String(node.type) !== "module"));
+      const executableNodeIds = new Set(executableNodes.map((node) => node.node_id));
+      const executableEdges = moduleEdges
+        .filter((edge) => executableNodeIds.has(edge.source) && executableNodeIds.has(edge.target))
+        .map((edge) => ({
+          edge_id: edge.id,
+          source: edge.source,
+          source_port: typeof edge.sourceHandle === "string" ? edge.sourceHandle : "p_out",
+          target: edge.target,
+          target_port: typeof edge.targetHandle === "string" ? edge.targetHandle : "p_in"
+        })) as WorkflowEdge[];
+
+      const result = executeWorkflow(
+        {
+          schema_version: "0.2.0",
+          name: title,
+          version: "1.0.0",
+          template_type: "module_canvas",
+          nodes: executableNodes,
+          edges: executableEdges,
+          metadata: {}
+        } as Workflow,
+        parsed.input
+      );
+      setExecutionResult(result);
+      setExecutionError(null);
+    } catch (error) {
+      setExecutionResult(null);
+      setExecutionError((error as Error).message);
+    }
+  }, [moduleEdges, moduleNodes, title]);
+
+  return (
+    <section className="module-canvas-panel">
+      <header className="module-canvas-panel__bar">
+        <div>
+          <p>{t("workspace.moduleCanvas", "Module Canvas")}</p>
+          <h3>{title}</h3>
+          <span>{moduleNode.node_id}</span>
+        </div>
+        <div className="module-canvas-panel__actions">
+          <button onClick={handleRunWorkflow}>Run Workflow</button>
+          <button onClick={handleAddNode}>+ {t("workspace.addNode", "Add node")}</button>
+          <button className="module-canvas-panel__close" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+      </header>
+      <div className="module-canvas-panel__body">
+        <div className="module-canvas-panel__flow">
+          <ReactFlow
+            nodes={moduleNodes}
+            edges={moduleEdges}
+            nodeTypes={nodeTypes}
+            fitView
+            minZoom={0.3}
+            maxZoom={1.6}
+            onNodesChange={onModuleNodesChange}
+            onEdgesChange={onModuleEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={(_event, node) => setSelectedId(node.id)}
+          >
+            <Background color="#333" gap={20} />
+            <Controls />
+            <MiniMap pannable zoomable />
+          </ReactFlow>
+        </div>
+        <aside className="module-canvas-panel__inspector">
+          <h4>{t("panel.parameters", "Inspector")}</h4>
+          {selectedSchema ? (
+            <>
+              {executionResult || executionError ? (
+                <section className="module-canvas-panel__result">
+                  <h4>persona_result</h4>
+                  {executionError ? <pre>{executionError}</pre> : <pre>{JSON.stringify(executionResult, null, 2)}</pre>}
+                </section>
+              ) : null}
+              <dl>
+                <dt>{t("field.nodeId", "Node ID")}</dt>
+                <dd>{selectedSchema.node_id}</dd>
+                <dt>{t("field.type", "Type")}</dt>
+                <dd>{selectedSchema.type}</dd>
+                <dt>{t("field.lockLevel", "Lock")}</dt>
+                <dd>{translate(language, `lock.${selectedSchema.lock_level}`, selectedSchema.lock_level)}</dd>
+              </dl>
+              <pre>{JSON.stringify(selectedSchema.data ?? {}, null, 2)}</pre>
+            </>
+          ) : (
+            <div className="module-canvas-panel__empty">{t("panel.emptySelection", "Select a node")}</div>
+          )}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function ParameterPanel({
   node,
+  displayLabel,
   workflow,
   t
 }: {
   node: WorkflowNode | null;
+  displayLabel?: string;
   workflow: Workflow | null;
   t: (key: string, fallback?: string) => string;
 }) {
@@ -1661,12 +2146,12 @@ function ParameterPanel({
 
   return (
     <div className="parameter-content">
-      <h3>{t(node.title_key, node.title_fallback)}</h3>
+      <h3>{displayLabel ?? t(node.title_key, node.title_fallback)}</h3>
       <dl>
         <dt>{t("field.nodeId")}</dt>
         <dd>{node.node_id}</dd>
         <dt>{t("field.type")}</dt>
-        <dd>{node.type}</dd>
+        <dd>{getNodeTypeLabel(node.type, t)}</dd>
         <dt>{t("field.category")}</dt>
         <dd>{node.category}</dd>
         <dt>{t("field.lockLevel")}</dt>
