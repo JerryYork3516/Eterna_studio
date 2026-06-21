@@ -19,6 +19,9 @@ type CanvasState = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   selectedNodeId: string | null;
+  selectedModuleId: string | null;
+  setSelectedModuleId: (moduleId: string | null) => void;
+  __debugStoreId?: string;
   logs: RunLog[];
   artifacts: Artifact[];
   language: Language;
@@ -41,11 +44,15 @@ type CanvasState = {
   clearRunOutput: () => void;
 };
 
+const DEBUG_STORE_ID = "canvas-store-singleton";
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   workflow: null,
   nodes: [],
   edges: [],
   selectedNodeId: null,
+  selectedModuleId: null,
+  __debugStoreId: DEBUG_STORE_ID,
   logs: [],
   artifacts: [],
   language: "zh",
@@ -61,11 +68,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: safeWorkflow.nodes ?? [],
       edges: safeWorkflow.edges ?? [],
       selectedNodeId: null,
+      selectedModuleId: null,
+      __debugStoreId: DEBUG_STORE_ID,
       currentTemplate: safeWorkflow.template_type,
       language: safeWorkflow.metadata?.ui_language === "en" ? "en" : "zh"
     });
   },
   setSelectedNode: (nodeId) => set({ selectedNodeId: nodeId && get().nodes.some((node) => node.node_id === nodeId) ? nodeId : null }),
+  setSelectedModuleId: (moduleId) => {
+    console.log("STORE_setSelectedModuleId", { moduleId, current: get().selectedModuleId, storeId: get().__debugStoreId });
+    set({ selectedModuleId: moduleId });
+  },
   updateNodePosition: (nodeId, position) => {
     const nodes = get().nodes.map((node) => (node.node_id === nodeId ? { ...node, position } : node));
     const workflow = get().workflow;
@@ -74,7 +87,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: safeWorkflow?.nodes ?? nodes,
       edges: safeWorkflow?.edges ?? get().edges,
       workflow: safeWorkflow,
-      selectedNodeId: get().selectedNodeId && nodes.some((node) => node.node_id === get().selectedNodeId) ? get().selectedNodeId : null
+      selectedNodeId: get().selectedNodeId && nodes.some((node) => node.node_id === get().selectedNodeId) ? get().selectedNodeId : null,
+      selectedModuleId: get().selectedModuleId && nodes.some((node) => node.node_id === get().selectedModuleId) ? get().selectedModuleId : null
     });
   },
   removeEdges: (edgeIds) => {
@@ -110,7 +124,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       selectedNodeId:
         get().selectedNodeId && (nextWorkflow?.nodes ?? get().nodes).some((node) => node.node_id === get().selectedNodeId)
           ? get().selectedNodeId
-          : null
+          : null,
+      selectedModuleId:
+        get().selectedModuleId && (nextWorkflow?.nodes ?? get().nodes).some((node) => node.node_id === get().selectedModuleId)
+          ? get().selectedModuleId
+          : null,
+      __debugStoreId: DEBUG_STORE_ID
     });
   },
   setTemplates: (templates) => set({ templates }),
