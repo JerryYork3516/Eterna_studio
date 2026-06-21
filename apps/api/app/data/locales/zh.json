@@ -1,0 +1,20 @@
+{
+  "layer.source_input": "资料输入层",
+  "layer.identity_core": "身份核心层",
+  "layer.legal_permission": "授权权限层",
+  "layer.safety_boundary": "安全边界层",
+  "layer.world_context": "世界观环境层",
+  "layer.personality": "人格层",
+  "layer.memory": "记忆层",
+  "layer.knowledge": "知识层",
+  "layer.relationship": "关系层",
+  "layer.behavior": "行为层",
+  "layer.capability_tools": "能力工具层",
+  "layer.multimodal": "表现层",
+  "layer.audit_export_deploy": "审计输出部署层",
+  "node.audit_log": "审计日志",
+  "node.version_snapshot": "版本快照",
+  "node.export_workflow": "导出工作流",
+  "node.export_persona": "导出 .persona",
+  "node.deploy_target": "部署目标"
+}

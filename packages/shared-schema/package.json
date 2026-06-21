@@ -1,0 +1,18 @@
+{
+  "name": "@eterna/shared-schema",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./openapi": "./src/openapi.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/openapi.ts",
+    "generate:handoff": "openapi-typescript ../../apps/api/handoff/openapi.json -o src/openapi.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.8.0",
+    "typescript": "^5.8.3"
+  }
+}

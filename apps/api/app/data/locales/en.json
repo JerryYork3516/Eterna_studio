@@ -1,0 +1,20 @@
+{
+  "layer.source_input": "Source Input",
+  "layer.identity_core": "Identity Core",
+  "layer.legal_permission": "Legal & Permission",
+  "layer.safety_boundary": "Safety Boundary",
+  "layer.world_context": "World Context",
+  "layer.personality": "Personality",
+  "layer.memory": "Memory",
+  "layer.knowledge": "Knowledge",
+  "layer.relationship": "Relationship",
+  "layer.behavior": "Behavior",
+  "layer.capability_tools": "Capability & Tools",
+  "layer.multimodal": "Multimodal",
+  "layer.audit_export_deploy": "Audit / Export / Deploy",
+  "node.audit_log": "Audit Log",
+  "node.version_snapshot": "Version Snapshot",
+  "node.export_workflow": "Export Workflow",
+  "node.export_persona": "Export .persona",
+  "node.deploy_target": "Deploy Target"
+}

@@ -1,0 +1,455 @@
+{
+  "$defs": {
+    "LockLevel": {
+      "enum": [
+        "editable",
+        "review_required",
+        "locked",
+        "system_locked",
+        "mixed"
+      ],
+      "title": "LockLevel",
+      "type": "string"
+    },
+    "NodeCategory": {
+      "enum": [
+        "source",
+        "processing",
+        "ai",
+        "control",
+        "container",
+        "sink"
+      ],
+      "title": "NodeCategory",
+      "type": "string"
+    },
+    "NodeType": {
+      "enum": [
+        "input",
+        "transform",
+        "model",
+        "agent",
+        "review",
+        "layer_container",
+        "output",
+        "export"
+      ],
+      "title": "NodeType",
+      "type": "string"
+    },
+    "Port": {
+      "properties": {
+        "port_id": {
+          "title": "Port Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ],
+          "title": "Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "port_id",
+        "name",
+        "direction"
+      ],
+      "title": "Port",
+      "type": "object"
+    },
+    "Ports": {
+      "properties": {
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/Port"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/Port"
+          },
+          "title": "Outputs",
+          "type": "array"
+        }
+      },
+      "title": "Ports",
+      "type": "object"
+    },
+    "Position": {
+      "properties": {
+        "x": {
+          "default": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0.0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "title": "Position",
+      "type": "object"
+    },
+    "ReviewScope": {
+      "enum": [
+        "node",
+        "layer",
+        "package"
+      ],
+      "title": "ReviewScope",
+      "type": "string"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "passed",
+        "warning",
+        "failed"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "ValidationCheck": {
+      "properties": {
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "target_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "level",
+        "message"
+      ],
+      "title": "ValidationCheck",
+      "type": "object"
+    },
+    "ValidationReview": {
+      "properties": {
+        "schema_version": {
+          "default": "0.2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ReviewScope"
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewStatus"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/ValidationCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "checked_at": {
+          "format": "date-time",
+          "title": "Checked At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "status"
+      ],
+      "title": "ValidationReview",
+      "type": "object"
+    },
+    "Viewport": {
+      "properties": {
+        "x": {
+          "default": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0.0,
+          "title": "Y",
+          "type": "number"
+        },
+        "zoom": {
+          "default": 1.0,
+          "title": "Zoom",
+          "type": "number"
+        }
+      },
+      "title": "Viewport",
+      "type": "object"
+    },
+    "WorkflowEdge": {
+      "properties": {
+        "edge_id": {
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_port": {
+          "title": "Source Port",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "target_port": {
+          "title": "Target Port",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "source",
+        "source_port",
+        "target",
+        "target_port"
+      ],
+      "title": "WorkflowEdge",
+      "type": "object"
+    },
+    "WorkflowMetadata": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Author"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tags"
+        },
+        "ui_language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ui Language"
+        }
+      },
+      "title": "WorkflowMetadata",
+      "type": "object"
+    },
+    "WorkflowNode": {
+      "properties": {
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/NodeType"
+        },
+        "category": {
+          "$ref": "#/$defs/NodeCategory"
+        },
+        "title_key": {
+          "title": "Title Key",
+          "type": "string"
+        },
+        "title_fallback": {
+          "title": "Title Fallback",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "lock_level": {
+          "$ref": "#/$defs/LockLevel"
+        },
+        "locale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locale"
+        },
+        "data": {
+          "additionalProperties": true,
+          "title": "Data",
+          "type": "object"
+        },
+        "ports": {
+          "$ref": "#/$defs/Ports"
+        },
+        "validation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationReview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "node_id",
+        "type",
+        "category",
+        "title_key",
+        "title_fallback",
+        "lock_level"
+      ],
+      "title": "WorkflowNode",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "workflow_id": {
+      "title": "Workflow Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "template_type": {
+      "default": "blank",
+      "title": "Template Type",
+      "type": "string"
+    },
+    "content_locale": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Locale"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/WorkflowNode"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/WorkflowEdge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "viewport": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Viewport"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metadata": {
+      "$ref": "#/$defs/WorkflowMetadata"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "Workflow",
+  "type": "object"
+}

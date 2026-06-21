@@ -1,0 +1,17 @@
+[project]
+name = "eterna-canvas-api"
+version = "0.2.0"
+description = "Eterna Canvas backend — Schema Contract v0.2 (Pydantic = single source of truth)"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.5",
+    "uvicorn[standard]>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]

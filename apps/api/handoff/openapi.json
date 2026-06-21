@@ -1,0 +1,1165 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Eterna Canvas API",
+    "description": "Schema Contract v0.2 — Pydantic models are the single source of truth.",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schema/workflow": {
+      "get": {
+        "tags": [
+          "schema"
+        ],
+        "summary": "Workflow Schema",
+        "operationId": "workflow_schema_schema_workflow_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Workflow Schema Schema Workflow Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates/list": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "List Templates",
+        "operationId": "list_templates_templates_list_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplatesListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates/persona-builder": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Create Persona Builder",
+        "operationId": "create_persona_builder_templates_persona_builder_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaBuilderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaBuilderResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workflow/validate": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Validate",
+        "operationId": "validate_workflow_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workflow/mock-run": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Mock Run",
+        "operationId": "mock_run_workflow_mock_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MockRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workflow/export-preview": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Export Preview",
+        "operationId": "export_preview_workflow_export_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Root  Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Artifact": {
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "title": "Artifact Id"
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "preview": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Preview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "artifact_id",
+          "node_id",
+          "kind",
+          "name"
+        ],
+        "title": "Artifact"
+      },
+      "ExportPreview": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          },
+          "export_kind": {
+            "type": "string",
+            "enum": [
+              "workflow_json",
+              "persona"
+            ],
+            "title": "Export Kind"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "export_kind"
+        ],
+        "title": "ExportPreview"
+      },
+      "ExportPreviewRequest": {
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/Workflow"
+          },
+          "export_kind": {
+            "type": "string",
+            "enum": [
+              "workflow_json",
+              "persona"
+            ],
+            "title": "Export Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow",
+          "export_kind"
+        ],
+        "title": "ExportPreviewRequest"
+      },
+      "ExportPreviewResponse": {
+        "properties": {
+          "preview": {
+            "$ref": "#/components/schemas/ExportPreview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "preview"
+        ],
+        "title": "ExportPreviewResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "LockLevel": {
+        "type": "string",
+        "enum": [
+          "editable",
+          "review_required",
+          "locked",
+          "system_locked",
+          "mixed"
+        ],
+        "title": "LockLevel"
+      },
+      "MockRunRequest": {
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/Workflow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow"
+        ],
+        "title": "MockRunRequest"
+      },
+      "MockRunResponse": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/RunResult"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run"
+        ],
+        "title": "MockRunResponse"
+      },
+      "NodeCategory": {
+        "type": "string",
+        "enum": [
+          "source",
+          "processing",
+          "ai",
+          "control",
+          "container",
+          "sink"
+        ],
+        "title": "NodeCategory"
+      },
+      "NodeRunResult": {
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "output": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Output"
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/RunLog"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "status"
+        ],
+        "title": "NodeRunResult"
+      },
+      "NodeType": {
+        "type": "string",
+        "enum": [
+          "input",
+          "transform",
+          "model",
+          "agent",
+          "review",
+          "layer_container",
+          "output",
+          "export"
+        ],
+        "title": "NodeType"
+      },
+      "PersonaBuilderRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "ui_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui Language"
+          }
+        },
+        "type": "object",
+        "title": "PersonaBuilderRequest"
+      },
+      "PersonaBuilderResponse": {
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/Workflow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow"
+        ],
+        "title": "PersonaBuilderResponse"
+      },
+      "Port": {
+        "properties": {
+          "port_id": {
+            "type": "string",
+            "title": "Port Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "in",
+              "out"
+            ],
+            "title": "Direction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "port_id",
+          "name",
+          "direction"
+        ],
+        "title": "Port"
+      },
+      "Ports": {
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/Port"
+            },
+            "type": "array",
+            "title": "Inputs"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/Port"
+            },
+            "type": "array",
+            "title": "Outputs"
+          }
+        },
+        "type": "object",
+        "title": "Ports"
+      },
+      "Position": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X",
+            "default": 0.0
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "Position"
+      },
+      "ReviewScope": {
+        "type": "string",
+        "enum": [
+          "node",
+          "layer",
+          "package"
+        ],
+        "title": "ReviewScope"
+      },
+      "ReviewStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "passed",
+          "warning",
+          "failed"
+        ],
+        "title": "ReviewStatus"
+      },
+      "RunLog": {
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ts"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warn",
+              "error"
+            ],
+            "title": "Level",
+            "default": "info"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "RunLog"
+      },
+      "RunResult": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          },
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Order"
+          },
+          "node_results": {
+            "items": {
+              "$ref": "#/components/schemas/NodeRunResult"
+            },
+            "type": "array",
+            "title": "Node Results"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "type": "array",
+            "title": "Artifacts"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Finished At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow_id",
+          "status"
+        ],
+        "title": "RunResult"
+      },
+      "RunStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "success",
+          "warning",
+          "error",
+          "skipped"
+        ],
+        "title": "RunStatus"
+      },
+      "TemplateDefinition": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          },
+          "template_type": {
+            "type": "string",
+            "title": "Template Type"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "builder": {
+            "type": "string",
+            "title": "Builder"
+          }
+        },
+        "type": "object",
+        "required": [
+          "template_type",
+          "name",
+          "builder"
+        ],
+        "title": "TemplateDefinition"
+      },
+      "TemplatesListResponse": {
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateDefinition"
+            },
+            "type": "array",
+            "title": "Templates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "templates"
+        ],
+        "title": "TemplatesListResponse"
+      },
+      "ValidateRequest": {
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/Workflow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow"
+        ],
+        "title": "ValidateRequest"
+      },
+      "ValidateResponse": {
+        "properties": {
+          "package": {
+            "$ref": "#/components/schemas/ValidationReview"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationReview"
+            },
+            "type": "array",
+            "title": "Layers"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationReview"
+            },
+            "type": "array",
+            "title": "Nodes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "package",
+          "layers",
+          "nodes"
+        ],
+        "title": "ValidateResponse"
+      },
+      "ValidationCheck": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "title": "Level"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "level",
+          "message"
+        ],
+        "title": "ValidationCheck"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValidationReview": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ReviewScope"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewStatus"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationCheck"
+            },
+            "type": "array",
+            "title": "Checks"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "status"
+        ],
+        "title": "ValidationReview"
+      },
+      "Viewport": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X",
+            "default": 0.0
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "default": 0.0
+          },
+          "zoom": {
+            "type": "number",
+            "title": "Zoom",
+            "default": 1.0
+          }
+        },
+        "type": "object",
+        "title": "Viewport"
+      },
+      "Workflow": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version",
+            "default": "0.2.0"
+          },
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "1.0.0"
+          },
+          "template_type": {
+            "type": "string",
+            "title": "Template Type",
+            "default": "blank"
+          },
+          "content_locale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Locale"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "viewport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Viewport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/WorkflowMetadata"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "Workflow"
+      },
+      "WorkflowEdge": {
+        "properties": {
+          "edge_id": {
+            "type": "string",
+            "title": "Edge Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_port": {
+            "type": "string",
+            "title": "Source Port"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "target_port": {
+            "type": "string",
+            "title": "Target Port"
+          }
+        },
+        "type": "object",
+        "required": [
+          "edge_id",
+          "source",
+          "source_port",
+          "target",
+          "target_port"
+        ],
+        "title": "WorkflowEdge"
+      },
+      "WorkflowMetadata": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "ui_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui Language"
+          }
+        },
+        "type": "object",
+        "title": "WorkflowMetadata"
+      },
+      "WorkflowNode": {
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/NodeType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/NodeCategory"
+          },
+          "title_key": {
+            "type": "string",
+            "title": "Title Key"
+          },
+          "title_fallback": {
+            "type": "string",
+            "title": "Title Fallback"
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "lock_level": {
+            "$ref": "#/components/schemas/LockLevel"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Data"
+          },
+          "ports": {
+            "$ref": "#/components/schemas/Ports"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidationReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "type",
+          "category",
+          "title_key",
+          "title_fallback",
+          "lock_level"
+        ],
+        "title": "WorkflowNode"
+      }
+    }
+  }
+}

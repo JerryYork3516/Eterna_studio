@@ -1,0 +1,79 @@
+{
+  "schema_version": "0.2.0",
+  "workflow_id": "wf_demo01",
+  "name": "Persona Demo (前3层)",
+  "version": "1.0.0",
+  "template_type": "persona_builder",
+  "content_locale": null,
+  "nodes": [
+    {
+      "node_id": "nd_layer1",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.source_input",
+      "title_fallback": "资料输入层",
+      "position": { "x": 0, "y": 0 },
+      "lock_level": "editable",
+      "locale": null,
+      "data": { "layer_index": 1, "status": "empty", "version": "1.0.0", "children_count": 0, "module_tier": "core" },
+      "ports": {
+        "inputs": [{ "port_id": "p_in", "name": "input", "direction": "in" }],
+        "outputs": [{ "port_id": "p_out", "name": "output", "direction": "out" }]
+      }
+    },
+    {
+      "node_id": "nd_layer2",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.identity_core",
+      "title_fallback": "身份核心层",
+      "position": { "x": 0, "y": 160 },
+      "lock_level": "locked",
+      "locale": null,
+      "data": { "layer_index": 2, "status": "empty", "version": "1.0.0", "children_count": 0, "module_tier": "core" },
+      "ports": {
+        "inputs": [{ "port_id": "p_in", "name": "input", "direction": "in" }],
+        "outputs": [{ "port_id": "p_out", "name": "output", "direction": "out" }]
+      }
+    },
+    {
+      "node_id": "nd_layer3",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.legal_permission",
+      "title_fallback": "授权权限层",
+      "position": { "x": 0, "y": 320 },
+      "lock_level": "locked",
+      "locale": null,
+      "data": { "layer_index": 3, "status": "empty", "version": "1.0.0", "children_count": 0, "module_tier": "core" },
+      "ports": {
+        "inputs": [{ "port_id": "p_in", "name": "input", "direction": "in" }],
+        "outputs": [{ "port_id": "p_out", "name": "output", "direction": "out" }]
+      }
+    },
+    {
+      "node_id": "nd_export",
+      "type": "export",
+      "category": "sink",
+      "title_key": "node.export_persona",
+      "title_fallback": "导出 .persona",
+      "position": { "x": 0, "y": 480 },
+      "lock_level": "editable",
+      "locale": null,
+      "data": { "format": "persona", "module_tier": null },
+      "ports": {
+        "inputs": [{ "port_id": "p_in", "name": "input", "direction": "in" }],
+        "outputs": []
+      }
+    }
+  ],
+  "edges": [
+    { "edge_id": "ed_1", "source": "nd_layer1", "source_port": "p_out", "target": "nd_layer2", "target_port": "p_in" },
+    { "edge_id": "ed_2", "source": "nd_layer2", "source_port": "p_out", "target": "nd_layer3", "target_port": "p_in" },
+    { "edge_id": "ed_3", "source": "nd_layer3", "source_port": "p_out", "target": "nd_export", "target_port": "p_in" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "metadata": { "description": "阶段3联调验收样例：加载→显示→保存→再加载", "ui_language": "zh" },
+  "created_at": "2026-06-20T12:00:00Z",
+  "updated_at": "2026-06-20T12:00:00Z"
+}

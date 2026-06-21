@@ -1,0 +1,15 @@
+{
+  "name": "eterna-canvas",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/shared-schema"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @eterna/web",
+    "build": "npm run build -w @eterna/web",
+    "lint": "npm run lint -w @eterna/web",
+    "typecheck": "npm run typecheck -w @eterna/web",
+    "schema:generate": "npm run generate -w @eterna/shared-schema"
+  }
+}

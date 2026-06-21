@@ -1,0 +1,917 @@
+{
+  "POST /workflow/validate": {
+    "request": {
+      "workflow": {
+        "schema_version": "0.2.0",
+        "workflow_id": "wf_demo01",
+        "name": "Persona Demo (前3层)",
+        "version": "1.0.0",
+        "template_type": "persona_builder",
+        "content_locale": null,
+        "nodes": [
+          {
+            "node_id": "nd_layer1",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.source_input",
+            "title_fallback": "资料输入层",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "layer_index": 1,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer2",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.identity_core",
+            "title_fallback": "身份核心层",
+            "position": {
+              "x": 0,
+              "y": 160
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 2,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer3",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.legal_permission",
+            "title_fallback": "授权权限层",
+            "position": {
+              "x": 0,
+              "y": 320
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 3,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_export",
+            "type": "export",
+            "category": "sink",
+            "title_key": "node.export_persona",
+            "title_fallback": "导出 .persona",
+            "position": {
+              "x": 0,
+              "y": 480
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "format": "persona",
+              "module_tier": null
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": []
+            }
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "ed_1",
+            "source": "nd_layer1",
+            "source_port": "p_out",
+            "target": "nd_layer2",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_2",
+            "source": "nd_layer2",
+            "source_port": "p_out",
+            "target": "nd_layer3",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_3",
+            "source": "nd_layer3",
+            "source_port": "p_out",
+            "target": "nd_export",
+            "target_port": "p_in"
+          }
+        ],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "metadata": {
+          "description": "阶段3联调验收样例：加载→显示→保存→再加载",
+          "ui_language": "zh"
+        },
+        "created_at": "2026-06-20T12:00:00Z",
+        "updated_at": "2026-06-20T12:00:00Z"
+      }
+    },
+    "response": {
+      "package": {
+        "schema_version": "0.2.0",
+        "scope": "package",
+        "status": "failed",
+        "checks": [
+          {
+            "rule": "empty_core_layer",
+            "level": "warning",
+            "target_id": "nd_layer1",
+            "message": "core trunk layer (layer_index=1) has no child nodes."
+          },
+          {
+            "rule": "empty_core_layer",
+            "level": "warning",
+            "target_id": "nd_layer2",
+            "message": "core trunk layer (layer_index=2) has no child nodes."
+          },
+          {
+            "rule": "empty_core_layer",
+            "level": "warning",
+            "target_id": "nd_layer3",
+            "message": "core trunk layer (layer_index=3) has no child nodes."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=4) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=6) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=7) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=8) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=10) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "warning",
+            "target_id": null,
+            "message": "plugin trunk layer (layer_index=11) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "warning",
+            "target_id": null,
+            "message": "plugin trunk layer (layer_index=12) is missing."
+          },
+          {
+            "rule": "missing_trunk_layer",
+            "level": "error",
+            "target_id": null,
+            "message": "required core trunk layer (layer_index=13) is missing."
+          }
+        ],
+        "checked_at": "2026-06-21T03:14:21.804831Z"
+      },
+      "layers": [
+        {
+          "schema_version": "0.2.0",
+          "scope": "layer",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer1",
+              "message": "core trunk layer (layer_index=1) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804825Z"
+        },
+        {
+          "schema_version": "0.2.0",
+          "scope": "layer",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer2",
+              "message": "core trunk layer (layer_index=2) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804826Z"
+        },
+        {
+          "schema_version": "0.2.0",
+          "scope": "layer",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer3",
+              "message": "core trunk layer (layer_index=3) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804827Z"
+        }
+      ],
+      "nodes": [
+        {
+          "schema_version": "0.2.0",
+          "scope": "node",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer1",
+              "message": "core trunk layer (layer_index=1) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804817Z"
+        },
+        {
+          "schema_version": "0.2.0",
+          "scope": "node",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer2",
+              "message": "core trunk layer (layer_index=2) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804820Z"
+        },
+        {
+          "schema_version": "0.2.0",
+          "scope": "node",
+          "status": "warning",
+          "checks": [
+            {
+              "rule": "empty_core_layer",
+              "level": "warning",
+              "target_id": "nd_layer3",
+              "message": "core trunk layer (layer_index=3) has no child nodes."
+            }
+          ],
+          "checked_at": "2026-06-21T03:14:21.804822Z"
+        },
+        {
+          "schema_version": "0.2.0",
+          "scope": "node",
+          "status": "passed",
+          "checks": [],
+          "checked_at": "2026-06-21T03:14:21.804823Z"
+        }
+      ]
+    }
+  },
+  "POST /workflow/mock-run": {
+    "request": {
+      "workflow": {
+        "schema_version": "0.2.0",
+        "workflow_id": "wf_demo01",
+        "name": "Persona Demo (前3层)",
+        "version": "1.0.0",
+        "template_type": "persona_builder",
+        "content_locale": null,
+        "nodes": [
+          {
+            "node_id": "nd_layer1",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.source_input",
+            "title_fallback": "资料输入层",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "layer_index": 1,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer2",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.identity_core",
+            "title_fallback": "身份核心层",
+            "position": {
+              "x": 0,
+              "y": 160
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 2,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer3",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.legal_permission",
+            "title_fallback": "授权权限层",
+            "position": {
+              "x": 0,
+              "y": 320
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 3,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_export",
+            "type": "export",
+            "category": "sink",
+            "title_key": "node.export_persona",
+            "title_fallback": "导出 .persona",
+            "position": {
+              "x": 0,
+              "y": 480
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "format": "persona",
+              "module_tier": null
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": []
+            }
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "ed_1",
+            "source": "nd_layer1",
+            "source_port": "p_out",
+            "target": "nd_layer2",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_2",
+            "source": "nd_layer2",
+            "source_port": "p_out",
+            "target": "nd_layer3",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_3",
+            "source": "nd_layer3",
+            "source_port": "p_out",
+            "target": "nd_export",
+            "target_port": "p_in"
+          }
+        ],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "metadata": {
+          "description": "阶段3联调验收样例：加载→显示→保存→再加载",
+          "ui_language": "zh"
+        },
+        "created_at": "2026-06-20T12:00:00Z",
+        "updated_at": "2026-06-20T12:00:00Z"
+      }
+    },
+    "response": {
+      "run": {
+        "schema_version": "0.2.0",
+        "workflow_id": "wf_demo01",
+        "status": "success",
+        "order": [
+          "nd_layer1",
+          "nd_layer2",
+          "nd_layer3",
+          "nd_export"
+        ],
+        "node_results": [
+          {
+            "node_id": "nd_layer1",
+            "status": "success",
+            "output": {
+              "mock": true,
+              "node_type": "layer_container",
+              "title": "资料输入层",
+              "echo": {
+                "layer_index": 1,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            },
+            "logs": [
+              {
+                "ts": "2026-06-21T03:14:21.805895Z",
+                "level": "info",
+                "message": "executed '资料输入层' (layer_container)"
+              }
+            ],
+            "duration_ms": 5
+          },
+          {
+            "node_id": "nd_layer2",
+            "status": "success",
+            "output": {
+              "mock": true,
+              "node_type": "layer_container",
+              "title": "身份核心层",
+              "echo": {
+                "layer_index": 2,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            },
+            "logs": [
+              {
+                "ts": "2026-06-21T03:14:21.805903Z",
+                "level": "info",
+                "message": "executed '身份核心层' (layer_container)"
+              }
+            ],
+            "duration_ms": 5
+          },
+          {
+            "node_id": "nd_layer3",
+            "status": "success",
+            "output": {
+              "mock": true,
+              "node_type": "layer_container",
+              "title": "授权权限层",
+              "echo": {
+                "layer_index": 3,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            },
+            "logs": [
+              {
+                "ts": "2026-06-21T03:14:21.805906Z",
+                "level": "info",
+                "message": "executed '授权权限层' (layer_container)"
+              }
+            ],
+            "duration_ms": 5
+          },
+          {
+            "node_id": "nd_export",
+            "status": "success",
+            "output": {
+              "mock": true,
+              "node_type": "export",
+              "title": "导出 .persona",
+              "echo": {
+                "format": "persona",
+                "module_tier": null
+              }
+            },
+            "logs": [
+              {
+                "ts": "2026-06-21T03:14:21.805909Z",
+                "level": "info",
+                "message": "executed '导出 .persona' (export)"
+              }
+            ],
+            "duration_ms": 5
+          }
+        ],
+        "artifacts": [
+          {
+            "artifact_id": "ar_bc49764c",
+            "node_id": "nd_export",
+            "kind": "persona",
+            "name": "导出 .persona",
+            "preview": {
+              "mock": true,
+              "from_node": "nd_export"
+            }
+          }
+        ],
+        "started_at": "2026-06-21T03:14:21.805883Z",
+        "finished_at": "2026-06-21T03:14:21.805926Z"
+      }
+    }
+  },
+  "POST /workflow/export-preview (persona)": {
+    "request": {
+      "workflow": {
+        "schema_version": "0.2.0",
+        "workflow_id": "wf_demo01",
+        "name": "Persona Demo (前3层)",
+        "version": "1.0.0",
+        "template_type": "persona_builder",
+        "content_locale": null,
+        "nodes": [
+          {
+            "node_id": "nd_layer1",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.source_input",
+            "title_fallback": "资料输入层",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "layer_index": 1,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer2",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.identity_core",
+            "title_fallback": "身份核心层",
+            "position": {
+              "x": 0,
+              "y": 160
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 2,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_layer3",
+            "type": "layer_container",
+            "category": "container",
+            "title_key": "layer.legal_permission",
+            "title_fallback": "授权权限层",
+            "position": {
+              "x": 0,
+              "y": 320
+            },
+            "lock_level": "locked",
+            "locale": null,
+            "data": {
+              "layer_index": 3,
+              "status": "empty",
+              "version": "1.0.0",
+              "children_count": 0,
+              "module_tier": "core"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": [
+                {
+                  "port_id": "p_out",
+                  "name": "output",
+                  "direction": "out"
+                }
+              ]
+            }
+          },
+          {
+            "node_id": "nd_export",
+            "type": "export",
+            "category": "sink",
+            "title_key": "node.export_persona",
+            "title_fallback": "导出 .persona",
+            "position": {
+              "x": 0,
+              "y": 480
+            },
+            "lock_level": "editable",
+            "locale": null,
+            "data": {
+              "format": "persona",
+              "module_tier": null
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "port_id": "p_in",
+                  "name": "input",
+                  "direction": "in"
+                }
+              ],
+              "outputs": []
+            }
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "ed_1",
+            "source": "nd_layer1",
+            "source_port": "p_out",
+            "target": "nd_layer2",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_2",
+            "source": "nd_layer2",
+            "source_port": "p_out",
+            "target": "nd_layer3",
+            "target_port": "p_in"
+          },
+          {
+            "edge_id": "ed_3",
+            "source": "nd_layer3",
+            "source_port": "p_out",
+            "target": "nd_export",
+            "target_port": "p_in"
+          }
+        ],
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        },
+        "metadata": {
+          "description": "阶段3联调验收样例：加载→显示→保存→再加载",
+          "ui_language": "zh"
+        },
+        "created_at": "2026-06-20T12:00:00Z",
+        "updated_at": "2026-06-20T12:00:00Z"
+      },
+      "export_kind": "persona"
+    },
+    "response": {
+      "preview": {
+        "schema_version": "0.2.0",
+        "export_kind": "persona",
+        "content": {
+          "schema_version": "0.2.0",
+          "name": "Persona Demo (前3层)",
+          "template_type": "persona_builder",
+          "content_locale": null,
+          "layers": [
+            {
+              "layer_index": 1,
+              "title_key": "layer.source_input",
+              "title_fallback": "资料输入层",
+              "lock_level": "editable",
+              "status": "empty",
+              "version": "1.0.0",
+              "data": {
+                "layer_index": 1,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            },
+            {
+              "layer_index": 2,
+              "title_key": "layer.identity_core",
+              "title_fallback": "身份核心层",
+              "lock_level": "locked",
+              "status": "empty",
+              "version": "1.0.0",
+              "data": {
+                "layer_index": 2,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            },
+            {
+              "layer_index": 3,
+              "title_key": "layer.legal_permission",
+              "title_fallback": "授权权限层",
+              "lock_level": "locked",
+              "status": "empty",
+              "version": "1.0.0",
+              "data": {
+                "layer_index": 3,
+                "status": "empty",
+                "version": "1.0.0",
+                "children_count": 0,
+                "module_tier": "core"
+              }
+            }
+          ]
+        },
+        "warnings": [
+          "[warning] empty_core_layer: core trunk layer (layer_index=1) has no child nodes.",
+          "[warning] empty_core_layer: core trunk layer (layer_index=2) has no child nodes.",
+          "[warning] empty_core_layer: core trunk layer (layer_index=3) has no child nodes.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=4) is missing.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=6) is missing.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=7) is missing.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=8) is missing.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=10) is missing.",
+          "[warning] missing_trunk_layer: plugin trunk layer (layer_index=11) is missing.",
+          "[warning] missing_trunk_layer: plugin trunk layer (layer_index=12) is missing.",
+          "[error] missing_trunk_layer: required core trunk layer (layer_index=13) is missing."
+        ]
+      }
+    }
+  }
+}

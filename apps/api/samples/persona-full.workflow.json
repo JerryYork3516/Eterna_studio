@@ -1,0 +1,764 @@
+{
+  "schema_version": "0.2.0",
+  "workflow_id": "wf_personafull",
+  "name": "Persona Full (13 层主干)",
+  "version": "1.0.0",
+  "template_type": "persona_builder",
+  "content_locale": null,
+  "nodes": [
+    {
+      "node_id": "nd_layer1",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.source_input",
+      "title_fallback": "资料输入层",
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "lock_level": "editable",
+      "locale": null,
+      "data": {
+        "layer_index": 1,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer2",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.identity_core",
+      "title_fallback": "身份核心层",
+      "position": {
+        "x": 0.0,
+        "y": 160.0
+      },
+      "lock_level": "locked",
+      "locale": null,
+      "data": {
+        "layer_index": 2,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer3",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.legal_permission",
+      "title_fallback": "授权权限层",
+      "position": {
+        "x": 0.0,
+        "y": 320.0
+      },
+      "lock_level": "locked",
+      "locale": null,
+      "data": {
+        "layer_index": 3,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer4",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.safety_boundary",
+      "title_fallback": "安全边界层",
+      "position": {
+        "x": 0.0,
+        "y": 480.0
+      },
+      "lock_level": "locked",
+      "locale": null,
+      "data": {
+        "layer_index": 4,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer5",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.world_context",
+      "title_fallback": "世界观环境层",
+      "position": {
+        "x": 0.0,
+        "y": 640.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 5,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "later"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer6",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.personality",
+      "title_fallback": "人格层",
+      "position": {
+        "x": 0.0,
+        "y": 800.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 6,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer7",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.memory",
+      "title_fallback": "记忆层",
+      "position": {
+        "x": 0.0,
+        "y": 960.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 7,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer8",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.knowledge",
+      "title_fallback": "知识层",
+      "position": {
+        "x": 0.0,
+        "y": 1120.0
+      },
+      "lock_level": "editable",
+      "locale": null,
+      "data": {
+        "layer_index": 8,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer9",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.relationship",
+      "title_fallback": "关系层",
+      "position": {
+        "x": 0.0,
+        "y": 1280.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 9,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "later"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer10",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.behavior",
+      "title_fallback": "行为层",
+      "position": {
+        "x": 0.0,
+        "y": 1440.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 10,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer11",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.capability_tools",
+      "title_fallback": "能力工具层",
+      "position": {
+        "x": 0.0,
+        "y": 1600.0
+      },
+      "lock_level": "editable",
+      "locale": null,
+      "data": {
+        "layer_index": 11,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "plugin"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer12",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.multimodal",
+      "title_fallback": "表现层",
+      "position": {
+        "x": 0.0,
+        "y": 1760.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "layer_index": 12,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 0,
+        "module_tier": "plugin"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_layer13",
+      "type": "layer_container",
+      "category": "container",
+      "title_key": "layer.audit_export_deploy",
+      "title_fallback": "审计输出部署层",
+      "position": {
+        "x": 0.0,
+        "y": 1920.0
+      },
+      "lock_level": "mixed",
+      "locale": null,
+      "data": {
+        "layer_index": 13,
+        "status": "empty",
+        "version": "1.0.0",
+        "children_count": 5,
+        "module_tier": "core"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": [
+          {
+            "port_id": "p_out",
+            "name": "output",
+            "direction": "out"
+          }
+        ]
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_l13_audit_log",
+      "type": "output",
+      "category": "sink",
+      "title_key": "node.audit_log",
+      "title_fallback": "审计日志",
+      "position": {
+        "x": 320.0,
+        "y": 1920.0
+      },
+      "lock_level": "system_locked",
+      "locale": null,
+      "data": {
+        "module_tier": null,
+        "append_only": true
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": []
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_l13_version_snapshot",
+      "type": "output",
+      "category": "sink",
+      "title_key": "node.version_snapshot",
+      "title_fallback": "版本快照",
+      "position": {
+        "x": 320.0,
+        "y": 2040.0
+      },
+      "lock_level": "system_locked",
+      "locale": null,
+      "data": {
+        "module_tier": null,
+        "append_only": true
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": []
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_l13_export_workflow",
+      "type": "export",
+      "category": "sink",
+      "title_key": "node.export_workflow",
+      "title_fallback": "导出工作流",
+      "position": {
+        "x": 320.0,
+        "y": 2160.0
+      },
+      "lock_level": "editable",
+      "locale": null,
+      "data": {
+        "module_tier": null,
+        "format": "workflow_json"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": []
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_l13_export_persona",
+      "type": "export",
+      "category": "sink",
+      "title_key": "node.export_persona",
+      "title_fallback": "导出 .persona",
+      "position": {
+        "x": 320.0,
+        "y": 2280.0
+      },
+      "lock_level": "editable",
+      "locale": null,
+      "data": {
+        "module_tier": null,
+        "format": "persona"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": []
+      },
+      "validation": null
+    },
+    {
+      "node_id": "nd_l13_deploy_target",
+      "type": "output",
+      "category": "sink",
+      "title_key": "node.deploy_target",
+      "title_fallback": "部署目标",
+      "position": {
+        "x": 320.0,
+        "y": 2400.0
+      },
+      "lock_level": "review_required",
+      "locale": null,
+      "data": {
+        "module_tier": null
+      },
+      "ports": {
+        "inputs": [
+          {
+            "port_id": "p_in",
+            "name": "input",
+            "direction": "in"
+          }
+        ],
+        "outputs": []
+      },
+      "validation": null
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "ed_a0d7028b",
+      "source": "nd_layer1",
+      "source_port": "p_out",
+      "target": "nd_layer2",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_2ede0128",
+      "source": "nd_layer2",
+      "source_port": "p_out",
+      "target": "nd_layer3",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_a583f80f",
+      "source": "nd_layer3",
+      "source_port": "p_out",
+      "target": "nd_layer4",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_f576ee69",
+      "source": "nd_layer4",
+      "source_port": "p_out",
+      "target": "nd_layer5",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_b5f01701",
+      "source": "nd_layer5",
+      "source_port": "p_out",
+      "target": "nd_layer6",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_f9bc1252",
+      "source": "nd_layer6",
+      "source_port": "p_out",
+      "target": "nd_layer7",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_99661020",
+      "source": "nd_layer7",
+      "source_port": "p_out",
+      "target": "nd_layer8",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_eb8e637d",
+      "source": "nd_layer8",
+      "source_port": "p_out",
+      "target": "nd_layer9",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_856f9edc",
+      "source": "nd_layer9",
+      "source_port": "p_out",
+      "target": "nd_layer10",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_7605e692",
+      "source": "nd_layer10",
+      "source_port": "p_out",
+      "target": "nd_layer11",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_e230028d",
+      "source": "nd_layer11",
+      "source_port": "p_out",
+      "target": "nd_layer12",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_854ddc07",
+      "source": "nd_layer12",
+      "source_port": "p_out",
+      "target": "nd_layer13",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_5d1a04c8",
+      "source": "nd_layer13",
+      "source_port": "p_out",
+      "target": "nd_l13_audit_log",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_76f74cd3",
+      "source": "nd_layer13",
+      "source_port": "p_out",
+      "target": "nd_l13_version_snapshot",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_7f543787",
+      "source": "nd_layer13",
+      "source_port": "p_out",
+      "target": "nd_l13_export_workflow",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_b43af850",
+      "source": "nd_layer13",
+      "source_port": "p_out",
+      "target": "nd_l13_export_persona",
+      "target_port": "p_in"
+    },
+    {
+      "edge_id": "ed_e7f79dff",
+      "source": "nd_layer13",
+      "source_port": "p_out",
+      "target": "nd_l13_deploy_target",
+      "target_port": "p_in"
+    }
+  ],
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "zoom": 1.0
+  },
+  "metadata": {
+    "description": "13-layer persona builder trunk (Contract §8).",
+    "author": null,
+    "tags": null,
+    "ui_language": "zh"
+  },
+  "created_at": "2026-06-21T03:36:48.960488Z",
+  "updated_at": "2026-06-21T03:36:48.960592Z"
+}
