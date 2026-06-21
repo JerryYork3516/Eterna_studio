@@ -24,7 +24,10 @@ import { WorkflowNodeCard } from "@/components/canvas/WorkflowNodeCard";
 const libraryNodeTypes: NodeType[] = ["input", "transform", "model", "agent", "review", "output", "export"];
 const fallbackTemplateTypes = ["blank", "persona_builder", "agent", "knowledge_pipeline", "review_pipeline"];
 const TRUNK_LAYER_X = 920;
-const FOLDER_GROUP_X = 390;
+const TRUNK_LAYER_HEIGHT = 216;
+const FOLDER_GROUP_WIDTH = 950;
+const FOLDER_GROUP_HEIGHT = 216;
+const FOLDER_GROUP_GAP = 110;
 const TRUNK_LAYER_Y_STEP = 270;
 const TRUNK_LAYER_Y_OFFSET = 110;
 const collapsedNodeLabels: Record<NodeType, { zh: string; en: string }> = {
@@ -412,10 +415,11 @@ export function CanvasShell() {
   const getFolderDisplayPosition = useCallback(
     (layer: LayerSummary) => {
       const folderNodeId = `ui-folder-${layer.node.node_id}`;
+      const layerPosition = getLayerDisplayPosition(layer.node, layer.displayIndex);
       return (
         folderNodePositions[folderNodeId] ?? {
-          x: FOLDER_GROUP_X,
-          y: getLayerDisplayPosition(layer.node, layer.displayIndex).y
+          x: layerPosition.x - FOLDER_GROUP_WIDTH - FOLDER_GROUP_GAP,
+          y: layerPosition.y + (TRUNK_LAYER_HEIGHT - FOLDER_GROUP_HEIGHT) / 2
         }
       );
     },
@@ -443,6 +447,7 @@ export function CanvasShell() {
         return {
           ...flowNode,
           position: getLayerDisplayPosition(schemaNode, displayIndex),
+          style: { width: 380, height: TRUNK_LAYER_HEIGHT },
           data: {
             ...flowNode.data,
             viewLabel: layer?.displayLabel,
@@ -462,6 +467,7 @@ export function CanvasShell() {
         id: `ui-folder-${activeLayer.node.node_id}`,
         type: "folderGroup",
         position: getFolderDisplayPosition(activeLayer),
+        style: { width: FOLDER_GROUP_WIDTH, height: FOLDER_GROUP_HEIGHT },
         draggable: true,
         selectable: true,
         data: {
@@ -711,9 +717,17 @@ export function CanvasShell() {
       const layer = layerById.get(node.id);
       if (layer) {
         setActiveLayerId(layer.node.node_id);
+        const layerPosition = getLayerDisplayPosition(layer.node, layer.displayIndex);
+        setFolderNodePositions((current) => ({
+          ...current,
+          [`ui-folder-${layer.node.node_id}`]: {
+            x: layerPosition.x - FOLDER_GROUP_WIDTH - FOLDER_GROUP_GAP,
+            y: layerPosition.y + (TRUNK_LAYER_HEIGHT - FOLDER_GROUP_HEIGHT) / 2
+          }
+        }));
       }
     },
-    [layerById, setSelectedNode]
+    [getLayerDisplayPosition, layerById, setSelectedNode]
   );
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -736,11 +750,6 @@ export function CanvasShell() {
       changes.forEach((change) => {
         if (change.type === "position" && change.position) {
           if (change.id.startsWith("ui-folder-")) {
-            const nextPosition = { x: change.position.x, y: change.position.y };
-            setFolderNodePositions((current) => ({
-              ...current,
-              [change.id]: nextPosition
-            }));
             return;
           }
           setDraggedNodeIds((current) => {
