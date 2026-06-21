@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Eterna Canvas",
+  title: "Eterna Studio",
   description: "General AI workflow canvas"
 };
 
