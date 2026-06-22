@@ -1083,7 +1083,7 @@ export function CanvasShell() {
             <strong>{t("app.title")}</strong>
             <span>{t("app.subtitle")}</span>
           </div>
-          <label className="template-select">
+          <div className="template-select">
             <span>{t("panel.templates")}</span>
             <select
               value={selectedTemplateType}
@@ -1098,10 +1098,18 @@ export function CanvasShell() {
                 </option>
               ))}
             </select>
-            <button className="template-load-button" onClick={() => handleTemplateClick(selectedTemplateType)}>
+            <button
+              type="button"
+              className="template-load-button"
+              onClick={() => handleTemplateClick(selectedTemplateType)}
+              onTouchEnd={(event) => {
+                event.preventDefault();
+                handleTemplateClick(selectedTemplateType);
+              }}
+            >
               {t("toolbar.load")}
             </button>
-          </label>
+          </div>
         </div>
         <div className="toolbar-actions">
           <div className="run-bar" aria-label="Export validate mock run">
