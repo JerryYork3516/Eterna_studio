@@ -275,6 +275,10 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
                 className={`submodule-card tier-${moduleTier}`}
                 onClick={() => onSelectNode(node)}
                 onDoubleClick={() => onPreviewNode(node)}
+                onTouchEnd={(event) => {
+                  event.preventDefault();
+                  onSelectNode(node);
+                }}
               >
                 <span className="submodule-name">{translate(language, node.title_key, node.title_fallback)}</span>
                 <span className="submodule-tier">{moduleTier}</span>
@@ -1772,6 +1776,10 @@ function LayerWorkspacePanel({
                   className={`submodule-card tier-${moduleTier}`}
                   onClick={() => onSelectNode(node)}
                   onDoubleClick={() => onPreviewNode(node)}
+                  onTouchEnd={(event) => {
+                    event.preventDefault();
+                    onSelectNode(node);
+                  }}
                 >
                   <span className="submodule-name">{t(node.title_key, node.title_fallback)}</span>
                   <span className="submodule-tier">{moduleTier}</span>
