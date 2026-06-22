@@ -9,23 +9,29 @@ export type NodeDefinition = {
 
 export type NodeExecutionContext = {
   input: unknown;
+  current?: unknown;
   memory: Record<string, unknown>;
   intermediate: Record<string, unknown>;
 };
 
+function inputValue(context: NodeExecutionContext) {
+  context.current = context.input;
+  return context.current;
+}
+
 function passThrough(context: NodeExecutionContext) {
-  return context.input;
+  return context.current;
 }
 
 function outputPersonaResult(context: NodeExecutionContext) {
   return {
-    persona_result: context.input,
-    memory: context.memory,
-    intermediate: context.intermediate
+    persona_result: context.current
   };
 }
 
 export const nodeRegistry = new Map<string, NodeDefinition>([
+  ["input", { type: "input", label: "Input", input_schema: {}, output_schema: {}, tags: ["source"], execute: inputValue }],
+  ["module", { type: "module", label: "Module", input_schema: {}, output_schema: {}, tags: ["module"], execute: passThrough }],
   ["text", { type: "text", label: "Text", input_schema: {}, output_schema: {}, tags: ["core"], execute: passThrough }],
   ["memory", { type: "memory", label: "Memory", input_schema: {}, output_schema: {}, tags: ["core"], execute: passThrough }],
   ["reasoning", { type: "reasoning", label: "Reasoning", input_schema: {}, output_schema: {}, tags: ["core"], execute: passThrough }],

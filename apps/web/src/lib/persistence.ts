@@ -27,19 +27,27 @@ export function loadWorkflow(): Workflow | null {
     return null;
   }
   const candidates: Workflow[] = [];
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index);
-    if (!key || !key.startsWith(KEY_PREFIX)) {
-      continue;
-    }
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw) {
-        candidates.push(sanitizeWorkflow(JSON.parse(raw)));
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key || !key.startsWith(KEY_PREFIX)) {
+        continue;
       }
-    } catch {
-      // skip corrupt entries
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (raw) {
+          candidates.push(sanitizeWorkflow(JSON.parse(raw)));
+        }
+      } catch {
+        try {
+          window.localStorage.removeItem(key);
+        } catch {
+          // ignore storage cleanup errors
+        }
+      }
     }
+  } catch {
+    return null;
   }
   if (!candidates.length) {
     return null;
@@ -83,8 +91,19 @@ export function loadModuleCanvas(moduleId: string): ModuleCanvasSnapshot | null 
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
       return null;
     }
-    return { nodes: parsed.nodes, edges: parsed.edges };
+    const nodes = parsed.nodes.filter(
+      (node): node is Record<string, unknown> => Boolean(node && typeof node === "object" && typeof (node as { id?: unknown }).id === "string")
+    );
+    const edges = parsed.edges.filter(
+      (edge): edge is Record<string, unknown> => Boolean(edge && typeof edge === "object" && typeof (edge as { id?: unknown }).id === "string")
+    );
+    return { nodes, edges };
   } catch {
+    try {
+      window.localStorage.removeItem(`${MODULE_KEY_PREFIX}${moduleId}`);
+    } catch {
+      // ignore storage cleanup errors
+    }
     return null;
   }
 }

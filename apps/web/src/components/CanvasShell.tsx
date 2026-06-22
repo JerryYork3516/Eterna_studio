@@ -70,6 +70,12 @@ type FolderGroupNodeData = {
   onPreviewNode: (node: WorkflowNode) => void;
 };
 
+type PendingModuleAdd = {
+  requestId: number;
+  moduleId: string;
+  nodeType: NodeType;
+};
+
 const nodeTypes = {
   layerContainer: LayerContainerNode,
   workflowNode: WorkflowNodeCard,
@@ -309,6 +315,7 @@ export function CanvasShell() {
   const [folderNodePositions, setFolderNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [moduleTabs, setModuleTabs] = useState<string[]>([]);
   const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
+  const [pendingModuleAdd, setPendingModuleAdd] = useState<PendingModuleAdd | null>(null);
   const {
     workflow,
     nodes,
@@ -1028,38 +1035,19 @@ export function CanvasShell() {
 
   const handleAddNode = useCallback(
     (type: NodeType) => {
-      if (!workflow) {
-        appendLog(t("error.noWorkflow"), "warn");
+      if (activeModuleTabId) {
+        setPendingModuleAdd({
+          requestId: Date.now() + Math.random(),
+          moduleId: activeModuleTabId,
+          nodeType: type
+        });
+        appendLog(`${t("status.nodeAdded", "Node added")}: ${type}`);
         return;
       }
-      const category =
-        type === "input"
-          ? "source"
-          : type === "output" || type === "export"
-            ? "sink"
-            : type === "layer_container"
-              ? "container"
-              : "processing";
-      const newNode = {
-        node_id: `nd_${type}_${Date.now()}`,
-        type,
-        category,
-        title_key: `node.type.${type}`,
-        title_fallback: type,
-        position: { x: 160, y: -160 },
-        lock_level: "editable",
-        locale: null,
-        data: {},
-        ports: {
-          inputs: [{ port_id: "p_in", name: "in", direction: "in" }],
-          outputs: [{ port_id: "p_out", name: "out", direction: "out" }]
-        },
-        validation: null
-      } as unknown as WorkflowNode;
-      setWorkflow(withUpdatedWorkflowGraph(workflow, [...nodes, newNode], edges));
-      appendLog(`${t("status.nodeAdded", "Node added")}: ${type}`);
+
+      appendLog(t("status.openModuleCanvas", "Open a Module Canvas before adding workflow nodes"), "warn");
     },
-    [appendLog, edges, nodes, setWorkflow, t, workflow]
+    [activeModuleTabId, appendLog, t]
   );
 
   const rightDockLayer = workspaceMode === "right" ? selectedLayer : null;
@@ -1258,6 +1246,7 @@ export function CanvasShell() {
                     key={activeModuleNode.node_id}
                     moduleNode={activeModuleNode}
                     initialSubnodes={activeModuleSubnodes}
+                    pendingAdd={pendingModuleAdd?.moduleId === activeModuleNode.node_id ? pendingModuleAdd : null}
                     language={language}
                     t={t}
                     onClose={() => closeModuleTab(activeModuleNode.node_id)}
@@ -1309,7 +1298,7 @@ export function CanvasShell() {
           ) : (
             <div className="empty-canvas">
               <h2>{t("panel.noWorkflow")}</h2>
-              <button onClick={() => handleTemplateClick("persona_builder")} disabled={!apiReady}>
+              <button onClick={() => handleTemplateClick("persona_builder")}>
                 {t("template.loadPersona")}
               </button>
             </div>
@@ -1938,24 +1927,33 @@ function ensurePorts(node: WorkflowNode): WorkflowNode {
 function ModuleCanvasPanel({
   moduleNode,
   initialSubnodes,
+  pendingAdd,
   language,
   t,
   onClose
 }: {
   moduleNode: WorkflowNode;
   initialSubnodes: WorkflowNode[];
+  pendingAdd: PendingModuleAdd | null;
   language: Language;
   t: (key: string, fallback?: string) => string;
   onClose: () => void;
 }) {
   const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
+  const handledAddRequestRef = useRef<number | null>(null);
 
   // Restore this module's sub-canvas from localStorage if it was edited before;
   // otherwise seed it from the module node + its subnodes.
   const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
     const snapshot = loadModuleCanvas(moduleNode.node_id);
     if (snapshot) {
-      return { nodes: snapshot.nodes as Node[], edges: snapshot.edges as Edge[] };
+      return {
+        nodes: (snapshot.nodes as Node[]).map((node) => ({
+          ...node,
+          deletable: node.id === moduleNode.node_id ? false : node.deletable
+        })),
+        edges: snapshot.edges as Edge[]
+      };
     }
     const seeds = [moduleNode, ...initialSubnodes];
     return {
@@ -1964,13 +1962,14 @@ function ModuleCanvasPanel({
         type: "workflowNode",
         position:
           node.position && (node.position.x || node.position.y) ? node.position : { x: 120, y: 70 + index * 130 },
+        deletable: node.node_id !== moduleNode.node_id,
         data: { schemaNode: ensurePorts(node) }
       })),
       edges: []
     };
   }, [moduleNode, initialSubnodes]);
 
-  const [moduleNodes, , onModuleNodesChange] = useNodesState(initialGraph.nodes);
+  const [moduleNodes, setModuleNodes, onBaseModuleNodesChange] = useNodesState(initialGraph.nodes);
   const [moduleEdges, setModuleEdges, onModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string>(moduleNode.node_id);
   const [executionResult, setExecutionResult] = useState<unknown>(null);
@@ -1982,21 +1981,24 @@ function ModuleCanvasPanel({
     saveModuleCanvas(moduleNode.node_id, { nodes: moduleNodes, edges: moduleEdges });
   }, [moduleNode.node_id, moduleNodes, moduleEdges]);
 
-  const onConnect = useCallback(
-    (connection: Connection) => setModuleEdges((eds) => addEdge({ ...connection, type: "smoothstep" }, eds)),
-    [setModuleEdges]
-  );
-
-  const handleAddNode = useCallback(() => {
+  const addModuleNode = useCallback((type: NodeType) => {
     addedRef.current += 1;
     const seq = addedRef.current;
-    const id = `${moduleNode.node_id}_new_${seq}`;
+    const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
+    const category =
+      type === "input"
+        ? "source"
+        : type === "output" || type === "export"
+          ? "sink"
+          : type === "layer_container"
+            ? "container"
+            : "processing";
     const schemaNode = ensurePorts({
       node_id: id,
-      type: "transform",
-      category: "processing",
-      title_key: id,
-      title_fallback: `Node ${seq}`,
+      type,
+      category,
+      title_key: `node.type.${type}`,
+      title_fallback: type,
       position: { x: 0, y: 0 },
       lock_level: "editable",
       locale: null,
@@ -2004,19 +2006,65 @@ function ModuleCanvasPanel({
       ports: { inputs: [], outputs: [] },
       validation: null
     } as unknown as WorkflowNode);
-    onModuleNodesChange([
+    setModuleNodes((current) => [
+      ...current,
       {
-        type: "add",
-        item: {
-          id,
-          type: "workflowNode",
-          position: { x: 360, y: 80 + moduleNodes.length * 70 },
-          data: { schemaNode }
-        }
+        id,
+        type: "workflowNode",
+        position: { x: 360, y: 80 + current.length * 70 },
+        deletable: true,
+        data: { schemaNode }
       }
     ]);
     setSelectedId(id);
-  }, [moduleNode.node_id, moduleNodes.length, onModuleNodesChange]);
+  }, [moduleNode.node_id, setModuleNodes]);
+
+  useEffect(() => {
+    if (!pendingAdd || pendingAdd.moduleId !== moduleNode.node_id || handledAddRequestRef.current === pendingAdd.requestId) {
+      return;
+    }
+    handledAddRequestRef.current = pendingAdd.requestId;
+    addModuleNode(pendingAdd.nodeType);
+  }, [addModuleNode, moduleNode.node_id, pendingAdd]);
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) {
+        return;
+      }
+      const currentNodeIds = new Set(moduleNodes.map((node) => node.id));
+      if (!currentNodeIds.has(connection.source) || !currentNodeIds.has(connection.target)) {
+        return;
+      }
+      setModuleEdges((eds) => addEdge({ ...connection, type: "smoothstep" }, eds));
+    },
+    [moduleNodes, setModuleEdges]
+  );
+
+  const onModuleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const removedIds = changes.filter((change) => change.type === "remove").map((change) => change.id);
+      onBaseModuleNodesChange(changes);
+      if (removedIds.length) {
+        const removed = new Set(removedIds);
+        setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
+        setSelectedId((current) => (current && removed.has(current) ? moduleNode.node_id : current));
+      }
+    },
+    [moduleNode.node_id, onBaseModuleNodesChange, setModuleEdges]
+  );
+
+  const handleModuleNodesDelete = useCallback(
+    (deleted: Node[]) => {
+      const removed = new Set(deleted.map((node) => node.id).filter((id) => id !== moduleNode.node_id));
+      if (!removed.size) {
+        return;
+      }
+      setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
+      setSelectedId((current) => (current && removed.has(current) ? moduleNode.node_id : current));
+    },
+    [moduleNode.node_id, setModuleEdges]
+  );
 
   const selectedSchema = useMemo(() => {
     const found = moduleNodes.find((node) => node.id === selectedId);
@@ -2075,7 +2123,7 @@ function ModuleCanvasPanel({
         </div>
         <div className="module-canvas-panel__actions">
           <button onClick={handleRunWorkflow}>Run Workflow</button>
-          <button onClick={handleAddNode}>+ {t("workspace.addNode", "Add node")}</button>
+          <button onClick={() => addModuleNode("transform")}>+ {t("workspace.addNode", "Add node")}</button>
           <button className="module-canvas-panel__close" onClick={onClose}>
             ✕
           </button>
@@ -2093,7 +2141,9 @@ function ModuleCanvasPanel({
             onNodesChange={onModuleNodesChange}
             onEdgesChange={onModuleEdgesChange}
             onConnect={onConnect}
+            onNodesDelete={handleModuleNodesDelete}
             onNodeClick={(_event, node) => setSelectedId(node.id)}
+            deleteKeyCode={["Backspace", "Delete"]}
           >
             <Background color="#333" gap={20} />
             <Controls />

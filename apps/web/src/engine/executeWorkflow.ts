@@ -34,6 +34,7 @@ export function executeWorkflow(workflow: Workflow, input: unknown) {
 
   const context: NodeExecutionContext = {
     input,
+    current: input,
     memory: {},
     intermediate: {}
   };
@@ -54,11 +55,11 @@ export function executeWorkflow(workflow: Workflow, input: unknown) {
 
     const definition = nodeRegistry.get(node.type);
     if (!definition?.execute) {
-      throw new Error(`Node type "${node.type}" is not registered with an execute function`);
+      return { error: `node type ${node.type} missing execute function` };
     }
 
     lastOutput = definition.execute(context, node);
-    context.input = lastOutput;
+    context.current = lastOutput;
     context.intermediate[node.node_id] = lastOutput;
 
     if (node.type === "output") {
