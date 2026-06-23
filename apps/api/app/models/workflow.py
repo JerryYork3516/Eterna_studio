@@ -1,7 +1,7 @@
-"""Workflow / WorkflowNode / Edge / Port / Viewport — Contract §2.1-2.7, §2.3 (M6).
+"""Legacy workflow shape kept for adapter compatibility.
 
-Pydantic models are the single source of truth; OpenAPI / JSON Schema are
-exported from here.
+Runtime source of truth is WorkflowV03 in app.models.v0_3. Do not mount this
+model as a main API schema; normalize legacy payloads through services.workflow_v0_3.
 """
 
 from __future__ import annotations

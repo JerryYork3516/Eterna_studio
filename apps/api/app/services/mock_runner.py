@@ -1,4 +1,7 @@
-"""Mock Run executor — Contract §4.
+"""Legacy v0.2 mock runner.
+
+The mounted runtime path uses workflow_v0_3.mock_run_v0_3. This file remains for
+historical compatibility only and must not be used as the main runtime.
 
 No real LLM calls. Executes nodes in topological order, producing mock outputs.
 Incomplete nodes run as `warning` (never crash). A detected cycle makes the

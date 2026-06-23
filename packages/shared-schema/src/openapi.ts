@@ -38,6 +38,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/schema/workflow-v0.3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow Schema V0 3 */
+        get: operations["workflow_schema_v0_3_schema_workflow_v0_3_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schema/resident-instance-v0.3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resident Instance Schema V0 3 */
+        get: operations["resident_instance_schema_v0_3_schema_resident_instance_v0_3_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schema/node-registry-v0.3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Node Registry V0 3 */
+        get: operations["node_registry_v0_3_schema_node_registry_v0_3_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates/list": {
         parameters: {
             query?: never;
@@ -89,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflow/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit */
+        post: operations["audit_workflow_audit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflow/mock-run": {
         parameters: {
             query?: never;
@@ -117,6 +185,57 @@ export interface paths {
         put?: never;
         /** Export Preview */
         post: operations["export_preview_workflow_export_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resident/compile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compile Resident */
+        post: operations["compile_resident_resident_compile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resident/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit */
+        post: operations["audit_resident_audit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resident/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview */
+        post: operations["preview_resident_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -159,11 +278,66 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** AuditFinding */
+        AuditFinding: {
+            status: components["schemas"]["AuditStatus"];
+            level: components["schemas"]["AuditLevel"];
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Path */
+            path: string;
+        };
+        /**
+         * AuditLevel
+         * @enum {string}
+         */
+        AuditLevel: "node" | "module" | "layer" | "resident";
+        /** AuditReportV03 */
+        AuditReportV03: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            /** @default PASS */
+            status: components["schemas"]["AuditStatus"];
+            /** Findings */
+            findings?: components["schemas"]["AuditFinding"][];
+        };
+        /** AuditResponse */
+        AuditResponse: {
+            audit: components["schemas"]["AuditReportV03"];
+        };
+        /**
+         * AuditStatus
+         * @enum {string}
+         */
+        AuditStatus: "PASS" | "WARNING" | "FAIL";
+        /** EdgeV03 */
+        EdgeV03: {
+            /** Id */
+            id: string;
+            /** Source Node Id */
+            source_node_id: string;
+            /** Source Output */
+            source_output: string;
+            /** Target Node Id */
+            target_node_id: string;
+            /** Target Input */
+            target_input: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
         /** ExportPreview */
         ExportPreview: {
             /**
              * Schema Version
-             * @default 0.2.0
+             * @default 0.3.0
              */
             schema_version: string;
             /**
@@ -180,12 +354,13 @@ export interface components {
         };
         /** ExportPreviewRequest */
         ExportPreviewRequest: {
-            workflow: components["schemas"]["Workflow"];
+            /** Workflow */
+            workflow: unknown;
             /**
              * Export Kind
              * @enum {string}
              */
-            export_kind: "workflow_json" | "persona";
+            export_kind: "workflow_json" | "persona" | "resident";
         };
         /** ExportPreviewResponse */
         ExportPreviewResponse: {
@@ -205,28 +380,104 @@ export interface components {
             status: string;
             /**
              * Schema Version
-             * @default 0.2.0
+             * @default 0.3.0
              */
             schema_version: string;
         };
-        /**
-         * LockLevel
-         * @enum {string}
-         */
-        LockLevel: "editable" | "review_required" | "locked" | "system_locked" | "mixed";
-        /** MockRunRequest */
-        MockRunRequest: {
-            workflow: components["schemas"]["Workflow"];
+        /** LayerV03 */
+        LayerV03: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Module Ids */
+            module_ids?: string[];
+            /** Node Ids */
+            node_ids?: string[];
+            /** Output Schema */
+            output_schema?: components["schemas"]["OutputSchemaField"][];
+            /** Outputs */
+            outputs?: {
+                [key: string]: unknown;
+            };
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
         };
         /** MockRunResponse */
         MockRunResponse: {
             run: components["schemas"]["RunResult"];
         };
+        /** ModuleV03 */
+        ModuleV03: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Layer Id */
+            layer_id?: string | null;
+            /** Node Ids */
+            node_ids?: string[];
+            /** Output Schema */
+            output_schema?: components["schemas"]["OutputSchemaField"][];
+            /** Outputs */
+            outputs?: {
+                [key: string]: unknown;
+            };
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** NodeInputField */
+        NodeInputField: {
+            /** Key */
+            key: string;
+            type: components["schemas"]["NodeInputType"];
+            /** Label */
+            label: string;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /** Default */
+            default?: unknown | null;
+            /** Placeholder */
+            placeholder?: string | null;
+            /** Options */
+            options?: components["schemas"]["NodeInputOption"][];
+            /** Min */
+            min?: number | null;
+            /** Max */
+            max?: number | null;
+            /** Step */
+            step?: number | null;
+            /** Accept */
+            accept?: string[] | null;
+            /**
+             * Multiple
+             * @default false
+             */
+            multiple: boolean;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** NodeInputOption */
+        NodeInputOption: {
+            /** Value */
+            value: string;
+            /** Label */
+            label: string;
+        };
         /**
-         * NodeCategory
+         * NodeInputType
          * @enum {string}
          */
-        NodeCategory: "source" | "processing" | "ai" | "control" | "container" | "sink";
+        NodeInputType: "text" | "textarea" | "number" | "select" | "multi_select" | "slider" | "boolean" | "color" | "json" | "tags" | "key_value" | "file";
         /** NodeRunResult */
         NodeRunResult: {
             /** Node Id */
@@ -245,10 +496,105 @@ export interface components {
             duration_ms: number;
         };
         /**
-         * NodeType
+         * NodeStatus
          * @enum {string}
          */
-        NodeType: "input" | "transform" | "model" | "agent" | "review" | "layer_container" | "output" | "export";
+        NodeStatus: "READY" | "MOCK" | "DISABLED";
+        /** NodeUiState */
+        NodeUiState: {
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed: boolean;
+            /** Position */
+            position?: {
+                [key: string]: number;
+            };
+            /** Size */
+            size?: {
+                [key: string]: number;
+            };
+            /** Color */
+            color?: string | null;
+            /**
+             * Selected
+             * @default false
+             */
+            selected: boolean;
+        };
+        /** NodeV03 */
+        NodeV03: {
+            /** Id */
+            id: string;
+            /** Type */
+            type: string;
+            /** Label */
+            label: string;
+            /** Category */
+            category: string;
+            status: components["schemas"]["NodeStatus"];
+            /** Input Schema */
+            input_schema?: components["schemas"]["NodeInputField"][];
+            /** Inputs */
+            inputs?: {
+                [key: string]: unknown;
+            };
+            /** Output Schema */
+            output_schema?: components["schemas"]["OutputSchemaField"][];
+            /** Outputs */
+            outputs?: {
+                [key: string]: unknown;
+            };
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            ui?: components["schemas"]["NodeUiState"];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * OutputDtoV03
+         * @description Final JSON output DTO. No UI state or runtime context is allowed here.
+         */
+        OutputDtoV03: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            /** Kind */
+            kind: string;
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            };
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** OutputSchemaField */
+        OutputSchemaField: {
+            /** Key */
+            key: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "string" | "number" | "boolean" | "object" | "array" | "null";
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /** Description */
+            description?: string | null;
+        };
         /** PersonaBuilderRequest */
         PersonaBuilderRequest: {
             /** Name */
@@ -258,50 +604,184 @@ export interface components {
         };
         /** PersonaBuilderResponse */
         PersonaBuilderResponse: {
-            workflow: components["schemas"]["Workflow"];
+            workflow: components["schemas"]["WorkflowV03"];
         };
-        /** Port */
-        Port: {
-            /** Port Id */
-            port_id: string;
-            /** Name */
+        /** ResidentAuditRequest */
+        ResidentAuditRequest: {
+            resident_instance: components["schemas"]["ResidentInstanceV03"];
+        };
+        /** ResidentAuditResponse */
+        ResidentAuditResponse: {
+            audit: components["schemas"]["AuditReportV03"];
+        };
+        /** ResidentAvatar */
+        ResidentAvatar: {
+            /**
+             * Preset
+             * @default mock_avatar
+             */
+            preset: string;
+            /**
+             * Color
+             * @default #7aa2f7
+             */
+            color: string;
+            /**
+             * Density
+             * @default 0.6
+             */
+            density: number;
+            /**
+             * Motion
+             * @default idle
+             */
+            motion: string;
+            /**
+             * Mock
+             * @default true
+             */
+            mock: boolean;
+        };
+        /** ResidentCompileRequestV03 */
+        ResidentCompileRequestV03: {
+            /** Workflow */
+            workflow?: unknown | null;
+            resident_instance?: components["schemas"]["ResidentInstanceV03"] | null;
+            ui_state?: components["schemas"]["UiStateV03"] | null;
+            runtime_context?: components["schemas"]["RuntimeContextV03"] | null;
+        };
+        /** ResidentCompileResponseV03 */
+        ResidentCompileResponseV03: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            resident_instance: components["schemas"]["ResidentInstanceV03"];
+            audit: components["schemas"]["AuditReportV03"];
+        };
+        /** ResidentDialogue */
+        ResidentDialogue: {
+            /**
+             * Tone
+             * @default warm
+             */
+            tone: string;
+            /**
+             * Formality
+             * @default casual
+             */
+            formality: string;
+            /**
+             * Sample
+             * @default
+             */
+            sample: string;
+        };
+        /** ResidentIdentity */
+        ResidentIdentity: {
+            /**
+             * Name
+             * @default
+             */
             name: string;
             /**
-             * Direction
-             * @enum {string}
+             * Role
+             * @default digital_resident
              */
-            direction: "in" | "out";
-        };
-        /** Ports */
-        Ports: {
-            /** Inputs */
-            inputs?: components["schemas"]["Port"][];
-            /** Outputs */
-            outputs?: components["schemas"]["Port"][];
-        };
-        /** Position */
-        Position: {
+            role: string;
+            /** Description */
+            description?: string | null;
             /**
-             * X
-             * @default 0
+             * Disclosure
+             * @default AI-generated digital resident; synthetic persona.
              */
-            x: number;
-            /**
-             * Y
-             * @default 0
-             */
-            y: number;
+            disclosure: string;
         };
-        /**
-         * ReviewScope
-         * @enum {string}
-         */
-        ReviewScope: "node" | "layer" | "package";
-        /**
-         * ReviewStatus
-         * @enum {string}
-         */
-        ReviewStatus: "pending" | "passed" | "warning" | "failed";
+        /** ResidentInstanceV03 */
+        ResidentInstanceV03: {
+            identity?: components["schemas"]["ResidentIdentity"];
+            personality?: components["schemas"]["ResidentPersonality"];
+            dialogue?: components["schemas"]["ResidentDialogue"];
+            voice_profile?: components["schemas"]["ResidentVoiceProfile"];
+            avatar?: components["schemas"]["ResidentAvatar"];
+            metadata?: components["schemas"]["ResidentMetadata"];
+        };
+        /** ResidentMetadata */
+        ResidentMetadata: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            /**
+             * Mock
+             * @default true
+             */
+            mock: boolean;
+            /** Tags */
+            tags?: string[];
+            /** Notes */
+            notes?: string | null;
+        };
+        /** ResidentPersonality */
+        ResidentPersonality: {
+            /** Traits */
+            traits?: string[];
+            /**
+             * Speaking Style
+             * @default
+             */
+            speaking_style: string;
+            /** Boundaries */
+            boundaries?: string[];
+        };
+        /** ResidentPreviewRequestV03 */
+        ResidentPreviewRequestV03: {
+            resident_instance: components["schemas"]["ResidentInstanceV03"];
+            ui_state?: components["schemas"]["UiStateV03"] | null;
+        };
+        /** ResidentPreviewResponseV03 */
+        ResidentPreviewResponseV03: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            preview: components["schemas"]["OutputDtoV03"];
+            audit: components["schemas"]["AuditReportV03"];
+        };
+        /** ResidentVoiceProfile */
+        ResidentVoiceProfile: {
+            /**
+             * Voice Id
+             * @default mock_voice
+             */
+            voice_id: string;
+            /**
+             * Pitch
+             * @default medium
+             */
+            pitch: string;
+            /**
+             * Speed
+             * @default 1
+             */
+            speed: number;
+            /**
+             * Timbre
+             * @default neutral
+             */
+            timbre: string;
+            /**
+             * Mock
+             * @default true
+             */
+            mock: boolean;
+        };
         /** RunLog */
         RunLog: {
             /**
@@ -322,7 +802,7 @@ export interface components {
         RunResult: {
             /**
              * Schema Version
-             * @default 0.2.0
+             * @default 0.3.0
              */
             schema_version: string;
             /** Workflow Id */
@@ -350,11 +830,27 @@ export interface components {
          * @enum {string}
          */
         RunStatus: "pending" | "running" | "success" | "warning" | "error" | "skipped";
+        /**
+         * RuntimeContextV03
+         * @description Execution-only context. Contract type only; no endpoint executes it.
+         */
+        RuntimeContextV03: {
+            /** Run Id */
+            run_id: string;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Current Node Id */
+            current_node_id?: string | null;
+            /** Variables */
+            variables?: {
+                [key: string]: unknown;
+            };
+        };
         /** TemplateDefinition */
         TemplateDefinition: {
             /**
              * Schema Version
-             * @default 0.2.0
+             * @default 0.3.0
              */
             schema_version: string;
             /** Template Type */
@@ -371,31 +867,21 @@ export interface components {
             /** Templates */
             templates: components["schemas"]["TemplateDefinition"][];
         };
-        /** ValidateRequest */
-        ValidateRequest: {
-            workflow: components["schemas"]["Workflow"];
-        };
-        /** ValidateResponse */
-        ValidateResponse: {
-            package: components["schemas"]["ValidationReview"];
-            /** Layers */
-            layers: components["schemas"]["ValidationReview"][];
-            /** Nodes */
-            nodes: components["schemas"]["ValidationReview"][];
-        };
-        /** ValidationCheck */
-        ValidationCheck: {
-            /** Rule */
-            rule: string;
-            /**
-             * Level
-             * @enum {string}
-             */
-            level: "error" | "warning";
-            /** Target Id */
-            target_id?: string | null;
-            /** Message */
-            message: string;
+        /**
+         * UiStateV03
+         * @description Frontend-only state. It must never be embedded in output DTOs.
+         */
+        UiStateV03: {
+            /** Selected Node Id */
+            selected_node_id?: string | null;
+            /** Viewport */
+            viewport?: {
+                [key: string]: number;
+            };
+            /** Panels */
+            panels?: {
+                [key: string]: unknown;
+            };
         };
         /** ValidationError */
         ValidationError: {
@@ -410,125 +896,60 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        /** ValidationReview */
-        ValidationReview: {
-            /**
-             * Schema Version
-             * @default 0.2.0
-             */
-            schema_version: string;
-            scope: components["schemas"]["ReviewScope"];
-            status: components["schemas"]["ReviewStatus"];
-            /** Checks */
-            checks?: components["schemas"]["ValidationCheck"][];
-            /**
-             * Checked At
-             * Format: date-time
-             */
-            checked_at?: string;
-        };
-        /** Viewport */
-        Viewport: {
-            /**
-             * X
-             * @default 0
-             */
-            x: number;
-            /**
-             * Y
-             * @default 0
-             */
-            y: number;
-            /**
-             * Zoom
-             * @default 1
-             */
-            zoom: number;
-        };
-        /** Workflow */
-        Workflow: {
-            /**
-             * Schema Version
-             * @default 0.2.0
-             */
-            schema_version: string;
-            /** Workflow Id */
-            workflow_id?: string;
-            /** Name */
-            name: string;
-            /**
-             * Version
-             * @default 1.0.0
-             */
-            version: string;
-            /**
-             * Template Type
-             * @default blank
-             */
-            template_type: string;
-            /** Content Locale */
-            content_locale?: string | null;
-            /** Nodes */
-            nodes?: components["schemas"]["WorkflowNode"][];
-            /** Edges */
-            edges?: components["schemas"]["WorkflowEdge"][];
-            viewport?: components["schemas"]["Viewport"] | null;
-            metadata?: components["schemas"]["WorkflowMetadata"];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at?: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at?: string;
-        };
-        /** WorkflowEdge */
-        WorkflowEdge: {
-            /** Edge Id */
-            edge_id: string;
-            /** Source */
-            source: string;
-            /** Source Port */
-            source_port: string;
-            /** Target */
-            target: string;
-            /** Target Port */
-            target_port: string;
-        };
-        /** WorkflowMetadata */
-        WorkflowMetadata: {
+        /** WorkflowMetadataV03 */
+        WorkflowMetadataV03: {
             /** Description */
             description?: string | null;
             /** Author */
             author?: string | null;
             /** Tags */
-            tags?: string[] | null;
+            tags?: string[];
             /** Ui Language */
-            ui_language?: string | null;
+            ui_language?: ("zh" | "en") | null;
+            /**
+             * Mock
+             * @default true
+             */
+            mock: boolean;
         };
-        /** WorkflowNode */
-        WorkflowNode: {
-            /** Node Id */
-            node_id: string;
-            type: components["schemas"]["NodeType"];
-            category: components["schemas"]["NodeCategory"];
-            /** Title Key */
-            title_key: string;
-            /** Title Fallback */
-            title_fallback: string;
-            position?: components["schemas"]["Position"];
-            lock_level: components["schemas"]["LockLevel"];
-            /** Locale */
-            locale?: string | null;
-            /** Data */
-            data?: {
-                [key: string]: unknown;
-            };
-            ports?: components["schemas"]["Ports"];
-            validation?: components["schemas"]["ValidationReview"] | null;
+        /** WorkflowPayloadRequest */
+        WorkflowPayloadRequest: {
+            /** Workflow */
+            workflow: unknown;
+        };
+        /** WorkflowV03 */
+        WorkflowV03: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            /** Layers */
+            layers?: components["schemas"]["LayerV03"][];
+            /** Modules */
+            modules?: components["schemas"]["ModuleV03"][];
+            /** Nodes */
+            nodes?: components["schemas"]["NodeV03"][];
+            /** Edges */
+            edges?: components["schemas"]["EdgeV03"][];
+            metadata?: components["schemas"]["WorkflowMetadataV03"];
+        };
+        /** WorkflowValidationResponseV03 */
+        WorkflowValidationResponseV03: {
+            /**
+             * Schema Version
+             * @default 0.3.0
+             * @constant
+             */
+            schema_version: "0.3.0";
+            /** Valid */
+            valid: boolean;
+            audit: components["schemas"]["AuditReportV03"];
         };
     };
     responses: never;
@@ -560,6 +981,72 @@ export interface operations {
         };
     };
     workflow_schema_schema_workflow_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    workflow_schema_v0_3_schema_workflow_v0_3_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    resident_instance_schema_v0_3_schema_resident_instance_v0_3_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    node_registry_v0_3_schema_node_registry_v0_3_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -643,7 +1130,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ValidateRequest"];
+                "application/json": components["schemas"]["WorkflowPayloadRequest"];
             };
         };
         responses: {
@@ -653,7 +1140,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidateResponse"];
+                    "application/json": components["schemas"]["WorkflowValidationResponseV03"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_workflow_audit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowPayloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditResponse"];
                 };
             };
             /** @description Validation Error */
@@ -676,7 +1196,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MockRunRequest"];
+                "application/json": components["schemas"]["WorkflowPayloadRequest"];
             };
         };
         responses: {
@@ -720,6 +1240,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExportPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compile_resident_resident_compile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResidentCompileRequestV03"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResidentCompileResponseV03"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_resident_audit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResidentAuditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResidentAuditResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_resident_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResidentPreviewRequestV03"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResidentPreviewResponseV03"];
                 };
             };
             /** @description Validation Error */

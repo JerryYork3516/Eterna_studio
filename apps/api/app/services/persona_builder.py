@@ -1,4 +1,7 @@
-"""Persona Builder — 13-layer default structure (Contract §8, §8.1, M1).
+"""Legacy v0.2 persona builder.
+
+The mounted template route uses workflow_v0_3.build_persona_builder_v0_3. This
+file remains for historical compatibility only.
 
 Generates a generic 13-layer trunk workflow. The persona builder is just ONE
 template; the system itself stays domain-agnostic. The 13-layer order and the
@@ -27,7 +30,7 @@ from ..util import gen_id
 _LOCALES_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "locales")
 
 # (layer_index, title_key, default lock_level, module_tier) — Contract §8 (V7).
-# Order is fixed; v0.2 only adds the tier column, never reorders.
+# Order is fixed; the legacy tier column never reorders the trunk.
 LAYERS = [
     (1, "layer.source_input", LockLevel.editable, ModuleTier.core),
     (2, "layer.identity_core", LockLevel.locked, ModuleTier.core),

@@ -1,4 +1,7 @@
-"""ValidationReview logic — Contract §3.1, §7.5.
+"""Legacy v0.2 validator.
+
+The mounted runtime path uses services.audit_v0_3 instead. This file remains for
+historical compatibility only and must not be used as the main validator.
 
 Combines:
   - graph-level checks: invalid_edge, orphan_node, cycle_detected, mixed_empty

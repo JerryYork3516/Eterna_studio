@@ -1,4 +1,9 @@
-"""Pydantic models — the single authoritative source for Schema Contract v0.2."""
+"""Pydantic models.
+
+WorkflowV03 and ResidentInstanceV03 are the runtime source of truth for Schema
+Contract v0.3. Older v0.2-shaped models remain importable only for legacy file
+compatibility and adapter boundaries.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +23,15 @@ from .layer import LayerContainerData
 from .review import ValidationCheck, ValidationReview
 from .run import Artifact, NodeRunResult, RunLog, RunResult
 from .template import TemplateDefinition
+from .v0_3 import (
+    AuditFinding,
+    AuditReportV03,
+    NodeInputField,
+    NodeRegistryEntry,
+    NodeV03,
+    ResidentInstanceV03,
+    WorkflowV03,
+)
 from .workflow import (
     Port,
     Ports,
@@ -49,6 +63,13 @@ __all__ = [
     "RunLog",
     "RunResult",
     "TemplateDefinition",
+    "AuditFinding",
+    "AuditReportV03",
+    "NodeInputField",
+    "NodeRegistryEntry",
+    "NodeV03",
+    "ResidentInstanceV03",
+    "WorkflowV03",
     "Port",
     "Ports",
     "Position",

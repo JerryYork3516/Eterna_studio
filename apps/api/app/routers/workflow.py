@@ -1,41 +1,40 @@
-"""Workflow operations — Contract §7.5, §7.6, §7.7."""
+"""Workflow API router — v0.3 is the single runtime path."""
 
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..models.export import ExportPreview
-from ..models.review import ValidationReview
 from ..models.run import RunResult
-from ..models.workflow import Workflow
-from ..services import exporter, mock_runner, validator
+from ..models.v0_3 import AuditReportV03, WorkflowValidationResponseV03
+from ..services.audit_v0_3 import audit_workflow
+from ..services.workflow_v0_3 import export_preview_v0_3, mock_run_v0_3, normalize_workflow_v0_3
 
-router = APIRouter(prefix="/workflow", tags=["workflow"])
-
-
-# --- §7.5 validate ---
-class ValidateRequest(BaseModel):
-    workflow: Workflow
+router = APIRouter(prefix="/workflow", tags=["workflow-v0.3"])
 
 
-class ValidateResponse(BaseModel):
-    package: ValidationReview
-    layers: List[ValidationReview]
-    nodes: List[ValidationReview]
+class WorkflowPayloadRequest(BaseModel):
+    workflow: Any
 
 
-@router.post("/validate", response_model=ValidateResponse)
-def validate(req: ValidateRequest) -> ValidateResponse:
-    package, layers, nodes = validator.validate(req.workflow)
-    return ValidateResponse(package=package, layers=layers, nodes=nodes)
+class AuditResponse(BaseModel):
+    audit: AuditReportV03
 
 
-# --- §7.6 mock-run ---
-class MockRunRequest(BaseModel):
-    workflow: Workflow
+@router.post("/validate", response_model=WorkflowValidationResponseV03)
+def validate(req: WorkflowPayloadRequest) -> WorkflowValidationResponseV03:
+    workflow = normalize_workflow_v0_3(req.workflow)
+    audit = audit_workflow(workflow)
+    return WorkflowValidationResponseV03(valid=audit.status != "FAIL", audit=audit)
+
+
+@router.post("/audit", response_model=AuditResponse)
+def audit(req: WorkflowPayloadRequest) -> AuditResponse:
+    workflow = normalize_workflow_v0_3(req.workflow)
+    return AuditResponse(audit=audit_workflow(workflow))
 
 
 class MockRunResponse(BaseModel):
@@ -43,14 +42,14 @@ class MockRunResponse(BaseModel):
 
 
 @router.post("/mock-run", response_model=MockRunResponse)
-def mock_run(req: MockRunRequest) -> MockRunResponse:
-    return MockRunResponse(run=mock_runner.mock_run(req.workflow))
+def mock_run(req: WorkflowPayloadRequest) -> MockRunResponse:
+    workflow = normalize_workflow_v0_3(req.workflow)
+    return MockRunResponse(run=mock_run_v0_3(workflow))
 
 
-# --- §7.7 export-preview ---
 class ExportPreviewRequest(BaseModel):
-    workflow: Workflow
-    export_kind: Literal["workflow_json", "persona"]
+    workflow: Any
+    export_kind: Literal["workflow_json", "persona", "resident"]
 
 
 class ExportPreviewResponse(BaseModel):
@@ -59,5 +58,5 @@ class ExportPreviewResponse(BaseModel):
 
 @router.post("/export-preview", response_model=ExportPreviewResponse)
 def export_preview(req: ExportPreviewRequest) -> ExportPreviewResponse:
-    preview = exporter.export_preview(req.workflow, req.export_kind)
-    return ExportPreviewResponse(preview=preview)
+    workflow = normalize_workflow_v0_3(req.workflow)
+    return ExportPreviewResponse(preview=export_preview_v0_3(workflow, req.export_kind))

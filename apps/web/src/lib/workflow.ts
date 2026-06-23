@@ -1,6 +1,6 @@
 import type { Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
 
-const SCHEMA_VERSION = "0.2.0";
+const SCHEMA_VERSION = "0.3.0";
 const NODE_TYPES = new Set(["input", "transform", "model", "agent", "review", "layer_container", "output", "export"]);
 const NODE_CATEGORIES = new Set(["source", "processing", "ai", "control", "container", "sink"]);
 const LOCK_LEVELS = new Set(["editable", "review_required", "locked", "system_locked", "mixed"]);

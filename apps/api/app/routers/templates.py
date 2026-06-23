@@ -8,8 +8,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..models.template import TemplateDefinition
-from ..models.workflow import Workflow
-from ..services import persona_builder
+from ..models.v0_3 import WorkflowV03
+from ..services.workflow_v0_3 import build_persona_builder_v0_3
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
@@ -58,7 +58,7 @@ class PersonaBuilderRequest(BaseModel):
 
 
 class PersonaBuilderResponse(BaseModel):
-    workflow: Workflow
+    workflow: WorkflowV03
 
 
 @router.get("/list", response_model=TemplatesListResponse)
@@ -68,7 +68,7 @@ def list_templates() -> TemplatesListResponse:
 
 @router.post("/persona-builder", response_model=PersonaBuilderResponse)
 def create_persona_builder(req: PersonaBuilderRequest) -> PersonaBuilderResponse:
-    workflow = persona_builder.build(
+    workflow = build_persona_builder_v0_3(
         name=req.name,
         ui_language=req.ui_language or "zh",
     )

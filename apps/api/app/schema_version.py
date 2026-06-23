@@ -3,4 +3,4 @@
 Every core top-level object references SCHEMA_VERSION (Contract §0, §9.3).
 """
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"

@@ -1,4 +1,7 @@
-"""export-preview — Contract §5, §7.7.
+"""Legacy v0.2 export preview.
+
+The mounted runtime path uses workflow_v0_3.export_preview_v0_3. This file
+remains for historical compatibility only.
 
 Two export kinds:
   - workflow_json: the workflow itself, serialized.
