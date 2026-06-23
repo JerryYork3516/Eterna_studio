@@ -1,8 +1,6 @@
 import type { Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
 
 const SCHEMA_VERSION = "0.3.0";
-const NODE_TYPES = new Set(["input", "transform", "model", "agent", "review", "layer_container", "output", "export"]);
-const NODE_CATEGORIES = new Set(["source", "processing", "ai", "control", "container", "sink"]);
 const LOCK_LEVELS = new Set(["editable", "review_required", "locked", "system_locked", "mixed"]);
 const MODULE_TIERS = new Set(["core", "plugin", "later"]);
 
@@ -109,8 +107,8 @@ function sanitizeNode(value: unknown, index: number, nodeIds: Set<string>): Work
   }
   nodeIds.add(nodeId);
 
-  const type = expectEnum(node.type, NODE_TYPES, `nodes[${index}].type`);
-  const category = expectEnum(node.category, NODE_CATEGORIES, `nodes[${index}].category`);
+  const type = expectString(node.type, `nodes[${index}].type`);
+  const category = expectString(node.category, `nodes[${index}].category`);
   const lockLevel = expectEnum(node.lock_level, LOCK_LEVELS, `nodes[${index}].lock_level`);
   if (lockLevel === "mixed" && type !== "layer_container") {
     throw new Error(`Invalid workflow: mixed lock_level is only valid for layer_container (${nodeId})`);

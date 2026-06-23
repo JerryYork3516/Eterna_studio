@@ -1,5 +1,7 @@
 import type {
   ExportPreview,
+  NodeRegistryEntry,
+  ResidentCompileResponseV03,
   RunResult,
   TemplateDefinition,
   ValidateResponse,
@@ -112,10 +114,19 @@ export const api = {
       body: JSON.stringify({ workflow })
     });
   },
-  exportPreview(workflow: Workflow, exportKind: "workflow_json" | "persona") {
+  exportPreview(workflow: Workflow, exportKind: "workflow_json" | "persona" | "resident") {
     return request<{ preview: ExportPreview }>("/workflow/export-preview", {
       method: "POST",
       body: JSON.stringify({ workflow, export_kind: exportKind })
+    });
+  },
+  getNodeRegistryV03() {
+    return request<Record<string, NodeRegistryEntry>>("/schema/node-registry-v0.3");
+  },
+  compileResident(workflow: Workflow) {
+    return request<ResidentCompileResponseV03>("/resident/compile", {
+      method: "POST",
+      body: JSON.stringify({ workflow })
     });
   }
 };

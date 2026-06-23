@@ -27,7 +27,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
   const { schemaNode, viewLabel, viewIndex, groupLabel, uiGroup, uiTags = [], uiColor } = data as CanvasNodeData;
   const label = viewLabel ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
-  const typeLabel = getNodeDefinition(schemaNode.type)?.label ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
+  const typeLabel = getNodeDefinition(schemaNode.type)?.display_name ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const moduleTier = typeof schemaNode.data?.module_tier === "string" ? schemaNode.data.module_tier : null;
   const reviewStatus =

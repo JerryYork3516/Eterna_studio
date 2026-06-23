@@ -20,13 +20,12 @@ import {
   type ReactFlowInstance
 } from "@xyflow/react";
 import { translate, type Language } from "@/i18n";
-import { executeWorkflow } from "@/engine/executeWorkflow";
 import { api } from "@/lib/api";
-import type { Artifact, NodeType, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
+import type { Artifact, NodeType, ResidentInstanceV03, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
 import { safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow, readWorkflowFile, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadModuleCanvas, saveModuleCanvas } from "@/lib/persistence";
-import { getNodeDefinition, getNodeStatus } from "@/registry/nodeRegistry";
+import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard } from "@/components/canvas/WorkflowNodeCard";
@@ -56,56 +55,13 @@ type MockNodeType =
   | "export_package";
 type ModuleNodeType = NodeType | MockNodeType;
 
-// Stage 1/2 core node library (front-end mock only). The library is one group,
-// shown internally by category.
-const nodeLibraryCategories: { id: string; labelKey: string; labelFallback: string; nodes: ModuleNodeType[] }[] = [
-  { id: "input", labelKey: "lib.category.input", labelFallback: "Input", nodes: ["text_input"] },
-  { id: "persona", labelKey: "lib.category.persona", labelFallback: "Persona", nodes: ["identity", "personality", "dialogue"] },
-  {
-    id: "media",
-    labelKey: "lib.category.media",
-    labelFallback: "Media",
-    nodes: ["voice_profile", "particle_avatar", "tts_adapter", "ar_particle", "particle_physics", "avatar_preview"]
-  },
-  { id: "model", labelKey: "lib.category.model", labelFallback: "Model", nodes: ["model_adapter", "model_loader", "local_model", "llm_adapter"] },
-  { id: "integration", labelKey: "lib.category.integration", labelFallback: "Integration", nodes: ["api_connector"] },
-  { id: "memory", labelKey: "lib.category.memory", labelFallback: "Memory", nodes: ["memory", "knowledge"] },
-  { id: "tools", labelKey: "lib.category.tools", labelFallback: "Tools", nodes: ["tools"] },
-  { id: "runtime", labelKey: "lib.category.runtime", labelFallback: "Runtime", nodes: ["runtime_mock"] },
-  { id: "output", labelKey: "lib.category.output", labelFallback: "Output", nodes: ["output", "compile_resident", "export_package"] }
-];
-const libraryNodeTypes: ModuleNodeType[] = nodeLibraryCategories.flatMap((category) => category.nodes);
 const NODE_DND_MIME = "application/eterna-node";
 
-// Main canvas goes through the workflow schema sanitizer, which only allows
-// backend NodeTypes. Mock library types are carried on a valid backend type and
-// keep their mock identity in data.mock_type (schema stays untouched).
-const MOCK_TO_BACKEND_TYPE: Record<string, NodeType> = {
-  text_input: "input",
-  identity: "transform",
-  personality: "transform",
-  dialogue: "transform",
-  voice_profile: "model",
-  particle_avatar: "model",
-  tts_adapter: "model",
-  ar_particle: "model",
-  particle_physics: "model",
-  avatar_preview: "model",
-  model_adapter: "model",
-  model_loader: "model",
-  local_model: "model",
-  llm_adapter: "model",
-  api_connector: "agent",
-  memory: "review",
-  knowledge: "review",
-  tools: "agent",
-  runtime_mock: "review",
-  output: "output",
-  compile_resident: "output",
-  export_package: "export"
-};
-
 function backendNodeCategory(type: NodeType): string {
+  const definition = getNodeDefinition(String(type));
+  if (definition?.category) {
+    return definition.category;
+  }
   switch (type) {
     case "input":
       return "source";
@@ -189,6 +145,12 @@ type CanvasContextMenuState = {
   y: number;
   items: CanvasContextMenuItem[];
 };
+type NodeLibraryCategory = {
+  id: string;
+  labelKey: string;
+  labelFallback: string;
+  nodes: ModuleNodeType[];
+};
 type ContextMenuEvent = ReactMouseEvent | MouseEvent;
 type SaveStatus = "saved" | "dirty" | "error";
 type WorkflowGraphSnapshot = {
@@ -196,13 +158,7 @@ type WorkflowGraphSnapshot = {
   edges: WorkflowEdge[];
 };
 
-type ResidentInstance = {
-  identity?: { name?: string; role?: string };
-  personality?: { traits?: string[]; speaking_style?: string; boundaries?: string[] };
-  dialogue?: { tone?: string; formality?: string; sample?: string };
-  voice_profile?: { voice_id?: string; pitch?: string; speed?: number; timbre?: string };
-  avatar?: { preset?: string; color?: string; density?: number; motion?: string };
-};
+type ResidentInstance = ResidentInstanceV03;
 
 type ResidentPreviewTab = "dialogue" | "voice" | "avatar";
 
@@ -282,10 +238,6 @@ function extractResidentInstance(value: unknown): ResidentInstance | null {
   if (isRecord(direct)) {
     return direct as ResidentInstance;
   }
-  const personaResult = value.persona_result;
-  if (isRecord(personaResult) && isRecord(personaResult.resident_instance)) {
-    return personaResult.resident_instance as ResidentInstance;
-  }
   return null;
 }
 
@@ -317,6 +269,26 @@ function getNodeTypeLabel(type: string, t: (key: string, fallback?: string) => s
 function getNodeStatusLabel(type: string, t: (key: string, fallback?: string) => string) {
   const status = getNodeStatus(type);
   return status ? t(`node.status.${status}`, status) : null;
+}
+
+function buildNodeLibraryCategories(entries: NodeDefinition[]): NodeLibraryCategory[] {
+  const groups = new Map<string, NodeLibraryCategory>();
+  for (const entry of entries) {
+    const id = entry.category || "other";
+    if (!groups.has(id)) {
+      groups.set(id, {
+        id,
+        labelKey: `lib.category.${id}`,
+        labelFallback: id.replace(/_/g, " "),
+        nodes: []
+      });
+    }
+    groups.get(id)?.nodes.push(entry.type as ModuleNodeType);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    nodes: group.nodes.sort((a, b) => getNodeTypeLabel(a, (_key, fallback) => fallback ?? a).localeCompare(getNodeTypeLabel(b, (_key, fallback) => fallback ?? b)))
+  }));
 }
 
 function shouldUseNativeContextMenu(target: EventTarget | null) {
@@ -406,59 +378,6 @@ function makeFlowNode(schemaNode: WorkflowNode, offset?: { x: number; y: number 
     position: offset ? { x: position.x - offset.x, y: position.y - offset.y } : position,
     data: { schemaNode, layer_id: uiLayerId ?? schemaNode.data?.layer_id }
   };
-}
-
-function makeUiModuleFlowNodes(
-  layer: LayerSummary,
-  moduleNames: Record<string, string> = {},
-  uiTags: Record<string, string[]> = {},
-  uiGroups: Record<string, string> = {},
-  uiColors: Record<string, string> = {}
-): Node[] {
-  const moduleCount = 3 + ((layer.displayIndex - 1) % 3);
-  return Array.from({ length: moduleCount }, (_, index) => {
-    const moduleNumber = index + 1;
-    const nodeId = `${layer.node.node_id}_module_${moduleNumber}`;
-    const moduleNode = {
-      node_id: nodeId,
-      type: "module",
-      category: "processing",
-      title_key: `ui.module.${layer.node.node_id}.${moduleNumber}`,
-      title_fallback: moduleNames[nodeId] || `Module ${moduleNumber}`,
-      position: {
-        x: 0,
-        y: 0
-      },
-      lock_level: "editable",
-      locale: null,
-      data: {
-        parent_layer: layer.node.node_id,
-        layer_index: layer.index,
-        module_tier: layer.tier,
-        status: "ui-only",
-        ui_tags: uiTags[nodeId] ?? [],
-        ui_group: uiGroups[nodeId] ?? "",
-        ui_color: uiColors[nodeId] ?? ""
-      },
-      ports: {
-        inputs: [],
-        outputs: []
-      },
-      validation: null
-    } as unknown as WorkflowNode;
-
-    return {
-      id: moduleNode.node_id,
-      type: "module",
-      hidden: true,
-      position: moduleNode.position ?? { x: 0, y: 0 },
-      data: {
-        schemaNode: moduleNode,
-        parent_layer: layer.node.node_id,
-        layer_index: layer.index
-      }
-    } satisfies Node;
-  });
 }
 
 function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
@@ -575,6 +494,9 @@ export function CanvasShell() {
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [residentPreviewOutput, setResidentPreviewOutput] = useState<unknown>(null);
+  const [registryRevision, setRegistryRevision] = useState(0);
+  const nodeLibraryCategories = useMemo(() => buildNodeLibraryCategories(getNodeRegistryEntries()), [registryRevision]);
+  const libraryNodeTypes = useMemo(() => nodeLibraryCategories.flatMap((category) => category.nodes), [nodeLibraryCategories]);
   const allCategoriesCollapsed = collapsedCategories.size >= nodeLibraryCategories.length;
   const toggleCategory = useCallback((id: string) => {
     setCollapsedCategories((current) => {
@@ -620,6 +542,27 @@ export function CanvasShell() {
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
+  useEffect(() => {
+    let active = true;
+    api
+      .getNodeRegistryV03()
+      .then((registry) => {
+        if (!active) {
+          return;
+        }
+        setBackendNodeRegistry(registry);
+        setRegistryRevision((revision) => revision + 1);
+        appendLog(`${translate(language, "status.nodeRegistryLoaded", "Node registry loaded")}: ${Object.keys(registry).length}`);
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`${translate(language, "error.nodeRegistry", "Node registry failed")}: ${(error as Error).message}`, "error");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [appendLog, language]);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const commitWorkflowGraph = useCallback(
     (nextNodes: WorkflowNode[], nextEdges: WorkflowEdge[]) => {
@@ -700,25 +643,10 @@ export function CanvasShell() {
     [language, layerNodes, nodes]
   );
 
-  // UI-only module placeholders are generated client-side (makeUiModuleFlowNodes)
-  // and never live in store.nodes, so resolve the selected node against both sets.
-  const uiModuleNodes = useMemo(
-    () =>
-      layerSummaries.flatMap((layer) =>
-        makeUiModuleFlowNodes(layer, moduleNames, uiTags, uiGroups, uiColors).map((node) => (node.data as { schemaNode: WorkflowNode }).schemaNode)
-      ),
-    [layerSummaries, moduleNames, uiColors, uiGroups, uiTags]
-  );
-  const selectedNode = useMemo(
-    () =>
-      nodes.find((node) => node.node_id === selectedNodeId) ??
-      uiModuleNodes.find((node) => node.node_id === selectedNodeId) ??
-      null,
-    [nodes, uiModuleNodes, selectedNodeId]
-  );
+  const selectedNode = useMemo(() => nodes.find((node) => node.node_id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
   const resolveModuleNode = useCallback(
-    (id: string) => nodes.find((node) => node.node_id === id) ?? uiModuleNodes.find((node) => node.node_id === id) ?? null,
-    [nodes, uiModuleNodes]
+    (id: string) => nodes.find((node) => node.node_id === id) ?? null,
+    [nodes]
   );
   const moduleTabItems = useMemo(
     () =>
@@ -1063,12 +991,6 @@ export function CanvasShell() {
         if (node.type === "layer_container") {
           return true;
         }
-        // User-added mock nodes always render on the main canvas (otherwise a
-        // drop position inside a layer's y-range would hide them and make them
-        // impossible to select / delete).
-        if (node.data?.mock_type) {
-          return true;
-        }
         return inferNodeLayerIndex(node, layerNodes) === null;
       })
       .map((schemaNode) => {
@@ -1123,15 +1045,13 @@ export function CanvasShell() {
           }
         };
       });
-    const uiModuleFlowNodes = layerSummaries.flatMap((layer) => makeUiModuleFlowNodes(layer, moduleNames, uiTags, uiGroups, uiColors));
-
     const expandedLayers = [...expandedLayerIds].map((id) => layerById.get(id)).filter((layer): layer is LayerSummary => Boolean(layer));
 
     if (!expandedLayers.length) {
-      return [...schemaFlowNodes, ...uiModuleFlowNodes];
+      return schemaFlowNodes;
     }
 
-    const allReactFlowNodes = [...schemaFlowNodes, ...uiModuleFlowNodes];
+    const allReactFlowNodes = schemaFlowNodes;
     const reactFlowDataSample = allReactFlowNodes.slice(0, 5).map((node) => ({ id: node.id, data: node.data }));
     const missingLayerLinkCount = allReactFlowNodes.filter((node) => {
       const data = (node.data as { schemaNode: WorkflowNode }).schemaNode.data ?? {};
@@ -1142,12 +1062,9 @@ export function CanvasShell() {
 
     return [
       ...schemaFlowNodes,
-      ...uiModuleFlowNodes,
       ...expandedLayers.map((layer) => {
         const layerId = layer.node.node_id;
-        const subnodes = allReactFlowNodes
-          .filter((node) => node.type === "module" && (node.data as { parent_layer?: unknown }).parent_layer === layerId)
-          .map((node) => (node.data as { schemaNode: WorkflowNode }).schemaNode);
+        const subnodes = layer.childNodes;
         console.log("[LayerWorkspace] layer.id", layerId);
         console.log("[LayerWorkspace] filtered nodes count", subnodes.length);
         return {
@@ -1615,18 +1532,19 @@ export function CanvasShell() {
         appendLog(t("error.noWorkflow"), "warn");
         return;
       }
-      const carrier = MOCK_TO_BACKEND_TYPE[type] ?? "transform";
-      const status = (getNodeStatus(type) ?? "READY").toLowerCase();
+      const definition = getNodeDefinition(type);
       const newNode = {
         node_id: `nd_${type}_${Date.now()}`,
-        type: carrier,
-        category: backendNodeCategory(carrier),
+        type,
+        category: definition?.category ?? backendNodeCategory(type),
         title_key: `node.type.${type}`,
-        title_fallback: type,
+        title_fallback: definition?.display_name ?? type,
         position,
         lock_level: "editable",
         locale: null,
-        data: { mock_type: type, ui_state: status },
+        data: Object.fromEntries((definition?.input_schema ?? []).map((field: NodeInputField) => [field.key, field.default ?? ""])),
+        input_schema: definition?.input_schema,
+        output_schema: definition?.output_schema,
         ports: {
           inputs: [{ port_id: "p_in", name: "in", direction: "in" }],
           outputs: [{ port_id: "p_out", name: "out", direction: "out" }]
@@ -2301,6 +2219,7 @@ export function CanvasShell() {
                     moduleNode={activeModuleNode}
                     initialSubnodes={activeModuleSubnodes}
                     pendingAdd={pendingModuleAdd?.moduleId === activeModuleNode.node_id ? pendingModuleAdd : null}
+                    libraryNodeTypes={libraryNodeTypes}
                     language={language}
                     t={t}
                     onRenameModule={(id, name) => setModuleNames((current) => ({ ...current, [id]: name }))}
@@ -3233,6 +3152,7 @@ function ModuleCanvasPanel({
   moduleNode,
   initialSubnodes,
   pendingAdd,
+  libraryNodeTypes,
   language,
   t,
   onRenameModule,
@@ -3242,6 +3162,7 @@ function ModuleCanvasPanel({
   moduleNode: WorkflowNode;
   initialSubnodes: WorkflowNode[];
   pendingAdd: PendingModuleAdd | null;
+  libraryNodeTypes: ModuleNodeType[];
   language: Language;
   t: (key: string, fallback?: string) => string;
   onRenameModule: (id: string, name: string) => void;
@@ -3304,24 +3225,22 @@ function ModuleCanvasPanel({
     addedRef.current += 1;
     const seq = addedRef.current;
     const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
-    const category =
-      type === "input"
-        ? "source"
-        : type === "output" || type === "export"
-          ? "sink"
-          : type === "layer_container"
-            ? "container"
-            : "processing";
+    const definition = getNodeDefinition(type);
     const schemaNode = ensurePorts({
       node_id: id,
       type,
-      category,
+      category: definition?.category ?? backendNodeCategory(type),
       title_key: `node.type.${type}`,
-      title_fallback: type,
+      title_fallback: definition?.display_name ?? type,
       position: { x: 0, y: 0 },
       lock_level: "editable",
       locale: null,
-      data: { parent_module: moduleNode.node_id, status: "draft" },
+      data: {
+        parent_module: moduleNode.node_id,
+        ...Object.fromEntries((definition?.input_schema ?? []).map((field: NodeInputField) => [field.key, field.default ?? ""]))
+      },
+      input_schema: definition?.input_schema,
+      output_schema: definition?.output_schema,
       ports: { inputs: [], outputs: [] },
       validation: null
     } as unknown as WorkflowNode);
@@ -3810,6 +3729,7 @@ function ModuleCanvasPanel({
       deleteSelected,
       editSelectedGroup,
       editSelectedTags,
+      libraryNodeTypes,
       moduleNodes,
       pasteModuleNode,
       renameModule,
@@ -3818,7 +3738,7 @@ function ModuleCanvasPanel({
     ]
   );
 
-  const handleRunWorkflow = useCallback(() => {
+  const handleRunWorkflow = useCallback(async () => {
     try {
       // Inline input (under the node params), not a browser prompt.
       const rawInput = runInputText;
@@ -3839,7 +3759,21 @@ function ModuleCanvasPanel({
 
       const executableNodes = moduleNodes
         .map((node) => (node.data as { schemaNode?: WorkflowNode }).schemaNode)
-        .filter((node): node is WorkflowNode => Boolean(node && String(node.type) !== "module"));
+        .filter((node): node is WorkflowNode => Boolean(node && String(node.type) !== "module"))
+        .map((node) => {
+          if (!["text_input", "input"].includes(String(node.type))) {
+            return node;
+          }
+          const sourceText = typeof runInput === "string" ? runInput : JSON.stringify(runInput);
+          return {
+            ...node,
+            data: {
+              ...(node.data ?? {}),
+              source_text: sourceText,
+              text: sourceText
+            }
+          };
+        });
       const executableNodeIds = new Set(executableNodes.map((node) => node.node_id));
       const executableEdges = moduleEdges
         .filter((edge) => executableNodeIds.has(edge.source) && executableNodeIds.has(edge.target))
@@ -3851,18 +3785,15 @@ function ModuleCanvasPanel({
           target_port: typeof edge.targetHandle === "string" ? edge.targetHandle : "p_in"
         })) as WorkflowEdge[];
 
-      const result = executeWorkflow(
-        {
-          schema_version: "0.3.0",
-          name: title,
-          version: "1.0.0",
-          template_type: "module_canvas",
-          nodes: executableNodes,
-          edges: executableEdges,
-          metadata: {}
-        } as Workflow,
-        runInput
-      );
+      const result = await api.compileResident({
+        schema_version: "0.3.0",
+        name: title,
+        version: "1.0.0",
+        template_type: "module_canvas",
+        nodes: executableNodes,
+        edges: executableEdges,
+        metadata: { mock: true }
+      } as Workflow);
       setExecutionResult(result);
       onExecutionResult(result);
       setExecutionError(null);
@@ -4149,9 +4080,9 @@ function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | nu
     );
   }
 
-  const dialogue = resident.dialogue ?? {};
-  const voice = resident.voice_profile ?? {};
-  const avatar = resident.avatar ?? {};
+  const dialogue: NonNullable<ResidentInstance["dialogue"]> = resident.dialogue ?? { tone: "", formality: "", sample: "" };
+  const voice: NonNullable<ResidentInstance["voice_profile"]> = resident.voice_profile ?? { voice_id: "", pitch: "", speed: 1, timbre: "", mock: true };
+  const avatar: NonNullable<ResidentInstance["avatar"]> = resident.avatar ?? { preset: "", color: "#4f8cff", density: 0.6, motion: "", mock: true };
   const tone = dialogue.tone || t("preview.defaultTone", "calm");
   const sample = dialogue.sample || t("preview.noDialogueSample", "No dialogue sample is available yet.");
   const avatarColor = avatar.color || "#4f8cff";

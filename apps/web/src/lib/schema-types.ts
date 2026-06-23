@@ -9,6 +9,21 @@ export type ValidateResponse = components["schemas"]["WorkflowValidationResponse
 export type WorkflowV03 = components["schemas"]["WorkflowV03"];
 export type ResidentInstanceV03 = components["schemas"]["ResidentInstanceV03"];
 export type AuditReportV03 = components["schemas"]["AuditReportV03"];
+export type NodeInputField = components["schemas"]["NodeInputField"];
+export type ResidentCompileResponseV03 = components["schemas"]["ResidentCompileResponseV03"];
+export type OutputSchemaField = components["schemas"]["OutputSchemaField"];
+export type NodeStatus = components["schemas"]["NodeStatus"];
+export type NodeRegistryEntry = {
+  type: string;
+  category: string;
+  display_name: string;
+  description: string;
+  input_schema: NodeInputField[];
+  output_schema: OutputSchemaField[];
+  status: NodeStatus;
+  mock_executor?: string | null;
+  audit_rules: string[];
+};
 
 export type NodeType =
   | "input"
@@ -58,7 +73,8 @@ export type WorkflowEdge = {
 };
 
 export type Workflow = {
-  schema_version: "0.3.0" | string;
+  // Schema lock: v0.3 single-source enforcement — exactly "0.3.0", no string union.
+  schema_version: "0.3.0";
   workflow_id?: string;
   name: string;
   version?: string;
