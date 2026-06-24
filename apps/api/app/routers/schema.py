@@ -54,6 +54,15 @@ def protocol_version() -> Dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION_V0_4, "protocol_version": PROTOCOL_VERSION_V0_4}
 
 
+@router.get("/node-registry-v0.4")
+def node_registry_v0_4() -> Dict[str, Any]:
+    # Node type definitions are version-agnostic content (input/output schema,
+    # status, mock_executor, audit_rules). v0.4 reuses the same registry; the
+    # response shape is identical to /schema/node-registry-v0.3 (a map keyed by
+    # node type) so the frontend single source can switch URL with no reshape.
+    return {key: value.model_dump(mode="json") for key, value in NODE_REGISTRY.items()}
+
+
 @router.get("/module-catalog-v0.4", response_model=ModuleCatalogResponseV04)
 def module_catalog_v0_4() -> ModuleCatalogResponseV04:
     layers = [LayerRefV04(layer_id=lid, layer_name=name, layer_order=order) for lid, name, order in CANONICAL_LAYERS]
