@@ -18,12 +18,12 @@ from ..models.v0_4 import (
 )
 
 
-def _slot(slot_id: str, slot_type: SlotType) -> SlotV04:
+def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = None) -> SlotV04:
     return SlotV04(
         slot_id=slot_id,
         slot_type=slot_type,
         provider=None,
-        engine_binding=None,
+        engine_binding=engine_binding,  # binds an Engine, never a real provider this stage
         enabled=False,
         status=ProtocolStatus.mock,
         fallback_policy=FallbackPolicy(on_error=OnError.mock, retry=0, fallback_provider=None),
@@ -31,8 +31,9 @@ def _slot(slot_id: str, slot_type: SlotType) -> SlotV04:
 
 
 # One mock slot per allowed slot_type. slot_id values are unique.
+# slot_llm binds the LLM mock engine (engine_binding -> Engine -> mock provider).
 SLOT_CATALOG: List[SlotV04] = [
-    _slot("slot_llm", SlotType.llm),
+    _slot("slot_llm", SlotType.llm, engine_binding="llm_mock"),
     _slot("slot_tts", SlotType.tts),
     _slot("slot_memory", SlotType.memory),
     _slot("slot_avatar", SlotType.avatar),

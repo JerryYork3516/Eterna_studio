@@ -235,7 +235,70 @@ class PersonaV04(V04BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+# --- Engine Registry -------------------------------------------------------
+class EngineType(str, Enum):
+    llm = "llm"  # Stage 5: only the LLM engine is allowed.
+
+
+class EngineV04(V04BaseModel):
+    """Real capability adapter layer (Stage 5: mock provider only).
+
+    Binding chain: Node.slot_binding -> Slot.engine_binding -> Engine -> Provider.
+    No real AI/provider, no API key read this stage.
+    """
+
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    engine_id: str
+    engine_type: EngineType = EngineType.llm
+    engine_name: str
+    supported_slot_types: List[SlotType] = Field(default_factory=list)
+    providers: List[str] = Field(default_factory=lambda: ["mock"])
+    status: ProtocolStatus = ProtocolStatus.mock
+
+
+# --- Permission + risk decision -------------------------------------------
+class PermissionResult(str, Enum):
+    allowed = "allowed"
+    denied = "denied"
+    requires_human_confirm = "requires_human_confirm"
+
+
+class Decision(str, Enum):
+    allowed = "allowed"
+    blocked = "blocked"
+
+
+class PermissionDecisionV04(V04BaseModel):
+    risk_level: RiskLevel
+    permission_result: PermissionResult
+    blocked_or_allowed: Decision
+    audit_required: bool
+    decision_reason: str
+
+
+# --- Audit log -------------------------------------------------------------
+class AuditLogEntryV04(V04BaseModel):
+    """Factual record of a gated action. Not used by any UI display logic."""
+
+    action_id: str
+    module_id: Optional[str] = None
+    actor: str = "system"
+    input: Dict[str, Any] = Field(default_factory=dict)
+    output: Dict[str, Any] = Field(default_factory=dict)
+    decision_reason: str = ""
+    risk_level: RiskLevel = RiskLevel.none
+    permission_result: PermissionResult = PermissionResult.allowed
+    blocked_or_allowed: Decision = Decision.allowed
+    timestamp: str
+    human_confirmed_by: Optional[str] = None
+
+
 # --- Catalog + validation responses ---------------------------------------
+class EngineRegistryResponseV04(V04BaseModel):
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    engines: List[EngineV04] = Field(default_factory=list)
+
+
 class ModuleCatalogResponseV04(V04BaseModel):
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     layers: List[LayerRefV04] = Field(default_factory=list)

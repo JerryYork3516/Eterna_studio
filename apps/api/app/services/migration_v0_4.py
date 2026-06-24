@@ -10,18 +10,21 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from ..models.v0_3 import WorkflowV03
+from ..models.v0_3 import ResidentInstanceV03, WorkflowV03
 from ..models.v0_4 import (
     CANONICAL_LAYER_IDS,
     EdgeV04,
     LayerRefV04,
     MigrationResponseV04,
     NodeV04,
+    PersonaIdentityV04,
+    PersonaV04,
     ProtocolValidationFinding,
     SlotType,
     WorkflowV04,
     WorkflowValidationResponseV04,
 )
+from ..util import gen_id
 from .workflow_v0_3 import normalize_workflow_v0_3
 
 _LAYER_NUM = re.compile(r"layer[_-]?(\d+)", re.I)
@@ -111,6 +114,36 @@ def migrate_workflow_to_v0_4(value: Any) -> WorkflowV04:
             "legacy_modules": [module.model_dump(mode="json") for module in workflow.modules],
         },
         metadata=workflow.metadata.model_dump(mode="json"),
+    )
+
+
+def migrate_persona_to_v0_4(value: Any) -> PersonaV04:
+    """Migrate a v0.3 ResidentInstance (or dict) to the v0.4 Persona envelope.
+
+    No old field is dropped: the full v0.3 resident payload is preserved under
+    extensions.legacy_resident. New v0.4 fields are filled with defaults.
+    """
+    if isinstance(value, ResidentInstanceV03):
+        resident = value
+    else:
+        resident = ResidentInstanceV03.model_validate(value if isinstance(value, dict) else {})
+    payload = resident.model_dump(mode="json")
+    return PersonaV04(
+        id=gen_id("persona"),
+        type="persona",
+        identity=PersonaIdentityV04(
+            name=resident.identity.name,
+            role=resident.identity.role,
+            description=resident.identity.description,
+            disclosure=resident.identity.disclosure,
+        ),
+        modules=[],
+        inputs={},
+        outputs={},
+        permissions=[],
+        audit_log=[{"action": "migrate", "from": "0.3.0", "to": "0.4.0", "kind": "persona"}],
+        extensions={"migrated_from": "0.3.0", "legacy_resident": payload},
+        metadata=dict(payload.get("metadata") or {}),
     )
 
 
