@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .models.v0_4 import PROTOCOL_VERSION_V0_4
 from .routers import health, protocol_v0_4, resident, schema, templates, workflow
 from .schema_version import SCHEMA_VERSION
 
@@ -40,5 +41,6 @@ def root() -> dict:
     return {
         "service": "eterna-canvas-api",
         "schema_version": SCHEMA_VERSION,
+        "protocol_version": PROTOCOL_VERSION_V0_4,
         "docs": "/docs",
     }

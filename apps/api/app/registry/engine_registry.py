@@ -52,6 +52,30 @@ def validate_engine_registry(engines: List[EngineV04]) -> List[str]:
     return errors
 
 
+def validate_protocol_chain(engines, slots, modules) -> List[str]:
+    """Validate the engine -> slot -> module binding chain integrity.
+
+    - every Slot.engine_binding must reference a registered Engine;
+    - the referenced Engine must support the Slot's slot_type;
+    - every Module.slot_type must be served by at least one Slot.
+    No execution and no real provider are involved.
+    """
+    errors: List[str] = []
+    engine_by_id = {e.engine_id: e for e in engines}
+    served_slot_types = {s.slot_type for s in slots}
+    for slot in slots:
+        if slot.engine_binding:
+            engine = engine_by_id.get(slot.engine_binding)
+            if engine is None:
+                errors.append(f"slot {slot.slot_id} binds unknown engine: {slot.engine_binding}")
+            elif slot.slot_type not in engine.supported_slot_types:
+                errors.append(f"engine {engine.engine_id} does not support slot_type {slot.slot_type} (slot {slot.slot_id})")
+    for module in modules:
+        if module.slot_type is not None and module.slot_type not in served_slot_types:
+            errors.append(f"module {module.module_id} declares slot_type {module.slot_type} with no serving slot")
+    return errors
+
+
 def get_engine_registry() -> List[EngineV04]:
     return list(ENGINE_REGISTRY)
 

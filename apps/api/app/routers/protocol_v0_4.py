@@ -26,7 +26,11 @@ from ..models.v0_4 import (
     WorkflowV04,
     WorkflowValidationResponseV04,
 )
-from ..registry.engine_registry import get_engine_registry, validate_engine_registry
+from ..registry.engine_registry import (
+    get_engine_registry,
+    validate_engine_registry,
+    validate_protocol_chain,
+)
 from ..registry.module_catalog import get_module_catalog, validate_module_catalog
 from ..registry.slot_catalog import get_slot_catalog, validate_slot_catalog
 from ..services.llm_mock_engine import mock_call
@@ -111,19 +115,25 @@ class CatalogHealthResponse(BaseModel):
     module_errors: List[str]
     slot_errors: List[str]
     engine_errors: List[str]
+    chain_errors: List[str]
     ok: bool
 
 
 @router.get("/catalog/health", response_model=CatalogHealthResponse)
 def catalog_health() -> CatalogHealthResponse:
-    module_errors = validate_module_catalog(get_module_catalog())
-    slot_errors = validate_slot_catalog(get_slot_catalog())
-    engine_errors = validate_engine_registry(get_engine_registry())
+    modules = get_module_catalog()
+    slots = get_slot_catalog()
+    engines = get_engine_registry()
+    module_errors = validate_module_catalog(modules)
+    slot_errors = validate_slot_catalog(slots)
+    engine_errors = validate_engine_registry(engines)
+    chain_errors = validate_protocol_chain(engines, slots, modules)
     return CatalogHealthResponse(
         module_errors=module_errors,
         slot_errors=slot_errors,
         engine_errors=engine_errors,
-        ok=not (module_errors or slot_errors or engine_errors),
+        chain_errors=chain_errors,
+        ok=not (module_errors or slot_errors or engine_errors or chain_errors),
     )
 
 
