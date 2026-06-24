@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import health, resident, schema, templates, workflow
+from .routers import health, protocol_v0_4, resident, schema, templates, workflow
 from .schema_version import SCHEMA_VERSION
 
 app = FastAPI(
@@ -32,6 +32,7 @@ app.include_router(schema.router)
 app.include_router(templates.router)
 app.include_router(workflow.router)
 app.include_router(resident.router)
+app.include_router(protocol_v0_4.router)
 
 
 @app.get("/", tags=["health"])
