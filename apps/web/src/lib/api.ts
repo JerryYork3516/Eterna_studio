@@ -1,8 +1,11 @@
 import type {
   ExportPreview,
+  EngineRegistryResponseV04,
+  ModuleCatalogResponseV04,
   NodeRegistryEntry,
-  ResidentCompileResponseV03,
+  ResidentCompileResponse,
   RunResult,
+  SlotCatalogResponseV04,
   TemplateDefinition,
   ValidateResponse,
   Workflow
@@ -120,11 +123,20 @@ export const api = {
       body: JSON.stringify({ workflow, export_kind: exportKind })
     });
   },
-  getNodeRegistryV03() {
-    return request<Record<string, NodeRegistryEntry>>("/schema/node-registry-v0.3");
+  fetchNodeRegistry() {
+    return request<Record<string, NodeRegistryEntry>>("/schema/node-registry-v0.4");
   },
-  compileResident(workflow: Workflow) {
-    return request<ResidentCompileResponseV03>("/resident/compile", {
+  fetchModuleCatalog() {
+    return request<ModuleCatalogResponseV04>("/schema/module-catalog-v0.4");
+  },
+  fetchSlotCatalog() {
+    return request<SlotCatalogResponseV04>("/schema/slot-catalog-v0.4");
+  },
+  fetchEngineRegistry() {
+    return request<EngineRegistryResponseV04>("/schema/engine-registry-v0.4");
+  },
+  fetchResidentInstance(workflow: Workflow) {
+    return request<ResidentCompileResponse>("/resident/compile", {
       method: "POST",
       body: JSON.stringify({ workflow })
     });

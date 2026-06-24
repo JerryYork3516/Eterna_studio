@@ -20,11 +20,13 @@ import {
   type ReactFlowInstance
 } from "@xyflow/react";
 import { translate, type Language } from "@/i18n";
+import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import { api } from "@/lib/api";
-import type { Artifact, NodeType, ResidentInstanceV03, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
+import type { Artifact, ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, ResidentCompileResponse, ResidentInstanceV03, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
 import { safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow, readWorkflowFile, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadModuleCanvas, saveModuleCanvas } from "@/lib/persistence";
+import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
@@ -56,6 +58,7 @@ type MockNodeType =
 type ModuleNodeType = NodeType | MockNodeType;
 
 const NODE_DND_MIME = "application/eterna-node";
+const MODULE_INSTANCE_SEPARATOR = "::";
 
 function backendNodeCategory(type: NodeType): string {
   const definition = getNodeDefinition(String(type));
@@ -96,6 +99,31 @@ const FOLDER_GROUP_HEIGHT = 216;
 const FOLDER_GROUP_GAP = 110;
 const TRUNK_LAYER_Y_STEP = 270;
 const TRUNK_LAYER_Y_OFFSET = 110;
+const MOCK_MODE = false;
+const MODULE_COLOR_SWATCHES = [
+  "#7aa2f7",
+  "#5dd39e",
+  "#a78bfa",
+  "#f2a65a",
+  "#f87171",
+  "#22d3ee",
+  "#facc15",
+  "#94a3b8",
+  "#e879f9",
+  "#38bdf8"
+];
+const MODULE_COLOR_LABEL_KEYS = [
+  "module.color.blue",
+  "module.color.green",
+  "module.color.purple",
+  "module.color.orange",
+  "module.color.red",
+  "module.color.cyan",
+  "module.color.yellow",
+  "module.color.gray",
+  "module.color.pink",
+  "module.color.sky"
+];
 const collapsedNodeLabels: Partial<Record<ModuleNodeType, { zh: string; en: string }>> = {
   text_input: { zh: "文", en: "Tx" },
   identity: { zh: "身", en: "Id" },
@@ -176,13 +204,37 @@ type LayerSummary = {
 type FolderGroupNodeData = {
   layer: LayerSummary;
   subnodes: WorkflowNode[];
+  modules: ModuleCatalogEntryV04[];
   focusedModuleId: string | null;
+  selectedModuleKeys: string[];
+  moduleNames: Record<string, string>;
+  moduleColors: Record<string, string>;
   uiColor?: string;
   onSelectNode: (node: WorkflowNode) => void;
   onPreviewNode: (node: WorkflowNode) => void;
   onFocusNode: (node: WorkflowNode) => void;
+  onDropModule: (moduleId: string) => void;
+  onSelectDroppedModule: (moduleId: string, multi: boolean) => void;
+  onOpenDroppedModule: (moduleId: string) => void;
+  onRemoveModule: (moduleId: string) => void;
+  onColorModule: (moduleId: string, color: string) => void;
+  onOpenModuleFocus: () => void;
+  onContainerContextMenu: (event: ReactMouseEvent) => void;
+  onDroppedModuleContextMenu: (event: ReactMouseEvent, moduleId: string) => void;
   onModuleContextMenu: (event: ReactMouseEvent, node: WorkflowNode) => void;
 };
+
+function moduleCatalogId(module: ModuleCatalogEntryV04) {
+  return module.module_id;
+}
+
+function moduleCatalogName(module: ModuleCatalogEntryV04) {
+  return module.module_name;
+}
+
+function moduleCatalogSlot(module: ModuleCatalogEntryV04) {
+  return module.slot_type || "unplanned";
+}
 
 type PendingModuleAdd = {
   requestId: number;
@@ -382,22 +434,65 @@ function makeFlowNode(schemaNode: WorkflowNode, offset?: { x: number; y: number 
 
 function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const language = useCanvasStore((state) => state.language);
-  const { layer, subnodes, focusedModuleId, uiColor, onSelectNode, onPreviewNode, onFocusNode, onModuleContextMenu } = data;
+  const {
+    layer,
+    modules,
+    focusedModuleId,
+    selectedModuleKeys,
+    moduleColors,
+    uiColor,
+    onDropModule,
+    onSelectDroppedModule,
+    onOpenDroppedModule,
+    onOpenModuleFocus,
+    onContainerContextMenu,
+    onDroppedModuleContextMenu
+  } = data;
   const label = layer.displayLabel;
   const parameterCount = Object.keys(layer.node.data ?? {}).length;
+  const visibleModules = modules.slice(0, 6);
+  const visibleSubnodes: WorkflowNode[] = MOCK_MODE ? data.subnodes.slice(0, 6) : [];
+  const selectedModuleSet = new Set(selectedModuleKeys);
 
   return (
-    <section className={`folder-group-node tier-${layer.tier}`} style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}>
+    <section
+      className={`folder-group-node tier-${layer.tier}`}
+      style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}
+      onDragOver={(event) => {
+        if (readModuleDragId(event)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(event) => {
+        const moduleId = readModuleDragId(event);
+        if (!moduleId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        onDropModule(moduleId);
+      }}
+      onContextMenu={onContainerContextMenu}
+    >
       <div className="folder-group-node__header">
         <div className="folder-group-title">
-          <span className="folder-icon" aria-hidden="true">
+          <button
+            type="button"
+            className="folder-icon folder-focus-button nodrag"
+            title={translate(language, "module.viewAll", "查看全部模块")}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenModuleFocus();
+            }}
+          >
             ::
-          </span>
+          </button>
           <div>
             <p>{translate(language, "workspace.breadcrumb", "Workflow / Layer / Folder")}</p>
             <h3>
               L{layer.displayIndex} {label}
-              <span className="module-count-badge">{subnodes.length} modules</span>
+              <span className="module-count-badge">{visibleModules.length} {translate(language, "module.count", "个模块")}</span>
             </h3>
           </div>
         </div>
@@ -411,33 +506,73 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
         </details>
       </div>
       <div className={`submodule-rail ${focusedModuleId ? "has-focused-module" : ""}`}>
-        {subnodes.length ? (
-          subnodes.slice(0, 6).map((node) => {
-            const moduleTier = dataString(node, "module_tier", layer.tier);
-            const uiTags: string[] = Array.isArray(node.data?.ui_tags) ? node.data.ui_tags.map(String).filter(Boolean) : [];
-            const uiGroup = typeof node.data?.ui_group === "string" ? node.data.ui_group : "";
-            const isFocused = focusedModuleId === node.node_id;
+        {visibleModules.length ? (
+          visibleModules.map((mod) => {
+            const modId = moduleCatalogId(mod);
+            const slot = moduleCatalogSlot(mod);
+            const slotLabel = translate(language, `module.slot.${slot}`, slot.toUpperCase());
+            const status = String(mod.status);
+            const category = String(mod.category || "general");
             return (
               <button
-                key={node.node_id}
-                className={`submodule-card tier-${moduleTier} ${isFocused ? "is-focused" : ""}`}
-                style={typeof node.data?.ui_color === "string" ? ({ "--node-accent": node.data.ui_color } as CSSProperties) : undefined}
-                onClick={() => onSelectNode(node)}
-                onDoubleClick={() => {
-                  onFocusNode(node);
-                  onPreviewNode(node);
+                key={modId}
+                type="button"
+                className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
+                style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
+                onClick={(event) => {
+                  onSelectDroppedModule(modId, event.ctrlKey || event.metaKey);
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenDroppedModule(modId);
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  onModuleContextMenu(event, node);
+                  onDroppedModuleContextMenu(event, modId);
+                }}
+                title={`${moduleCatalogName(mod)} · ${slotLabel} · ${translate(language, `module.status.${status}`, status)}`}
+              >
+                <span className="submodule-name">{moduleCatalogName(mod)}</span>
+                <span className="submodule-badge-row">
+                  <span className="submodule-group">{mod.layer_id}</span>
+                  <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
+                    {slotLabel}
+                  </span>
+                  <span className="submodule-tier">{translate(language, `module.status.${status}`, status)}</span>
+                </span>
+              </button>
+            );
+          })
+        ) : visibleSubnodes.length ? (
+          visibleSubnodes.map((node) => {
+            const moduleTier = dataString(node, "module_tier", layer.tier);
+            const uiTags: string[] = Array.isArray(node.data?.ui_tags) ? node.data.ui_tags.map(String).filter(Boolean) : [];
+            const uiGroup = typeof node.data?.ui_group === "string" ? node.data.ui_group : "";
+            const isFocused = focusedModuleId === node.node_id;
+            const aiSlot = inferAiSlot(node);
+            return (
+              <button
+                key={node.node_id}
+                className={`submodule-card tier-${moduleTier} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${isFocused ? "is-focused" : ""}`}
+                style={typeof node.data?.ui_color === "string" ? ({ "--node-accent": node.data.ui_color } as CSSProperties) : undefined}
+                onClick={() => data.onSelectNode(node)}
+                onDoubleClick={() => {
+                  data.onFocusNode(node);
+                  data.onPreviewNode(node);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  data.onModuleContextMenu(event, node);
                 }}
                 onTouchEnd={(event) => {
                   event.preventDefault();
-                  onSelectNode(node);
+                  data.onSelectNode(node);
                 }}
               >
-                <span className="submodule-name">{translate(language, node.title_key, node.title_fallback)}</span>
+                <span className="submodule-name">{data.moduleNames[node.node_id] ?? translate(language, node.title_key, node.title_fallback)}</span>
                 {uiGroup ? <span className="submodule-group">{uiGroup}</span> : null}
                 {uiTags.length ? (
                   <span className="submodule-tags">
@@ -446,11 +581,16 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
                     ))}
                   </span>
                 ) : null}
-                <span className="submodule-tier">{moduleTier}</span>
+                <span className="submodule-badge-row">
+                  <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
+                  <span className="submodule-tier">{moduleTier}</span>
+                </span>
               </button>
             );
           })
-        ) : null}
+        ) : (
+          <div className="submodule-drop-hint">{translate(language, "module.dropHere", "拖拽模块到这里")}</div>
+        )}
       </div>
       <Handle type="source" position={Position.Right} id="folder_out" className="flow-handle folder-flow-handle" />
     </section>
@@ -461,9 +601,11 @@ export function CanvasShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mainFlowRef = useRef<ReactFlowInstance | null>(null);
   const dragSnapshotRef = useRef<WorkflowGraphSnapshot | null>(null);
+  const libraryDefaultsAppliedRef = useRef(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
   const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
+  const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
   const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(false);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [expandedLayerIds, setExpandedLayerIds] = useState<Set<string>>(() => new Set());
@@ -485,6 +627,64 @@ export function CanvasShell() {
   const [uiGroups, setUiGroups] = useState<Record<string, string>>({});
   const [uiColors, setUiColors] = useState<Record<string, string>>({});
   const [uiInputs, setUiInputs] = useState<Record<string, Record<string, unknown>>>({});
+  // Stage 5: capability modules attached to each left folder workspace (Module != Node,
+  // not part of workflow execution). Keyed by layer node_id -> module ids.
+  const [layerModules, setLayerModules] = useState<Record<string, string[]>>({});
+  const [focusLayerId, setFocusLayerId] = useState<string | null>(null);
+  const [moduleUiColors, setModuleUiColors] = useState<Record<string, string>>({});
+  const [selectedLayerModuleKeys, setSelectedLayerModuleKeys] = useState<Set<string>>(() => new Set());
+  const [moduleCatalog, setModuleCatalog] = useState<ModuleCatalogResponseV04 | null>(null);
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const moduleCatalogById = useMemo(() => new Map((moduleCatalog?.modules ?? []).map((module) => [module.module_id, module])), [moduleCatalog, catalogRevision]);
+  const modulesByCatalogLayerId = useMemo(() => {
+    const grouped = new Map<string, ModuleCatalogEntryV04[]>();
+    for (const module of moduleCatalog?.modules ?? []) {
+      grouped.set(module.layer_id, [...(grouped.get(module.layer_id) ?? []), module]);
+    }
+    return grouped;
+  }, [moduleCatalog, catalogRevision]);
+  const addModuleToLayer = useCallback(
+    (layerNodeId: string, moduleId: string) => {
+      if (!moduleCatalogById.has(moduleId)) {
+        return;
+      }
+      setLayerModules((current) => {
+        const existing = current[layerNodeId] ?? [];
+        if (existing.includes(moduleId)) {
+          return current;
+        }
+        return { ...current, [layerNodeId]: [...existing, moduleId] };
+      });
+      setSaveStatus("dirty");
+    },
+    [moduleCatalogById]
+  );
+  const removeModuleFromLayer = useCallback((layerNodeId: string, moduleId: string) => {
+    setLayerModules((current) => ({ ...current, [layerNodeId]: (current[layerNodeId] ?? []).filter((id) => id !== moduleId) }));
+    setSelectedLayerModuleKeys((current) => {
+      const next = new Set(current);
+      next.delete(`${layerNodeId}:${moduleId}`);
+      return next;
+    });
+    setSaveStatus("dirty");
+  }, []);
+  const removeAllModulesFromLayer = useCallback((layerNodeId: string) => {
+    setLayerModules((current) => ({ ...current, [layerNodeId]: [] }));
+    setSelectedLayerModuleKeys((current) => {
+      const next = new Set(current);
+      for (const key of current) {
+        if (key.startsWith(`${layerNodeId}:`)) {
+          next.delete(key);
+        }
+      }
+      return next;
+    });
+    setSaveStatus("dirty");
+  }, []);
+  const setModuleColor = useCallback((layerNodeId: string, moduleId: string, color: string) => {
+    setModuleUiColors((current) => ({ ...current, [`${layerNodeId}:${moduleId}`]: color }));
+    setSaveStatus("dirty");
+  }, []);
   const [selectedFlowNodeIds, setSelectedFlowNodeIds] = useState<Set<string>>(() => new Set());
   const [copiedWorkflowNode, setCopiedWorkflowNode] = useState<WorkflowNode | null>(null);
   const [mainContextMenu, setMainContextMenu] = useState<CanvasContextMenuState | null>(null);
@@ -497,7 +697,6 @@ export function CanvasShell() {
   const [registryRevision, setRegistryRevision] = useState(0);
   const nodeLibraryCategories = useMemo(() => buildNodeLibraryCategories(getNodeRegistryEntries()), [registryRevision]);
   const libraryNodeTypes = useMemo(() => nodeLibraryCategories.flatMap((category) => category.nodes), [nodeLibraryCategories]);
-  const allCategoriesCollapsed = collapsedCategories.size >= nodeLibraryCategories.length;
   const toggleCategory = useCallback((id: string) => {
     setCollapsedCategories((current) => {
       const next = new Set(current);
@@ -508,11 +707,6 @@ export function CanvasShell() {
       }
       return next;
     });
-  }, []);
-  const toggleAllCategories = useCallback(() => {
-    setCollapsedCategories((current) =>
-      current.size >= nodeLibraryCategories.length ? new Set() : new Set(nodeLibraryCategories.map((category) => category.id))
-    );
   }, []);
   const [undoStack, setUndoStack] = useState<WorkflowGraphSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<WorkflowGraphSnapshot[]>([]);
@@ -544,15 +738,25 @@ export function CanvasShell() {
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
   useEffect(() => {
     let active = true;
-    api
-      .getNodeRegistryV03()
-      .then((registry) => {
+
+    Promise.all([
+      api.fetchNodeRegistry(),
+      api.fetchModuleCatalog(),
+      api.fetchSlotCatalog(),
+      api.fetchEngineRegistry()
+    ])
+      .then(([registry, modules, slots, engines]) => {
         if (!active) {
           return;
         }
         setBackendNodeRegistry(registry);
+        setModuleCatalog(modules);
         setRegistryRevision((revision) => revision + 1);
+        setCatalogRevision((revision) => revision + 1);
         appendLog(`${translate(language, "status.nodeRegistryLoaded", "Node registry loaded")}: ${Object.keys(registry).length}`);
+        appendLog(`Module catalog loaded: ${modules.modules.length}`);
+        appendLog(`Slot catalog loaded: ${slots.slots.length}`);
+        appendLog(`Engine registry loaded: ${engines.engines.length}`);
       })
       .catch((error) => {
         if (active) {
@@ -609,6 +813,21 @@ export function CanvasShell() {
     return mergedTypes;
   }, [templates]);
 
+  useEffect(() => {
+    if (libraryDefaultsAppliedRef.current || !nodeLibraryCategories.length) {
+      return;
+    }
+    setCollapsedCategories(new Set(nodeLibraryCategories.map((category) => category.id)));
+    setLibraryBodyCollapsed(false);
+    libraryDefaultsAppliedRef.current = true;
+  }, [nodeLibraryCategories]);
+
+  useEffect(() => {
+    setLayerModules({});
+    setSelectedLayerModuleKeys(new Set());
+    setModuleUiColors({});
+  }, [workflow?.workflow_id]);
+
   const layerNodes = useMemo(
     () =>
       nodes
@@ -643,10 +862,43 @@ export function CanvasShell() {
     [language, layerNodes, nodes]
   );
 
+  const layerById = useMemo(
+    () => new Map(layerSummaries.map((layer) => [layer.node.node_id, layer])),
+    [layerSummaries]
+  );
   const selectedNode = useMemo(() => nodes.find((node) => node.node_id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
   const resolveModuleNode = useCallback(
-    (id: string) => nodes.find((node) => node.node_id === id) ?? null,
-    [nodes]
+    (id: string) => {
+      const existing = nodes.find((node) => node.node_id === id);
+      if (existing) {
+        return existing;
+      }
+      const [layerNodeId, moduleId] = id.split(MODULE_INSTANCE_SEPARATOR);
+      const mod = moduleId ? moduleCatalogById.get(moduleId) : null;
+      const layer = layerNodeId ? layerById.get(layerNodeId) : null;
+      if (!mod || !layer) {
+        return null;
+      }
+      return {
+        node_id: id,
+        type: "module",
+        category: "container",
+        title_key: "",
+          title_fallback: moduleCatalogName(mod),
+        position: { x: 0, y: 0 },
+        lock_level: "editable",
+        data: {
+          ui_only: true,
+          parent_layer: layerNodeId,
+          layer_index: layer.displayIndex,
+          module_catalog_id: moduleCatalogId(mod),
+          module_tier: "core",
+          status: mod.status
+        },
+        ports: { inputs: [], outputs: [] }
+      } satisfies WorkflowNode;
+    },
+    [layerById, moduleCatalogById, nodes]
   );
   const moduleTabItems = useMemo(
     () =>
@@ -672,10 +924,6 @@ export function CanvasShell() {
     [activeModuleTabId, nodes]
   );
 
-  const layerById = useMemo(
-    () => new Map(layerSummaries.map((layer) => [layer.node.node_id, layer])),
-    [layerSummaries]
-  );
   const selectedLayer = activeWorkspaceId ? layerById.get(activeWorkspaceId) ?? null : null;
   const activeLayer = activeLayerId ? layerById.get(activeLayerId) ?? null : selectedLayer;
 
@@ -733,7 +981,13 @@ export function CanvasShell() {
     }
     setExpandedLayerIds((ids) => {
       const next = new Set([...ids].filter((id) => layerById.has(id)));
-      return next.size === ids.size ? ids : next;
+      for (const id of layerById.keys()) {
+        next.add(id);
+      }
+      if (next.size === ids.size && [...next].every((id) => ids.has(id))) {
+        return ids;
+      }
+      return next;
     });
     if (activeWorkspaceId && !layerById.has(activeWorkspaceId)) {
       setActiveWorkspaceId(null);
@@ -776,6 +1030,38 @@ export function CanvasShell() {
       appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${t(node.title_key, node.title_fallback)}`);
     },
     [appendLog, t]
+  );
+
+  const selectLayerModule = useCallback((layerNodeId: string, moduleId: string, multi: boolean) => {
+    const key = `${layerNodeId}:${moduleId}`;
+    setSelectedLayerModuleKeys((current) => {
+      if (!multi) {
+        return new Set([key]);
+      }
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+    setSelectedNode(layerNodeId);
+  }, [setSelectedNode]);
+
+  const openCatalogModuleCanvas = useCallback(
+    (layerNodeId: string, moduleId: string) => {
+      const moduleNodeId = `${layerNodeId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
+      const mod = moduleCatalogById.get(moduleId);
+      if (!mod) {
+        return;
+      }
+      setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
+      setActiveModuleTabId(moduleNodeId);
+      setActiveDrawer(null);
+      appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod)}`);
+    },
+    [appendLog, moduleCatalogById, t]
   );
 
   const renameUiNode = useCallback(
@@ -982,6 +1268,74 @@ export function CanvasShell() {
     [folderNodePositions, getLayerDisplayPosition]
   );
 
+  const buildModuleAddMenu = useCallback(
+    (layerNodeId: string, displayIndex: number): CanvasContextMenuItem[] => {
+      const catalogLayerId = displayIndex >= 1 && displayIndex <= 13 ? `layer_${displayIndex}` : "general";
+      const moduleChoices = [...(modulesByCatalogLayerId.get(catalogLayerId) ?? []), ...(modulesByCatalogLayerId.get("general") ?? [])];
+      const byCategory = new Map<string, ModuleCatalogEntryV04[]>();
+      for (const mod of moduleChoices) {
+        byCategory.set(mod.category, [...(byCategory.get(mod.category) ?? []), mod]);
+      }
+      return [...byCategory.entries()].map(([category, mods]) => ({
+        label: t(`module.category.${category}`, category),
+        children: mods.map((mod) => ({
+          label: `${moduleCatalogName(mod)} · ${mod.status}`,
+          onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
+        }))
+      }));
+    },
+    [addModuleToLayer, modulesByCatalogLayerId, t]
+  );
+
+  const openFolderContextMenu = useCallback(
+    (event: ReactMouseEvent, layer: LayerSummary) => {
+      const menu = makeContextMenu(event, [
+        {
+          label: t("module.add", "添加模块"),
+          children: buildModuleAddMenu(layer.node.node_id, layer.displayIndex)
+        },
+        { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(layer.node.node_id) },
+        { label: t("module.removeAll", "移除全部模块"), onSelect: () => removeAllModulesFromLayer(layer.node.node_id), danger: true }
+      ]);
+      if (menu) {
+        setMainContextMenu(menu);
+      }
+    },
+    [buildModuleAddMenu, removeAllModulesFromLayer, t]
+  );
+
+  const openDroppedModuleContextMenu = useCallback(
+    (event: ReactMouseEvent, layer: LayerSummary, moduleId: string) => {
+      const mod = moduleCatalogById.get(moduleId);
+      const selectedInLayer = [...selectedLayerModuleKeys]
+        .filter((key) => key.startsWith(`${layer.node.node_id}:`))
+        .map((key) => key.slice(layer.node.node_id.length + 1))
+        .filter((id) => moduleCatalogById.has(id));
+      const targetModuleIds = selectedInLayer.includes(moduleId) ? selectedInLayer : [moduleId];
+      const colorItems = MODULE_COLOR_SWATCHES.map((color, index) => ({
+        label: `${index + 1}. ${t(MODULE_COLOR_LABEL_KEYS[index] ?? "module.color.custom", color)}`,
+        onSelect: () => targetModuleIds.forEach((id) => setModuleColor(layer.node.node_id, id, color))
+      }));
+      const menu = makeContextMenu(event, [
+        { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count", "个模块")}` : mod ? moduleCatalogName(mod) : moduleId, disabled: true },
+        {
+          label: t("module.colorMenu", "修改颜色"),
+          children: colorItems
+        },
+        { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(layer.node.node_id) },
+        {
+          label: t("module.remove", "移除"),
+          onSelect: () => targetModuleIds.forEach((id) => removeModuleFromLayer(layer.node.node_id, id)),
+          danger: true
+        }
+      ]);
+      if (menu) {
+        setMainContextMenu(menu);
+      }
+    },
+    [moduleCatalogById, removeModuleFromLayer, selectedLayerModuleKeys, setModuleColor, t]
+  );
+
   const flowNodes = useMemo<Node[]>(() => {
     const schemaFlowNodes = nodes
       .filter((node) => {
@@ -1067,6 +1421,13 @@ export function CanvasShell() {
         const subnodes = layer.childNodes;
         console.log("[LayerWorkspace] layer.id", layerId);
         console.log("[LayerWorkspace] filtered nodes count", subnodes.length);
+        const attachedModuleIds = layerModules[layerId] ?? [];
+        const attachedModules = attachedModuleIds
+          .map((id) => moduleCatalogById.get(id))
+          .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
+        const attachedModuleColors = Object.fromEntries(
+          attachedModuleIds.map((id) => [id, moduleUiColors[`${layerId}:${id}`] ?? ""])
+        );
         return {
           id: `ui-folder-${layerId}`,
           type: "folderGroup",
@@ -1077,11 +1438,23 @@ export function CanvasShell() {
           data: {
             layer,
             subnodes,
+            modules: attachedModules,
             focusedModuleId,
+            selectedModuleKeys: attachedModuleIds.filter((id) => selectedLayerModuleKeys.has(`${layerId}:${id}`)),
+            moduleNames,
+            moduleColors: attachedModuleColors,
             uiColor: uiColors[`ui-folder-${layerId}`] ?? uiColors[layerId] ?? "",
             onSelectNode: handleChildModuleSelect,
             onPreviewNode: handleChildModulePreview,
             onFocusNode: (node: WorkflowNode) => setFocusedModuleId(node.node_id),
+            onDropModule: (moduleId: string) => addModuleToLayer(layerId, moduleId),
+            onSelectDroppedModule: (moduleId: string, multi: boolean) => selectLayerModule(layerId, moduleId, multi),
+            onOpenDroppedModule: (moduleId: string) => openCatalogModuleCanvas(layerId, moduleId),
+            onRemoveModule: (moduleId: string) => removeModuleFromLayer(layerId, moduleId),
+            onColorModule: (moduleId: string, color: string) => setModuleColor(layerId, moduleId, color),
+            onOpenModuleFocus: () => setFocusLayerId(layerId),
+            onContainerContextMenu: (event: ReactMouseEvent) => openFolderContextMenu(event, layer),
+            onDroppedModuleContextMenu: (event: ReactMouseEvent, moduleId: string) => openDroppedModuleContextMenu(event, layer, moduleId),
             onModuleContextMenu: handleModuleContextMenu
           } satisfies FolderGroupNodeData
         } satisfies Node;
@@ -1096,6 +1469,8 @@ export function CanvasShell() {
     handleChildModuleSelect,
     handleModuleContextMenu,
     focusedModuleId,
+    moduleUiColors,
+    moduleCatalogById,
     layerById,
     layerNodes,
     layerSummaries,
@@ -1106,6 +1481,15 @@ export function CanvasShell() {
     uiInputs,
     uiNodeNames,
     uiTags,
+    layerModules,
+    addModuleToLayer,
+    removeModuleFromLayer,
+    setModuleColor,
+    selectedLayerModuleKeys,
+    selectLayerModule,
+    openCatalogModuleCanvas,
+    openFolderContextMenu,
+    openDroppedModuleContextMenu,
     visibleNodeIds
   ]);
 
@@ -1262,9 +1646,14 @@ export function CanvasShell() {
 
   const handleTemplateClick = useCallback(
     async (templateType: string) => {
+      if (loadingTemplateType) {
+        return;
+      }
       clearRunOutput();
 
       if (templateType === "persona_builder") {
+        setLoadingTemplateType(templateType);
+        appendLog(`${t("status.templateLoading", "Loading template")}: ${t(`template.${templateType}`, templateType)}`);
         try {
           const result = await api.createPersonaBuilder(undefined, language);
           setWorkflow(result.workflow);
@@ -1283,9 +1672,15 @@ export function CanvasShell() {
           setModuleTabs([]);
           setActiveModuleTabId(null);
           setActiveDrawer("layers");
+          setApiReady(true);
           appendLog(t("status.personaLoaded"));
         } catch (error) {
+          setApiReady(false);
+          setBottomTab("logs");
+          setActiveDrawer("logs");
           appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
+        } finally {
+          setLoadingTemplateType(null);
         }
         return;
       }
@@ -1295,7 +1690,7 @@ export function CanvasShell() {
         "warn"
       );
     },
-    [appendLog, clearRunOutput, language, setWorkflow, t]
+    [appendLog, clearRunOutput, language, loadingTemplateType, setApiReady, setWorkflow, t]
   );
 
   const openLayerWorkspace = useCallback(
@@ -1391,12 +1786,9 @@ export function CanvasShell() {
       if (node.id.startsWith("ui-folder-")) {
         return;
       }
-      const layer = layerById.get(node.id);
-      if (layer) {
-        openLayerWorkspace(layer, "inline");
-      }
+      setSelectedNode(node.id);
     },
-    [layerById, openLayerWorkspace, setSelectedNode]
+    [setSelectedNode]
   );
 
   const handlePaneClick = useCallback(() => {
@@ -1577,6 +1969,10 @@ export function CanvasShell() {
   const handleMainCanvasDrop = useCallback(
     (event: ReactDragEvent) => {
       event.preventDefault();
+      if (readModuleDragId(event)) {
+        appendLog(t("status.moduleDropLeftOnly", "Drag modules into the left module container"), "warn");
+        return;
+      }
       const type = readNodeDragType(event);
       if (!type) {
         return;
@@ -1587,7 +1983,7 @@ export function CanvasShell() {
         : { x: 160, y: -160 };
       addMainNodeAt(type, position);
     },
-    [addMainNodeAt]
+    [addMainNodeAt, appendLog, t]
   );
 
   const deleteMainNodeById = useCallback(
@@ -1675,7 +2071,14 @@ export function CanvasShell() {
       const label = uiNodeNames[node.id] ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
       const group = uiGroups[node.id] ?? "";
       const isLayer = schemaNode.type === "layer_container";
+      const layerIndex = isLayer ? getLayerIndex(schemaNode) ?? 0 : 0;
       const menu = makeContextMenu(event, [
+        ...(isLayer
+          ? [
+              { label: t("module.add", "添加模块"), children: buildModuleAddMenu(node.id, layerIndex) },
+              { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(node.id) }
+            ]
+          : []),
         { label: "重命名", onSelect: () => renameUiNode(node.id, label) },
         { label: "修改颜色", onSelect: () => {
           const nextColor = window.prompt(t("field.color", "Color"), uiColors[node.id] ?? "#4f8cff");
@@ -1696,6 +2099,7 @@ export function CanvasShell() {
       }
     },
     [
+      buildModuleAddMenu,
       copyMainNodeById,
       deleteMainNodeById,
       dissolveVisualGroup,
@@ -1944,6 +2348,7 @@ export function CanvasShell() {
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
   const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
+  const templateIsLoading = Boolean(loadingTemplateType);
   const toggleDrawer = useCallback(
     (drawer: DrawerId) => {
       setActiveDrawer((current) => (current === drawer ? null : drawer));
@@ -1980,13 +2385,10 @@ export function CanvasShell() {
             <button
               type="button"
               className="template-load-button"
+              disabled={templateIsLoading}
               onClick={() => handleTemplateClick(selectedTemplateType)}
-              onTouchEnd={(event) => {
-                event.preventDefault();
-                handleTemplateClick(selectedTemplateType);
-              }}
             >
-              {t("toolbar.load")}
+              {templateIsLoading ? t("toolbar.loading", "加载中") : t("toolbar.load")}
             </button>
           </div>
         </div>
@@ -2038,15 +2440,7 @@ export function CanvasShell() {
                   <h2>{t("panel.nodeLibrary")}</h2>
                 </button>
               )}
-              {nodeLibraryCollapsed ? (
-                <span>{libraryNodeTypes.length}</span>
-              ) : !libraryBodyCollapsed ? (
-                <button className="lib-collapse-all" onClick={toggleAllCategories}>
-                  {allCategoriesCollapsed ? t("lib.expandAll", "Expand all") : t("lib.collapseAll", "Collapse all")}
-                </button>
-              ) : (
-                <span>{libraryNodeTypes.length}</span>
-              )}
+              <span>{libraryNodeTypes.length}</span>
             </div>
             {!nodeLibraryCollapsed && libraryBodyCollapsed ? null : nodeLibraryCollapsed ? (
               <div className="node-library mini">
@@ -2129,6 +2523,12 @@ export function CanvasShell() {
               </div>
             )}
           </section>
+          <ModuleLibrary
+            t={t}
+            collapsed={nodeLibraryCollapsed}
+            layers={moduleCatalog?.layers ?? []}
+            modules={moduleCatalog?.modules ?? []}
+          />
         </aside>
 
         <section className="canvas-panel" aria-label={t("panel.canvas")}>
@@ -2208,6 +2608,7 @@ export function CanvasShell() {
                     edges={edges}
                     t={t}
                     mode="split"
+                    moduleNames={moduleNames}
                     onOpen={openLayerWorkspace}
                     onSelectNode={handleChildModuleSelect}
                     onPreviewNode={handleChildModulePreview}
@@ -2217,6 +2618,7 @@ export function CanvasShell() {
                   <ModuleCanvasPanel
                     key={activeModuleNode.node_id}
                     moduleNode={activeModuleNode}
+                    workflow={workflow}
                     initialSubnodes={activeModuleSubnodes}
                     pendingAdd={pendingModuleAdd?.moduleId === activeModuleNode.node_id ? pendingModuleAdd : null}
                     libraryNodeTypes={libraryNodeTypes}
@@ -2240,6 +2642,7 @@ export function CanvasShell() {
                     layer={layer}
                     edges={edges}
                     t={t}
+                    moduleNames={moduleNames}
                     onClose={() => {
                       setFloatingLayerIds((ids) => ids.filter((layerId) => layerId !== id));
                       appendLog(`${t("status.workspaceClosed", "Workspace closed")}: ${id}`);
@@ -2273,13 +2676,25 @@ export function CanvasShell() {
           ) : (
             <div className="empty-canvas">
               <h2>{t("panel.noWorkflow")}</h2>
-              <button onClick={() => handleTemplateClick("persona_builder")}>
-                {t("template.loadPersona")}
+              <button disabled={templateIsLoading} onClick={() => handleTemplateClick("persona_builder")}>
+                {templateIsLoading ? t("toolbar.loading", "加载中") : t("template.loadPersona")}
               </button>
             </div>
           )}
         </section>
       </section>
+
+      {focusLayerId ? (
+        <ModuleFocusPanel
+          layerLabel={layerById.get(focusLayerId)?.displayLabel ?? focusLayerId}
+          moduleIds={layerModules[focusLayerId] ?? []}
+          moduleCatalogById={moduleCatalogById}
+          moduleColors={Object.fromEntries((layerModules[focusLayerId] ?? []).map((id) => [id, moduleUiColors[`${focusLayerId}:${id}`] ?? ""]))}
+          t={t}
+          onRemove={(moduleId) => removeModuleFromLayer(focusLayerId, moduleId)}
+          onClose={() => setFocusLayerId(null)}
+        />
+      ) : null}
 
       <FloatingDock activeDrawer={activeDrawer} t={t} onToggle={toggleDrawer} />
 
@@ -2312,6 +2727,7 @@ export function CanvasShell() {
               edges={edges}
               t={t}
               mode="right"
+              moduleNames={moduleNames}
               onOpen={openLayerWorkspace}
               onSelectNode={handleChildModuleSelect}
               onPreviewNode={handleChildModulePreview}
@@ -2368,6 +2784,74 @@ export function CanvasShell() {
         </FloatingBottomPanel>
       ) : null}
     </main>
+  );
+}
+
+function ModuleFocusPanel({
+  layerLabel,
+  moduleIds,
+  moduleCatalogById,
+  moduleColors,
+  t,
+  onRemove,
+  onClose
+}: {
+  layerLabel: string;
+  moduleIds: string[];
+  moduleCatalogById: Map<string, ModuleCatalogEntryV04>;
+  moduleColors: Record<string, string>;
+  t: (key: string, fallback?: string) => string;
+  onRemove: (moduleId: string) => void;
+  onClose: () => void;
+}) {
+  const mods = moduleIds
+    .map((id) => moduleCatalogById.get(id))
+    .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
+  return (
+    <div className="module-focus-backdrop" onClick={onClose}>
+      <section className="module-focus" onClick={(event) => event.stopPropagation()}>
+        <header className="module-focus__bar">
+          <div>
+            <p>{t("module.focusMode", "Focus Mode")}</p>
+            <h3>{layerLabel}</h3>
+            <span>{mods.length} {t("module.count", "modules")}</span>
+          </div>
+          <button onClick={onClose}>✕</button>
+        </header>
+        <div className="module-focus__grid">
+          {mods.length ? (
+            mods.map((mod) => {
+              const modId = moduleCatalogId(mod);
+              const slot = moduleCatalogSlot(mod);
+              const slotLabel = t(`module.slot.${slot}`, slot.toUpperCase());
+              const category = String(mod.category || "general");
+              const status = String(mod.status);
+              return (
+                <div
+                  key={modId}
+                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()}`}
+                  style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
+                >
+                  <span className="submodule-name">{moduleCatalogName(mod)}</span>
+                  <span className="submodule-badge-row">
+                    <span className="submodule-group">{mod.layer_id}</span>
+                    <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
+                      {slotLabel}
+                    </span>
+                    <span className="submodule-tier">{t(`module.status.${status}`, status)}</span>
+                    <button className="module-card__remove" onClick={() => onRemove(modId)}>
+                      {t("module.remove", "移除")}
+                    </button>
+                  </span>
+                </div>
+              );
+            })
+          ) : (
+            <div className="module-focus__empty">{t("module.empty", "暂无模块,从模块库拖入或右键添加")}</div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2782,6 +3266,7 @@ function LayerWorkspacePanel({
   edges,
   t,
   mode,
+  moduleNames,
   onOpen,
   onSelectNode,
   onPreviewNode
@@ -2790,6 +3275,7 @@ function LayerWorkspacePanel({
   edges: EdgeLike[];
   t: (key: string, fallback?: string) => string;
   mode: WorkspaceMode;
+  moduleNames: Record<string, string>;
   onOpen: (layer: LayerSummary, mode: WorkspaceMode) => void;
   onSelectNode: (node: WorkflowNode) => void;
   onPreviewNode: (node: WorkflowNode) => void;
@@ -2831,10 +3317,11 @@ function LayerWorkspacePanel({
           {layer.childNodes.length ? (
             layer.childNodes.slice(0, 6).map((node) => {
               const moduleTier = dataString(node, "module_tier", layer.tier);
+              const aiSlot = inferAiSlot(node);
               return (
                 <button
                   key={node.node_id}
-                  className={`submodule-card tier-${moduleTier}`}
+                  className={`submodule-card tier-${moduleTier} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"}`}
                   onClick={() => onSelectNode(node)}
                   onDoubleClick={() => onPreviewNode(node)}
                   onTouchEnd={(event) => {
@@ -2842,8 +3329,11 @@ function LayerWorkspacePanel({
                     onSelectNode(node);
                   }}
                 >
-                  <span className="submodule-name">{t(node.title_key, node.title_fallback)}</span>
-                  <span className="submodule-tier">{moduleTier}</span>
+                  <span className="submodule-name">{moduleNames[node.node_id] ?? t(node.title_key, node.title_fallback)}</span>
+                  <span className="submodule-badge-row">
+                    <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
+                    <span className="submodule-tier">{moduleTier}</span>
+                  </span>
                 </button>
               );
             })
@@ -2945,6 +3435,7 @@ function FloatingWorkspace({
   layer,
   edges,
   t,
+  moduleNames,
   onClose,
   onSelectNode,
   onPreviewNode
@@ -2953,6 +3444,7 @@ function FloatingWorkspace({
   layer: LayerSummary;
   edges: EdgeLike[];
   t: (key: string, fallback?: string) => string;
+  moduleNames: Record<string, string>;
   onClose: () => void;
   onSelectNode: (node: WorkflowNode) => void;
   onPreviewNode: (node: WorkflowNode) => void;
@@ -2971,6 +3463,7 @@ function FloatingWorkspace({
           edges={edges}
           t={t}
           mode="window"
+          moduleNames={moduleNames}
           onOpen={() => undefined}
           onSelectNode={onSelectNode}
           onPreviewNode={onPreviewNode}
@@ -3150,6 +3643,7 @@ function CanvasContextMenuRow({ item, onClose }: { item: CanvasContextMenuItem; 
 // destroys all of its state.
 function ModuleCanvasPanel({
   moduleNode,
+  workflow,
   initialSubnodes,
   pendingAdd,
   libraryNodeTypes,
@@ -3160,6 +3654,7 @@ function ModuleCanvasPanel({
   onClose
 }: {
   moduleNode: WorkflowNode;
+  workflow: Workflow | null;
   initialSubnodes: WorkflowNode[];
   pendingAdd: PendingModuleAdd | null;
   libraryNodeTypes: ModuleNodeType[];
@@ -3740,11 +4235,11 @@ function ModuleCanvasPanel({
 
   const handleRunWorkflow = useCallback(async () => {
     try {
-      // Inline input (under the node params), not a browser prompt.
-      const rawInput = runInputText;
+      if (!workflow) {
+        throw new Error(t("error.noWorkflow", "No workflow loaded"));
+      }
 
-      // Accept both JSON and plain text. Plain text (or invalid JSON) is used as-is
-      // instead of throwing. If JSON has an `input` key, unwrap it.
+      const rawInput = runInputText;
       let runInput: unknown = rawInput;
       try {
         const parsed = JSON.parse(rawInput);
@@ -3757,43 +4252,13 @@ function ModuleCanvasPanel({
       }
       setRunStatus("running");
 
-      const executableNodes = moduleNodes
-        .map((node) => (node.data as { schemaNode?: WorkflowNode }).schemaNode)
-        .filter((node): node is WorkflowNode => Boolean(node && String(node.type) !== "module"))
-        .map((node) => {
-          if (!["text_input", "input"].includes(String(node.type))) {
-            return node;
-          }
-          const sourceText = typeof runInput === "string" ? runInput : JSON.stringify(runInput);
-          return {
-            ...node,
-            data: {
-              ...(node.data ?? {}),
-              source_text: sourceText,
-              text: sourceText
-            }
-          };
-        });
-      const executableNodeIds = new Set(executableNodes.map((node) => node.node_id));
-      const executableEdges = moduleEdges
-        .filter((edge) => executableNodeIds.has(edge.source) && executableNodeIds.has(edge.target))
-        .map((edge) => ({
-          edge_id: edge.id,
-          source: edge.source,
-          source_port: typeof edge.sourceHandle === "string" ? edge.sourceHandle : "p_out",
-          target: edge.target,
-          target_port: typeof edge.targetHandle === "string" ? edge.targetHandle : "p_in"
-        })) as WorkflowEdge[];
-
-      const result = await api.compileResident({
-        schema_version: "0.3.0",
-        name: title,
-        version: "1.0.0",
-        template_type: "module_canvas",
-        nodes: executableNodes,
-        edges: executableEdges,
-        metadata: { mock: true }
-      } as Workflow);
+      const result = await api.fetchResidentInstance({
+        ...workflow,
+        metadata: {
+          ...(workflow.metadata ?? {}),
+          text_input: runInput
+        }
+      });
       setExecutionResult(result);
       onExecutionResult(result);
       setExecutionError(null);
@@ -3804,7 +4269,7 @@ function ModuleCanvasPanel({
       setExecutionError((error as Error)?.message ?? String(error));
       setRunStatus("error");
     }
-  }, [moduleEdges, moduleNodes, onExecutionResult, runInputText, title]);
+  }, [onExecutionResult, runInputText, t, workflow]);
   const runButtonLabel =
     runStatus === "running"
       ? t("run.running", "Running...")

@@ -13,6 +13,7 @@ export type NodeInputField = components["schemas"]["NodeInputField"];
 export type ResidentCompileResponseV03 = components["schemas"]["ResidentCompileResponseV03"];
 export type OutputSchemaField = components["schemas"]["OutputSchemaField"];
 export type NodeStatus = components["schemas"]["NodeStatus"];
+export type ProtocolStatus = "CORE" | "READY" | "MOCK" | "PLANNED" | "LATER" | "DISABLED";
 export type NodeRegistryEntry = {
   type: string;
   category: string;
@@ -20,10 +21,65 @@ export type NodeRegistryEntry = {
   description: string;
   input_schema: NodeInputField[];
   output_schema: OutputSchemaField[];
-  status: NodeStatus;
+  status: NodeStatus | ProtocolStatus | string;
   mock_executor?: string | null;
   audit_rules: string[];
 };
+
+export type ModuleCatalogEntryV04 = {
+  module_id: string;
+  module_name: string;
+  layer_id: string;
+  category: string;
+  status: ProtocolStatus | string;
+  slot_type?: string | null;
+  engine_binding?: string | null;
+  description?: string | null;
+  [key: string]: unknown;
+};
+
+export type ModuleLayerV04 = {
+  layer_id: string;
+  layer_index: number;
+  layer_name: string;
+  [key: string]: unknown;
+};
+
+export type ModuleCatalogResponseV04 = {
+  schema_version: "0.4.0";
+  protocol_version: "0.4.0";
+  layers: ModuleLayerV04[];
+  modules: ModuleCatalogEntryV04[];
+};
+
+export type SlotCatalogEntryV04 = {
+  slot_id: string;
+  slot_type: string;
+  status: ProtocolStatus | string;
+  engine_binding?: string | null;
+  [key: string]: unknown;
+};
+
+export type SlotCatalogResponseV04 = {
+  schema_version: "0.4.0";
+  protocol_version: "0.4.0";
+  slots: SlotCatalogEntryV04[];
+};
+
+export type EngineRegistryEntryV04 = {
+  engine_id: string;
+  engine_type: string;
+  status: ProtocolStatus | string;
+  [key: string]: unknown;
+};
+
+export type EngineRegistryResponseV04 = {
+  schema_version: "0.4.0";
+  protocol_version: "0.4.0";
+  engines: EngineRegistryEntryV04[];
+};
+
+export type ResidentCompileResponse = ResidentCompileResponseV03 | Record<string, unknown>;
 
 export type NodeType =
   | "input"
@@ -73,8 +129,8 @@ export type WorkflowEdge = {
 };
 
 export type Workflow = {
-  // Schema lock: v0.3 single-source enforcement — exactly "0.3.0", no string union.
-  schema_version: "0.3.0";
+  // Schema lock: v0.4 single-source enforcement — exactly "0.4.0", no string union.
+  schema_version: "0.4.0";
   workflow_id?: string;
   name: string;
   version?: string;

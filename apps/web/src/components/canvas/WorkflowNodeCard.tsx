@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { type CSSProperties } from "react";
 import { translate, type Language } from "@/i18n";
+import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import type { WorkflowNode } from "@/lib/schema-types";
 import { getNodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -33,7 +34,7 @@ function parseJsonInput(value: string) {
   }
 }
 
-// NodeInputRenderer is fully schema-driven from backend node-registry-v0.3.
+// NodeInputRenderer is fully schema-driven from backend node-registry-v0.4.
 function NodeInputRenderer({
   fields,
   data,
@@ -258,19 +259,23 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const schemaNodeInputSchema = (schemaNode as unknown as { input_schema?: NodeInputField[] }).input_schema;
   const inputSchema: NodeInputField[] = schemaNodeInputSchema ?? nodeDefinition?.input_schema ?? [];
   const inputKeys = new Set(inputSchema.map((field) => field.key));
+  const aiSlot = inferAiSlot(schemaNode);
   const paramEntries = Object.entries(nodeData).filter(
     ([key]) => !key.startsWith("ui_") && !HIDDEN_PARAM_KEYS.has(key) && !inputKeys.has(key)
   );
 
   return (
     <div
-      className={`workflow-node lock-${schemaNode.lock_level} ${selected ? "is-selected" : ""}`}
+      className={`workflow-node lock-${schemaNode.lock_level} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
       style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}
     >
       {hasInput ? <Handle type="target" position={Position.Left} id="p_in" className="flow-handle flow-handle-left" /> : null}
       <div className="workflow-node__topline">
         <div className="workflow-node__type">{typeLabel}</div>
-        {status ? <span className={`workflow-node__state-badge is-${statusKey}`}>{stateLabel}</span> : null}
+        <span className="workflow-node__badges-inline">
+          <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
+          {status ? <span className={`workflow-node__state-badge is-${statusKey}`}>{stateLabel}</span> : null}
+        </span>
       </div>
       <div className="workflow-node__title">{label}</div>
       {uiGroup ? <div className="workflow-node__group">{uiGroup}</div> : null}

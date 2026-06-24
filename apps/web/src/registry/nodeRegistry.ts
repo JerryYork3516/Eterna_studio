@@ -1,20 +1,14 @@
-import type { NodeInputField, NodeRegistryEntry, NodeStatus, WorkflowNode } from "@/lib/schema-types";
+import type { NodeInputField, NodeRegistryEntry, NodeStatus } from "@/lib/schema-types";
 
 export type { NodeInputField, NodeRegistryEntry, NodeStatus };
-
-export type NodeExecutionContext = {
-  input: unknown;
-  current?: unknown;
-  memory: Record<string, unknown>;
-  intermediate: Record<string, unknown>;
-};
 
 export type NodeDefinition = NodeRegistryEntry & {
   label: string;
   tags: string[];
-  execute?: (context: NodeExecutionContext, node?: WorkflowNode) => unknown;
 };
 
+// Frontend cache only. Definitions are hydrated exclusively from
+// GET /schema/node-registry-v0.4; no local registry entries live here.
 export const nodeRegistry = new Map<string, NodeDefinition>();
 
 function normalizeEntry(entry: NodeRegistryEntry): NodeDefinition {
@@ -36,7 +30,7 @@ export function getNodeDefinition(type: string): NodeDefinition | undefined {
   return nodeRegistry.get(type);
 }
 
-export function getNodeStatus(type: string): NodeStatus | undefined {
+export function getNodeStatus(type: string): string | undefined {
   return nodeRegistry.get(type)?.status;
 }
 
