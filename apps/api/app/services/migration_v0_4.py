@@ -112,6 +112,8 @@ def migrate_workflow_to_v0_4(value: Any) -> WorkflowV04:
         extensions={
             "migrated_from": "0.3.0",
             "legacy_modules": [module.model_dump(mode="json") for module in workflow.modules],
+            # Full original v0.3 payload — guarantees no old field is dropped.
+            "legacy": workflow.model_dump(mode="json"),
         },
         metadata=workflow.metadata.model_dump(mode="json"),
     )
@@ -121,7 +123,8 @@ def migrate_persona_to_v0_4(value: Any) -> PersonaV04:
     """Migrate a v0.3 ResidentInstance (or dict) to the v0.4 Persona envelope.
 
     No old field is dropped: the full v0.3 resident payload is preserved under
-    extensions.legacy_resident. New v0.4 fields are filled with defaults.
+    extensions.legacy (and extensions.legacy_resident). New v0.4 fields are
+    filled with defaults.
     """
     if isinstance(value, ResidentInstanceV03):
         resident = value
@@ -142,7 +145,7 @@ def migrate_persona_to_v0_4(value: Any) -> PersonaV04:
         outputs={},
         permissions=[],
         audit_log=[{"action": "migrate", "from": "0.3.0", "to": "0.4.0", "kind": "persona"}],
-        extensions={"migrated_from": "0.3.0", "legacy_resident": payload},
+        extensions={"migrated_from": "0.3.0", "legacy_resident": payload, "legacy": payload},
         metadata=dict(payload.get("metadata") or {}),
     )
 
