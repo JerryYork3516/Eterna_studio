@@ -107,13 +107,63 @@ function catalogLayerOrder(layer: CatalogLayerInput) {
   return Number(layer.layer_order);
 }
 
+function displayText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function uniqueDisplayValues(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function mixedOrSingle(values: string[], emptyValue: string) {
+  const unique = uniqueDisplayValues(values);
+  if (!unique.length) {
+    return emptyValue;
+  }
+  return unique.length === 1 ? unique[0] : "mixed";
+}
+
+function modulesForLayer(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
+  return moduleCatalog.modules.filter((module) => module.layer_id === layer.layer_id);
+}
+
+function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
+  const modules = modulesForLayer(layer, moduleCatalog);
+  const categories = uniqueDisplayValues(modules.map((module) => displayText(module.category)));
+  const statuses = modules.map((module) => displayText(module.status));
+  const versions = modules.map((module) => displayText(module.module_version));
+  const hasHumanConfirm = modules.some((module) => Boolean(module.human_confirm_required));
+  const hasAuditRequired = modules.some((module) => Boolean(module.audit_required));
+  const hasRuntimeEnabled = modules.some((module) => Boolean(module.runtime_enabled));
+  const hasSlotBinding = modules.some((module) => Boolean(module.slot_type));
+  const hasLaterModule = modules.some((module) => ["LATER", "PLANNED"].includes(displayText(module.status)));
+
+  return {
+    groupLabel: categories.length ? categories.join(" / ").toUpperCase() : displayText(layer.layer_id).toUpperCase(),
+    status: mixedOrSingle(statuses, "empty"),
+    version: mixedOrSingle(versions, displayText(moduleCatalog.protocol_version)),
+    children_count: modules.length,
+    review: hasHumanConfirm ? "Human Confirm Required" : hasAuditRequired ? "Audit Required" : "No Review Required",
+    module_tier: hasLaterModule ? "later" : hasSlotBinding ? "plugin" : "core",
+    lock_level: hasHumanConfirm || hasAuditRequired ? "review_required" : hasRuntimeEnabled ? "locked" : "editable"
+  } satisfies {
+    groupLabel: string;
+    status: string;
+    version: string;
+    children_count: number;
+    review: string;
+    module_tier: string;
+    lock_level: WorkflowNode["lock_level"];
+  };
+}
+
 function catalogLayerToWorkflowNode(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04): WorkflowNode {
   const layerOrder = catalogLayerOrder(layer);
-  const catalogLayerName = moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "";
+  const catalogLayerName = layer.layer_name;
   console.log("workflow layer_name from moduleCatalog.find", {
     layer_id: layer.layer_id,
     layer_name: catalogLayerName,
-    fromModuleCatalogFind: Boolean(moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
+    fromModuleCatalogFind: Boolean(layer.layer_name)
   });
   return {
     node_id: layer.layer_id,
@@ -492,11 +542,12 @@ function buildLayerContainerFlowNode({
   uiColors: Record<string, string>;
 }) {
   const layerId = layer.layer_id;
-  const catalogLayerName = moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "";
+  const catalogLayerName = layer.layer_name;
+  const displayFields = getLayerCatalogDisplayFields(layer, moduleCatalog);
   console.log("layer_name from moduleCatalog.find", {
     layer_id: layer.layer_id,
     layer_name: catalogLayerName,
-    fromModuleCatalogFind: Boolean(moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
+    fromModuleCatalogFind: Boolean(layer.layer_name)
   });
   const schemaNode = {
     node_id: layer.layer_id,
@@ -505,14 +556,22 @@ function buildLayerContainerFlowNode({
     title_key: `layer.${layer.layer_id}`,
     title_fallback: catalogLayerName,
     position: LayerStackLayoutEngine.computeTrunkPosition(frame),
-    lock_level: "editable",
+    lock_level: displayFields.lock_level,
     locale: null,
-    data: { layer_order: layer.layer_order, layer_name: catalogLayerName },
+    data: {
+      layer_order: layer.layer_order,
+      layer_name: catalogLayerName,
+      status: displayFields.status,
+      version: displayFields.version,
+      children_count: displayFields.children_count,
+      module_tier: displayFields.module_tier,
+      validation: { status: displayFields.review }
+    },
     ports: {
       inputs: [{ port_id: "p_left_in", name: "in", direction: "in" }],
       outputs: [{ port_id: "p_out", name: "out", direction: "out" }]
     },
-    validation: null
+    validation: { status: displayFields.review }
   } as WorkflowNode;
   return {
     id: layerId,
@@ -526,7 +585,7 @@ function buildLayerContainerFlowNode({
       layer_id: layerId,
       viewLabel: catalogLayerName,
       viewIndex: layer.layer_order,
-      groupLabel: "",
+      groupLabel: displayFields.groupLabel,
       uiTags: uiTags[layerId] ?? [],
       uiGroup: uiGroups[layerId] ?? "",
       uiColor: uiColors[layerId] ?? ""

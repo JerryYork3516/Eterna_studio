@@ -30,19 +30,19 @@ class V04BaseModel(BaseModel):
 # (layer_id, layer_name, layer_order). Ids/names/order match the existing
 # persona-builder trunk and MUST stay identical across versions.
 CANONICAL_LAYERS: List[tuple[str, str, int]] = [
-    ("layer_1", "Source Input", 1),
-    ("layer_2", "Identity Core", 2),
-    ("layer_3", "Legal Permission", 3),
-    ("layer_4", "Safety Boundary", 4),
-    ("layer_5", "World Context", 5),
-    ("layer_6", "Personality", 6),
-    ("layer_7", "Memory", 7),
-    ("layer_8", "Knowledge", 8),
-    ("layer_9", "Relationship", 9),
-    ("layer_10", "Behavior", 10),
-    ("layer_11", "Capability Tools", 11),
-    ("layer_12", "Multimodal", 12),
-    ("layer_13", "Audit Export Deploy", 13),
+    ("layer_1", "Identity Core", 1),
+    ("layer_2", "Personality", 2),
+    ("layer_3", "Safety Boundary", 3),
+    ("layer_4", "Legal Permission", 4),
+    ("layer_5", "Memory", 5),
+    ("layer_6", "Knowledge", 6),
+    ("layer_7", "World / Context", 7),
+    ("layer_8", "Behavior", 8),
+    ("layer_9", "Capability / Tools", 9),
+    ("layer_10", "Multimodal", 10),
+    ("layer_11", "Relationship", 11),
+    ("layer_12", "Meta / Self-Reflection", 12),
+    ("layer_13", "Export / Deployment", 13),
 ]
 
 CANONICAL_LAYER_IDS = frozenset(layer_id for layer_id, _name, _order in CANONICAL_LAYERS)
