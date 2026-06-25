@@ -34,16 +34,7 @@ function slotLabel(slot: string | null | undefined, t: (key: string, fallback?: 
 }
 
 function layerOrder(layer: ModuleLayerV04) {
-  const order = typeof layer.layer_order === "number" ? layer.layer_order : Number(layer.layer_order);
-  if (Number.isFinite(order)) {
-    return order;
-  }
-  const index = typeof layer.layer_index === "number" ? layer.layer_index : Number(layer.layer_index);
-  if (Number.isFinite(index)) {
-    return index;
-  }
-  const match = /^layer_(\d+)$/i.exec(layer.layer_id);
-  return match ? Number(match[1]) : 999;
+  return Number(layer.layer_order);
 }
 
 export function ModuleLibrary({
