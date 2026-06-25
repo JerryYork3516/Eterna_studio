@@ -14,14 +14,35 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ..models.v0_3 import WorkflowV03
+from ..models.v0_4 import V4ExecutionPlan
 from ..services.audit_v0_3 import audit_resident, audit_workflow
 from ..services.workflow_v0_3 import compile_resident_from_workflow, mock_run_v0_3
 
 SUPPORTED_ACTIONS = ("validate", "audit", "mock_run", "compile")
 
 
+class ExecutionBlockedError(RuntimeError):
+    """Raised when a V4ExecutionPlan was blocked by the permission/risk gate."""
+
+
+def execute_plan(plan: V4ExecutionPlan) -> Dict[str, Any]:
+    """Strict boundary entry: accept a V4ExecutionPlan and run it on v0.3.
+
+    This is the only path the control plane uses to reach the runtime. The
+    orchestrator never imports the v0.3 runtime nor reconstructs the workflow
+    itself — it hands the plan here. A blocked plan is never executed.
+    """
+    if plan.blocked:
+        raise ExecutionBlockedError("execution plan was blocked by the permission/risk gate")
+    workflow = WorkflowV03.model_validate(plan.v0_3_workflow)
+    return run_v0_3(workflow, plan.action)
+
+
 def run_v0_3(workflow: WorkflowV03, action: str) -> Dict[str, Any]:
-    """Forward a translated v0.3 workflow to the v0.3 runtime. Read-only bridge."""
+    """Forward a translated v0.3 workflow to the v0.3 runtime. Read-only bridge.
+
+    Internal to the adapter; the control plane reaches this only via execute_plan.
+    """
     if action == "validate":
         report = audit_workflow(workflow)
         return {"valid": report.status.value != "FAIL", "audit": report.model_dump(mode="json")}

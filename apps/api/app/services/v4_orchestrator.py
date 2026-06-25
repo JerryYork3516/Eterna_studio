@@ -30,7 +30,7 @@ from ..registry.module_catalog import module_catalog_map
 from ..registry.slot_catalog import slot_catalog_map
 from .migration_v0_4 import migrate_workflow_to_v0_4
 from .permissions_v0_4 import gate_action
-from .v3_execution_adapter import SUPPORTED_ACTIONS, run_v0_3
+from .v3_execution_adapter import SUPPORTED_ACTIONS, execute_plan
 from .v4_translator import translate_v0_4_to_v0_3
 
 
@@ -122,10 +122,9 @@ def plan_execution(value: Any, action: str = "mock_run") -> V4ExecutionPlan:
 def execute(value: Any, action: str = "mock_run") -> V4ExecutionResponse:
     plan = plan_execution(value, action)
     if plan.blocked:
+        # Gate decision: never silently executed, never forwarded to the runtime.
         return V4ExecutionResponse(executed=False, plan=plan, result={})
-    # Forward to v0.3 runtime via the single Execution Adapter.
-    from ..models.v0_3 import WorkflowV03
-
-    wf3 = WorkflowV03.model_validate(plan.v0_3_workflow)
-    result = run_v0_3(wf3, action)
+    # Hand the plan to the single Execution Adapter — the orchestrator never
+    # touches the v0.3 runtime directly.
+    result = execute_plan(plan)
     return V4ExecutionResponse(executed=True, plan=plan, result=result)

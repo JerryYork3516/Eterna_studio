@@ -123,3 +123,32 @@ def test_execute_response_is_exportable():
     wf4 = _demo_v0_4()
     resp = client.post("/protocol/execute", json={"workflow": wf4, "action": "mock_run"}).json()
     json.dumps(resp)  # fully JSON-serializable, no circular refs
+
+
+# --- Strict boundary: adapter is the only path to the v0.3 runtime --------
+def test_orchestrator_does_not_import_v0_3_runtime_directly():
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1].joinpath("app", "services", "v4_orchestrator.py").read_text()
+    code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
+    # The control plane must reach the runtime only via the Execution Adapter.
+    assert "mock_run_v0_3" not in code
+    assert "audit_workflow" not in code
+    assert "compile_resident_from_workflow" not in code
+    assert "run_v0_3" not in code  # only adapter.execute_plan is used
+    assert "execute_plan" in code
+
+
+def test_adapter_execute_plan_refuses_blocked_plan():
+    from app.services.v3_execution_adapter import ExecutionBlockedError, execute_plan
+    from app.services.v4_orchestrator import plan_execution
+
+    wf4 = _demo_v0_4()
+    wf4["nodes"][0]["module_id"] = "module_wallet"  # critical risk -> blocked
+    plan = plan_execution(wf4, "mock_run")
+    assert plan.blocked is True
+    try:
+        execute_plan(plan)
+        assert False, "blocked plan must not execute"
+    except ExecutionBlockedError:
+        pass

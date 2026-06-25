@@ -29,13 +29,19 @@ V4ToV3Translator               services/v4_translator.py
   • v0.4 workflow → v0.3 workflow (lossless via extensions.legacy when present)
   │
   ▼
-Execution Adapter              services/v3_execution_adapter.py
-  • THE ONLY entry that calls the v0.3 runtime
+V3ExecutionAdapter             services/v3_execution_adapter.py
+  • strict boundary: execute_plan(V4ExecutionPlan) is the ONLY entry to v0.3
+  • refuses blocked plans (ExecutionBlockedError); reconstructs WorkflowV03
+    from plan.v0_3_workflow and forwards
   │
   ▼
 v0.3 Runtime (unchanged)       services/workflow_v0_3.py · audit_v0_3.py
   • mock-run / audit / compile
 ```
+
+Boundary rule: the orchestrator never imports the v0.3 runtime and never calls
+`run_v0_3` directly — it hands a `V4ExecutionPlan` to `execute_plan`. This is
+enforced by a test that scans the orchestrator source.
 
 If the risk gate blocks (high without permission / critical without human
 confirmation), the orchestrator returns `executed=false` and does **not** forward
