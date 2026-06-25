@@ -43,7 +43,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
       className={`layer-node lock-${schemaNode.lock_level} ${moduleTier ? `tier-${moduleTier}` : ""} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
       style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}
     >
-      <Handle type="target" position={Position.Top} id="p_in" className="flow-handle" />
+      <Handle type="target" position={Position.Top} id="p_in" className="flow-handle layer-flow-handle-top" />
       {groupLabel ? <div className="layer-node__group">{groupLabel}</div> : null}
       <div className="layer-node__header">
         <div>
@@ -84,7 +84,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
         </div>
       </details>
       <Handle type="target" position={Position.Left} id="p_left_in" className="flow-handle flow-handle-left" />
-      <Handle type="source" position={Position.Bottom} id="p_out" className="flow-handle" />
+      <Handle type="source" position={Position.Bottom} id="p_out" className="flow-handle layer-flow-handle-bottom" />
     </div>
   );
 }

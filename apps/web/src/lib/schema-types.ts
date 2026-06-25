@@ -40,7 +40,8 @@ export type ModuleCatalogEntryV04 = {
 
 export type ModuleLayerV04 = {
   layer_id: string;
-  layer_index: number;
+  layer_order: number;
+  layer_index?: number;
   layer_name: string;
   [key: string]: unknown;
 };

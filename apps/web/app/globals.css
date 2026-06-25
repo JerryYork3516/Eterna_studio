@@ -1348,6 +1348,14 @@ pre {
   padding: 10px 14px;
 }
 
+.folder-group-node__body {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-height: 0;
+  position: relative;
+}
+
 .module-count-badge {
   display: inline-flex;
   align-items: center;
@@ -1413,6 +1421,15 @@ pre {
   border-bottom: 1px solid var(--border);
   background: rgba(32, 33, 35, 0.96);
   padding: 12px;
+}
+
+.react-flow__edge-path {
+  stroke: rgba(107, 184, 255, 0.7);
+  stroke-width: 2.2;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5 6;
 }
 
 .layer-workspace.tier-core {

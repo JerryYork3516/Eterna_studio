@@ -33,6 +33,19 @@ function slotLabel(slot: string | null | undefined, t: (key: string, fallback?: 
   return t(`module.slot.${value}`, value);
 }
 
+function layerOrder(layer: ModuleLayerV04) {
+  const order = typeof layer.layer_order === "number" ? layer.layer_order : Number(layer.layer_order);
+  if (Number.isFinite(order)) {
+    return order;
+  }
+  const index = typeof layer.layer_index === "number" ? layer.layer_index : Number(layer.layer_index);
+  if (Number.isFinite(index)) {
+    return index;
+  }
+  const match = /^layer_(\d+)$/i.exec(layer.layer_id);
+  return match ? Number(match[1]) : 999;
+}
+
 export function ModuleLibrary({
   t,
   collapsed,
@@ -51,7 +64,7 @@ export function ModuleLibrary({
   const [collapsedLayers, setCollapsedLayers] = useState<Set<string>>(() => new Set());
 
   const sortedLayers = useMemo(
-    () => layers.slice().sort((a, b) => a.layer_index - b.layer_index),
+    () => layers.slice().sort((a, b) => layerOrder(a) - layerOrder(b)),
     [layers]
   );
 

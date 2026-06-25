@@ -92,13 +92,74 @@ function readNodeDragType(event: ReactDragEvent): ModuleNodeType | null {
   return value ? (value as ModuleNodeType) : null;
 }
 const fallbackTemplateTypes = ["blank", "persona_builder", "agent", "knowledge_pipeline", "review_pipeline"];
-const TRUNK_LAYER_X = 920;
 const TRUNK_LAYER_HEIGHT = 216;
-const FOLDER_GROUP_WIDTH = 950;
+const FOLDER_GROUP_X = 80;
+const FOLDER_GROUP_WIDTH = 1180;
 const FOLDER_GROUP_HEIGHT = 216;
-const FOLDER_GROUP_GAP = 110;
-const TRUNK_LAYER_Y_STEP = 270;
+const FOLDER_TO_TRUNK_GAP = 120;
+const TRUNK_LAYER_X = FOLDER_GROUP_X + FOLDER_GROUP_WIDTH + FOLDER_TO_TRUNK_GAP;
 const TRUNK_LAYER_Y_OFFSET = 110;
+const LAYER_STACK_GAP = 80;
+const LAYER_NODE_ROW_HEIGHT = 72;
+const LAYER_STACK_PADDING = 120;
+
+type LayerStackFrame = { x: number; y: number; width: number; height: number };
+
+type CatalogLayerInput = { layer_id: string; layer_index?: number; layer_order?: number; layer_name: string };
+
+function catalogLayerOrder(layer: CatalogLayerInput, fallback = 999) {
+  const order = typeof layer.layer_order === "number" ? layer.layer_order : Number(layer.layer_order);
+  if (Number.isFinite(order)) {
+    return order;
+  }
+  const index = typeof layer.layer_index === "number" ? layer.layer_index : Number(layer.layer_index);
+  if (Number.isFinite(index)) {
+    return index;
+  }
+  const idMatch = /(?:^|_)layer_?(\d+)$/i.exec(layer.layer_id) ?? /^layer_(\d+)$/i.exec(layer.layer_id);
+  const idOrder = idMatch ? Number(idMatch[1]) : NaN;
+  return Number.isFinite(idOrder) ? idOrder : fallback;
+}
+
+function catalogLayerToWorkflowNode(layer: CatalogLayerInput, fallbackIndex: number): WorkflowNode {
+  const layerIndex = catalogLayerOrder(layer, fallbackIndex);
+  return {
+    node_id: layer.layer_id,
+    type: "layer_container",
+    category: "container",
+    title_key: `layer.${layer.layer_id}`,
+    title_fallback: layer.layer_name,
+    position: { x: TRUNK_LAYER_X, y: TRUNK_LAYER_Y_OFFSET + (layerIndex - 1) * (FOLDER_GROUP_HEIGHT + LAYER_STACK_GAP) },
+    lock_level: "editable",
+    locale: null,
+    data: { layer_index: layerIndex, layer_order: layerIndex, layer_name: layer.layer_name },
+    ports: {
+      inputs: [{ port_id: "p_left_in", name: "in", direction: "in" }],
+      outputs: [{ port_id: "p_out", name: "out", direction: "out" }]
+    },
+    validation: null
+  } as WorkflowNode;
+}
+
+// CLEAN V4: the canvas graph is derived purely from the v0.4 module-catalog
+// layers (13 frozen). No v0.3 workflow / createPersonaBuilder is used as a UI
+// data source. Vertical TRUNK layout preserved; visualization only.
+function buildSchemaWorkflow(layers: CatalogLayerInput[]): Workflow | null {
+  const ordered = layers.slice().sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b));
+  if (!ordered.length) {
+    return null;
+  }
+  const nodes = ordered.map((layer, index) => catalogLayerToWorkflowNode(layer, index + 1));
+  return {
+    schema_version: "0.4.0",
+    name: "Schema Canvas",
+    version: "1.0.0",
+    template_type: "schema_v04",
+    nodes,
+    edges: [],
+    metadata: {}
+  } as unknown as Workflow;
+}
 const MOCK_MODE = false;
 const MODULE_COLOR_SWATCHES = [
   "#7aa2f7",
@@ -312,6 +373,65 @@ function getLayerIndex(node: WorkflowNode) {
   return dataNumber(node, "layer_index");
 }
 
+function getLayerOrder(node: WorkflowNode) {
+  return dataNumber(node, "layer_order") ?? getLayerIndex(node);
+}
+
+function computeLayerHeight(layer: LayerSummary, moduleCount: number) {
+  const contentCount = Math.max(moduleCount, layer.childNodes.length);
+  const contentHeight = contentCount * LAYER_NODE_ROW_HEIGHT + LAYER_STACK_PADDING;
+  return Math.max(FOLDER_GROUP_HEIGHT, contentHeight);
+}
+
+function computeLayerStackFrames(layers: LayerSummary[], moduleCounts: Map<string, number>) {
+  let y = 0;
+  let previousBottom = -Infinity;
+  const frames = new Map<string, LayerStackFrame>();
+  for (const layer of layers) {
+    const height = computeLayerHeight(layer, moduleCounts.get(layer.node.node_id) ?? 0);
+    const minY = previousBottom === -Infinity ? y : previousBottom + LAYER_STACK_GAP;
+    if (y < minY) {
+      y = minY;
+    }
+    frames.set(layer.node.node_id, {
+      x: FOLDER_GROUP_X,
+      y,
+      width: FOLDER_GROUP_WIDTH,
+      height
+    });
+    previousBottom = y + height;
+    y = previousBottom + LAYER_STACK_GAP;
+  }
+  return frames;
+}
+
+function nodeLayerKey(node: WorkflowNode, layers: WorkflowNode[]) {
+  const explicit =
+    dataStringValue(node, "layer_id") ??
+    dataStringValue(node, "layerId") ??
+    dataStringValue(node, "parent_layer") ??
+    dataStringValue(node, "parentLayer");
+  if (explicit) {
+    return explicit;
+  }
+  const layerIndex = inferNodeLayerIndex(node, layers);
+  return layerIndex === null ? null : `layer_${layerIndex}`;
+}
+
+function edgeIsInsideSameLayer(edge: WorkflowEdge, nodeById: Map<string, WorkflowNode>, layers: WorkflowNode[]) {
+  const source = nodeById.get(edge.source);
+  const target = nodeById.get(edge.target);
+  if (!source || !target) {
+    return false;
+  }
+  if (source.type === "layer_container" || target.type === "layer_container") {
+    return false;
+  }
+  const sourceLayer = nodeLayerKey(source, layers);
+  const targetLayer = nodeLayerKey(target, layers);
+  return Boolean(sourceLayer && targetLayer && sourceLayer === targetLayer);
+}
+
 function getNodeTypeLabel(type: string, t: (key: string, fallback?: string) => string) {
   // Prefer the i18n entry (zh/en) over the registry's English label so node
   // names localize correctly; fall back to the registry label, then the type.
@@ -451,7 +571,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const label = layer.displayLabel;
   const parameterCount = Object.keys(layer.node.data ?? {}).length;
   const visibleModules = modules.slice(0, 6);
-  const visibleSubnodes: WorkflowNode[] = MOCK_MODE ? data.subnodes.slice(0, 6) : [];
+  const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
   const selectedModuleSet = new Set(selectedModuleKeys);
 
   return (
@@ -475,6 +595,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
       }}
       onContextMenu={onContainerContextMenu}
     >
+      <Handle type="source" position={Position.Right} id="p_out" className="flow-handle flow-handle-right" />
       <div className="folder-group-node__header">
         <div className="folder-group-title">
           <button
@@ -505,94 +626,95 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
           </div>
         </details>
       </div>
-      <div className={`submodule-rail ${focusedModuleId ? "has-focused-module" : ""}`}>
-        {visibleModules.length ? (
-          visibleModules.map((mod) => {
-            const modId = moduleCatalogId(mod);
-            const slot = moduleCatalogSlot(mod);
-            const slotLabel = translate(language, `module.slot.${slot}`, slot.toUpperCase());
-            const status = String(mod.status);
-            const category = String(mod.category || "general");
-            return (
-              <button
-                key={modId}
-                type="button"
-                className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
-                style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
-                onClick={(event) => {
-                  onSelectDroppedModule(modId, event.ctrlKey || event.metaKey);
-                }}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onOpenDroppedModule(modId);
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onDroppedModuleContextMenu(event, modId);
-                }}
-                title={`${moduleCatalogName(mod)} · ${slotLabel} · ${translate(language, `module.status.${status}`, status)}`}
-              >
-                <span className="submodule-name">{moduleCatalogName(mod)}</span>
-                <span className="submodule-badge-row">
-                  <span className="submodule-group">{mod.layer_id}</span>
-                  <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
-                    {slotLabel}
+      <div className="folder-group-node__body">
+        <div className={`submodule-rail ${focusedModuleId ? "has-focused-module" : ""}`}>
+          {visibleModules.length ? (
+            visibleModules.map((mod) => {
+              const modId = moduleCatalogId(mod);
+              const slot = moduleCatalogSlot(mod);
+              const slotLabel = translate(language, `module.slot.${slot}`, slot.toUpperCase());
+              const status = String(mod.status);
+              const category = String(mod.category || "general");
+              return (
+                <button
+                  key={modId}
+                  type="button"
+                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
+                  style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
+                  onClick={(event) => {
+                    onSelectDroppedModule(modId, event.ctrlKey || event.metaKey);
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenDroppedModule(modId);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onDroppedModuleContextMenu(event, modId);
+                  }}
+                  title={`${moduleCatalogName(mod)} · ${slotLabel} · ${translate(language, `module.status.${status}`, status)}`}
+                >
+                  <span className="submodule-name">{moduleCatalogName(mod)}</span>
+                  <span className="submodule-badge-row">
+                    <span className="submodule-group">{mod.layer_id}</span>
+                    <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
+                      {slotLabel}
+                    </span>
+                    <span className="submodule-tier">{translate(language, `module.status.${status}`, status)}</span>
                   </span>
-                  <span className="submodule-tier">{translate(language, `module.status.${status}`, status)}</span>
-                </span>
-              </button>
-            );
-          })
-        ) : visibleSubnodes.length ? (
-          visibleSubnodes.map((node) => {
-            const moduleTier = dataString(node, "module_tier", layer.tier);
-            const uiTags: string[] = Array.isArray(node.data?.ui_tags) ? node.data.ui_tags.map(String).filter(Boolean) : [];
-            const uiGroup = typeof node.data?.ui_group === "string" ? node.data.ui_group : "";
-            const isFocused = focusedModuleId === node.node_id;
-            const aiSlot = inferAiSlot(node);
-            return (
-              <button
-                key={node.node_id}
-                className={`submodule-card tier-${moduleTier} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${isFocused ? "is-focused" : ""}`}
-                style={typeof node.data?.ui_color === "string" ? ({ "--node-accent": node.data.ui_color } as CSSProperties) : undefined}
-                onClick={() => data.onSelectNode(node)}
-                onDoubleClick={() => {
-                  data.onFocusNode(node);
-                  data.onPreviewNode(node);
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  data.onModuleContextMenu(event, node);
-                }}
-                onTouchEnd={(event) => {
-                  event.preventDefault();
-                  data.onSelectNode(node);
-                }}
-              >
-                <span className="submodule-name">{data.moduleNames[node.node_id] ?? translate(language, node.title_key, node.title_fallback)}</span>
-                {uiGroup ? <span className="submodule-group">{uiGroup}</span> : null}
-                {uiTags.length ? (
-                  <span className="submodule-tags">
-                    {uiTags.slice(0, 2).map((tag: string) => (
-                      <em key={tag}>{tag}</em>
-                    ))}
+                </button>
+              );
+            })
+          ) : visibleSubnodes.length ? (
+            visibleSubnodes.map((node) => {
+              const moduleTier = dataString(node, "module_tier", layer.tier);
+              const uiTags: string[] = Array.isArray(node.data?.ui_tags) ? node.data.ui_tags.map(String).filter(Boolean) : [];
+              const uiGroup = typeof node.data?.ui_group === "string" ? node.data.ui_group : "";
+              const isFocused = focusedModuleId === node.node_id;
+              const aiSlot = inferAiSlot(node);
+              return (
+                <button
+                  key={node.node_id}
+                  className={`submodule-card tier-${moduleTier} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${isFocused ? "is-focused" : ""}`}
+                  style={typeof node.data?.ui_color === "string" ? ({ "--node-accent": node.data.ui_color } as CSSProperties) : undefined}
+                  onClick={() => data.onSelectNode(node)}
+                  onDoubleClick={() => {
+                    data.onFocusNode(node);
+                    data.onPreviewNode(node);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    data.onModuleContextMenu(event, node);
+                  }}
+                  onTouchEnd={(event) => {
+                    event.preventDefault();
+                    data.onSelectNode(node);
+                  }}
+                >
+                  <span className="submodule-name">{data.moduleNames[node.node_id] ?? translate(language, node.title_key, node.title_fallback)}</span>
+                  {uiGroup ? <span className="submodule-group">{uiGroup}</span> : null}
+                  {uiTags.length ? (
+                    <span className="submodule-tags">
+                      {uiTags.slice(0, 2).map((tag: string) => (
+                        <em key={tag}>{tag}</em>
+                      ))}
+                    </span>
+                  ) : null}
+                  <span className="submodule-badge-row">
+                    <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
+                    <span className="submodule-tier">{moduleTier}</span>
                   </span>
-                ) : null}
-                <span className="submodule-badge-row">
-                  <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
-                  <span className="submodule-tier">{moduleTier}</span>
-                </span>
-              </button>
-            );
-          })
-        ) : (
-          <div className="submodule-drop-hint">{translate(language, "module.dropHere", "拖拽模块到这里")}</div>
-        )}
+                </button>
+              );
+            })
+          ) : (
+            <div className="submodule-drop-hint">{translate(language, "module.dropHere", "拖拽模块到这里")}</div>
+          )}
+        </div>
       </div>
-      <Handle type="source" position={Position.Right} id="folder_out" className="flow-handle folder-flow-handle" />
     </section>
   );
 }
@@ -617,6 +739,7 @@ export function CanvasShell() {
   const [floatingNodeIds, setFloatingNodeIds] = useState<string[]>([]);
   const [draggedNodeIds, setDraggedNodeIds] = useState<Set<string>>(() => new Set());
   const [folderNodePositions, setFolderNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [layerNodePositions, setLayerNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [moduleTabs, setModuleTabs] = useState<string[]>([]);
   const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
   const [pendingModuleAdd, setPendingModuleAdd] = useState<PendingModuleAdd | null>(null);
@@ -739,34 +862,72 @@ export function CanvasShell() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([
-      api.fetchNodeRegistry(),
-      api.fetchModuleCatalog(),
-      api.fetchSlotCatalog(),
-      api.fetchEngineRegistry()
-    ])
-      .then(([registry, modules, slots, engines]) => {
+    api
+      .fetchNodeRegistry()
+      .then((registry) => {
         if (!active) {
           return;
         }
         setBackendNodeRegistry(registry);
-        setModuleCatalog(modules);
         setRegistryRevision((revision) => revision + 1);
-        setCatalogRevision((revision) => revision + 1);
         appendLog(`${translate(language, "status.nodeRegistryLoaded", "Node registry loaded")}: ${Object.keys(registry).length}`);
-        appendLog(`Module catalog loaded: ${modules.modules.length}`);
-        appendLog(`Slot catalog loaded: ${slots.slots.length}`);
-        appendLog(`Engine registry loaded: ${engines.engines.length}`);
       })
       .catch((error) => {
         if (active) {
           appendLog(`${translate(language, "error.nodeRegistry", "Node registry failed")}: ${(error as Error).message}`, "error");
         }
       });
+
+    api
+      .fetchModuleCatalog()
+      .then((modules) => {
+        if (!active) {
+          return;
+        }
+        setModuleCatalog(modules);
+        setCatalogRevision((revision) => revision + 1);
+        const schemaWorkflow = buildSchemaWorkflow(modules.layers ?? []);
+        if (schemaWorkflow) {
+          setWorkflow(schemaWorkflow);
+        }
+        appendLog(`Module catalog loaded: ${modules.modules.length}; layers: ${modules.layers.length}`);
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`Module catalog failed: ${(error as Error).message}`, "error");
+        }
+      });
+
+    api
+      .fetchSlotCatalog()
+      .then((slots) => {
+        if (active) {
+          appendLog(`Slot catalog loaded: ${slots.slots.length}`);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`Slot catalog failed: ${(error as Error).message}`, "error");
+        }
+      });
+
+    api
+      .fetchEngineRegistry()
+      .then((engines) => {
+        if (active) {
+          appendLog(`Engine registry loaded: ${engines.engines.length}`);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`Engine registry failed: ${(error as Error).message}`, "error");
+        }
+      });
+
     return () => {
       active = false;
     };
-  }, [appendLog, language]);
+  }, [appendLog, language, setWorkflow]);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const commitWorkflowGraph = useCallback(
     (nextNodes: WorkflowNode[], nextEdges: WorkflowEdge[]) => {
@@ -826,22 +987,31 @@ export function CanvasShell() {
     setLayerModules({});
     setSelectedLayerModuleKeys(new Set());
     setModuleUiColors({});
+    setLayerNodePositions({});
   }, [workflow?.workflow_id]);
 
-  const layerNodes = useMemo(
+  const catalogLayerNodes = useMemo(
     () =>
-      nodes
-        .filter((node) => node.type === "layer_container")
+      (moduleCatalog?.layers ?? [])
         .slice()
-        .sort((a, b) => (getLayerIndex(a) ?? 999) - (getLayerIndex(b) ?? 999)),
-    [nodes]
+        .sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b))
+        .map((layer, index) => catalogLayerToWorkflowNode(layer, index + 1)),
+    [moduleCatalog]
   );
+
+  const layerNodes = useMemo(() => {
+    const workflowLayerNodes = nodes
+      .filter((node) => node.type === "layer_container")
+      .slice()
+      .sort((a, b) => (getLayerOrder(a) ?? 999) - (getLayerOrder(b) ?? 999));
+    return catalogLayerNodes.length >= 13 ? catalogLayerNodes : workflowLayerNodes;
+  }, [catalogLayerNodes, nodes]);
 
   const layerSummaries = useMemo<LayerSummary[]>(
     () =>
       layerNodes
         .map((layer) => {
-        const index = getLayerIndex(layer) ?? 0;
+        const index = getLayerOrder(layer) ?? 0;
         const label = translate(language, layer.title_key, layer.title_fallback);
         const viewConfig = getLayerViewConfig(index, label);
         const childNodes = nodes.filter(
@@ -851,7 +1021,7 @@ export function CanvasShell() {
           node: layer,
           index,
           displayIndex: viewConfig.displayIndex,
-          displayLabel: viewConfig.label,
+          displayLabel: label,
           groupLabel: viewConfig.group,
           tier: dataString(layer, "module_tier", "core"),
           status: dataString(layer, "status", "empty"),
@@ -1241,33 +1411,6 @@ export function CanvasShell() {
     setModuleTabs((tabs) => (!tabs.includes(id) || tabs[0] === id ? tabs : [id, ...tabs.filter((tabId) => tabId !== id)]));
   }, []);
 
-  const getLayerDisplayPosition = useCallback(
-    (layerNode: WorkflowNode, displayIndex: number) => {
-      if (draggedNodeIds.has(layerNode.node_id) && layerNode.position) {
-        return layerNode.position;
-      }
-      return {
-        x: TRUNK_LAYER_X,
-        y: (displayIndex - 1) * TRUNK_LAYER_Y_STEP + TRUNK_LAYER_Y_OFFSET
-      };
-    },
-    [draggedNodeIds]
-  );
-
-  const getFolderDisplayPosition = useCallback(
-    (layer: LayerSummary) => {
-      const folderNodeId = `ui-folder-${layer.node.node_id}`;
-      const layerPosition = getLayerDisplayPosition(layer.node, layer.displayIndex);
-      return (
-        folderNodePositions[folderNodeId] ?? {
-          x: layerPosition.x - FOLDER_GROUP_WIDTH - FOLDER_GROUP_GAP,
-          y: layerPosition.y + (TRUNK_LAYER_HEIGHT - FOLDER_GROUP_HEIGHT) / 2
-        }
-      );
-    },
-    [folderNodePositions, getLayerDisplayPosition]
-  );
-
   const buildModuleAddMenu = useCallback(
     (layerNodeId: string, displayIndex: number): CanvasContextMenuItem[] => {
       const catalogLayerId = displayIndex >= 1 && displayIndex <= 13 ? `layer_${displayIndex}` : "general";
@@ -1337,197 +1480,162 @@ export function CanvasShell() {
   );
 
   const flowNodes = useMemo<Node[]>(() => {
-    const schemaFlowNodes = nodes
-      .filter((node) => {
-        if (!visibleNodeIds.has(node.node_id)) {
-          return false;
-        }
-        if (node.type === "layer_container") {
-          return true;
-        }
-        return inferNodeLayerIndex(node, layerNodes) === null;
-      })
-      .map((schemaNode) => {
-        const flowNode = makeFlowNode(schemaNode, undefined, resolveUiLayerId(schemaNode, layerNodes, nodes));
-        if (schemaNode.type !== "layer_container") {
-          const mainNodeId = schemaNode.node_id;
-          return {
-            ...flowNode,
-            data: {
-              ...flowNode.data,
-              onRename: (name: string) => {
-                setUiNodeNames((current) => ({ ...current, [mainNodeId]: name.trim() }));
-                setSaveStatus("dirty");
-              },
-              onColor: (color: string) => {
-                setUiColors((current) => ({ ...current, [mainNodeId]: color }));
-                setSaveStatus("dirty");
-              },
-              onInput: (key: string, value: unknown) => {
-                setUiInputs((current) => ({ ...current, [mainNodeId]: { ...current[mainNodeId], [key]: value } }));
-                setSaveStatus("dirty");
-              },
-              schemaNode: {
-                ...schemaNode,
-                title_fallback: uiNodeNames[schemaNode.node_id] ?? schemaNode.title_fallback,
-                data: {
-                  ...(schemaNode.data ?? {}),
-                  ...(uiInputs[schemaNode.node_id] ?? {}),
-                  ui_name: uiNodeNames[schemaNode.node_id] ?? "",
-                  ui_tags: uiTags[schemaNode.node_id] ?? [],
-                  ui_group: uiGroups[schemaNode.node_id] ?? "",
-                  ui_color: uiColors[schemaNode.node_id] ?? ""
-                }
-              }
-            }
-          };
-        }
-        const layer = layerById.get(schemaNode.node_id);
-        const displayIndex = layer?.displayIndex ?? getLayerIndex(schemaNode) ?? 1;
-        return {
-          ...flowNode,
-          position: getLayerDisplayPosition(schemaNode, displayIndex),
-          style: { width: 380, height: TRUNK_LAYER_HEIGHT },
-          data: {
-            ...flowNode.data,
-            viewLabel: uiNodeNames[schemaNode.node_id] ?? layer?.displayLabel,
-            viewIndex: displayIndex,
-            groupLabel: layer?.groupLabel,
-            uiTags: uiTags[schemaNode.node_id] ?? [],
-            uiGroup: uiGroups[schemaNode.node_id] ?? "",
-            uiColor: uiColors[schemaNode.node_id] ?? ""
-          }
-        };
-      });
-    const expandedLayers = [...expandedLayerIds].map((id) => layerById.get(id)).filter((layer): layer is LayerSummary => Boolean(layer));
-
-    if (!expandedLayers.length) {
-      return schemaFlowNodes;
-    }
-
-    const allReactFlowNodes = schemaFlowNodes;
-    const reactFlowDataSample = allReactFlowNodes.slice(0, 5).map((node) => ({ id: node.id, data: node.data }));
-    const missingLayerLinkCount = allReactFlowNodes.filter((node) => {
-      const data = (node.data as { schemaNode: WorkflowNode }).schemaNode.data ?? {};
-      return !("layer_id" in data) && !("layerId" in data) && !("parent_layer" in data) && !("parentLayer" in data);
-    }).length;
-    console.log("[ReactFlow nodes data sample]", reactFlowDataSample);
-    console.log("[ReactFlow nodes missing layer fields]", missingLayerLinkCount);
-
-    return [
-      ...schemaFlowNodes,
-      ...expandedLayers.map((layer) => {
+    const moduleCounts = new Map(
+      layerSummaries.map((layer) => {
         const layerId = layer.node.node_id;
-        const subnodes = layer.childNodes;
-        console.log("[LayerWorkspace] layer.id", layerId);
-        console.log("[LayerWorkspace] filtered nodes count", subnodes.length);
-        const attachedModuleIds = layerModules[layerId] ?? [];
-        const attachedModules = attachedModuleIds
-          .map((id) => moduleCatalogById.get(id))
-          .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
-        const attachedModuleColors = Object.fromEntries(
-          attachedModuleIds.map((id) => [id, moduleUiColors[`${layerId}:${id}`] ?? ""])
-        );
-        return {
-          id: `ui-folder-${layerId}`,
-          type: "folderGroup",
-          position: getFolderDisplayPosition(layer),
-          style: { width: FOLDER_GROUP_WIDTH, height: FOLDER_GROUP_HEIGHT },
-          draggable: true,
-          selectable: true,
-          data: {
-            layer,
-            subnodes,
-            modules: attachedModules,
-            focusedModuleId,
-            selectedModuleKeys: attachedModuleIds.filter((id) => selectedLayerModuleKeys.has(`${layerId}:${id}`)),
-            moduleNames,
-            moduleColors: attachedModuleColors,
-            uiColor: uiColors[`ui-folder-${layerId}`] ?? uiColors[layerId] ?? "",
-            onSelectNode: handleChildModuleSelect,
-            onPreviewNode: handleChildModulePreview,
-            onFocusNode: (node: WorkflowNode) => setFocusedModuleId(node.node_id),
-            onDropModule: (moduleId: string) => addModuleToLayer(layerId, moduleId),
-            onSelectDroppedModule: (moduleId: string, multi: boolean) => selectLayerModule(layerId, moduleId, multi),
-            onOpenDroppedModule: (moduleId: string) => openCatalogModuleCanvas(layerId, moduleId),
-            onRemoveModule: (moduleId: string) => removeModuleFromLayer(layerId, moduleId),
-            onColorModule: (moduleId: string, color: string) => setModuleColor(layerId, moduleId, color),
-            onOpenModuleFocus: () => setFocusLayerId(layerId),
-            onContainerContextMenu: (event: ReactMouseEvent) => openFolderContextMenu(event, layer),
-            onDroppedModuleContextMenu: (event: ReactMouseEvent, moduleId: string) => openDroppedModuleContextMenu(event, layer, moduleId),
-            onModuleContextMenu: handleModuleContextMenu
-          } satisfies FolderGroupNodeData
-        } satisfies Node;
+        return [layerId, (layerModules[layerId] ?? []).length] as const;
       })
-    ];
+    );
+    const stackFrames = computeLayerStackFrames(layerSummaries, moduleCounts);
+    const folderNodes = layerSummaries.map((layer) => {
+      const layerId = layer.node.node_id;
+      const subnodes = layer.childNodes;
+      const attachedModuleIds = layerModules[layerId] ?? [];
+      const attachedModules = attachedModuleIds
+        .map((id) => moduleCatalogById.get(id))
+        .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
+      const attachedModuleColors = Object.fromEntries(attachedModuleIds.map((id) => [id, moduleUiColors[`${layerId}:${id}`] ?? ""]));
+      const frame = stackFrames.get(layerId) ?? {
+        x: FOLDER_GROUP_X,
+        y: 0,
+        width: FOLDER_GROUP_WIDTH,
+        height: FOLDER_GROUP_HEIGHT
+      };
+      return {
+        id: `ui-folder-${layerId}`,
+        type: "folderGroup",
+        position: { x: frame.x, y: frame.y },
+        style: { width: frame.width, height: frame.height },
+        draggable: false,
+        selectable: true,
+        data: {
+          layer,
+          subnodes,
+          modules: attachedModules,
+          focusedModuleId,
+          selectedModuleKeys: attachedModuleIds.filter((id) => selectedLayerModuleKeys.has(`${layerId}:${id}`)),
+          moduleNames,
+          moduleColors: attachedModuleColors,
+          uiColor: uiColors[`ui-folder-${layerId}`] ?? uiColors[layerId] ?? "",
+          onSelectNode: handleChildModuleSelect,
+          onPreviewNode: handleChildModulePreview,
+          onFocusNode: (node: WorkflowNode) => setFocusedModuleId(node.node_id),
+          onDropModule: (moduleId: string) => addModuleToLayer(layerId, moduleId),
+          onSelectDroppedModule: (moduleId: string, multi: boolean) => selectLayerModule(layerId, moduleId, multi),
+          onOpenDroppedModule: (moduleId: string) => openCatalogModuleCanvas(layerId, moduleId),
+          onRemoveModule: (moduleId: string) => removeModuleFromLayer(layerId, moduleId),
+          onColorModule: (moduleId: string, color: string) => setModuleColor(layerId, moduleId, color),
+          onOpenModuleFocus: () => setFocusLayerId(layerId),
+          onContainerContextMenu: (event: ReactMouseEvent) => openFolderContextMenu(event, layer),
+          onDroppedModuleContextMenu: (event: ReactMouseEvent, moduleId: string) => openDroppedModuleContextMenu(event, layer, moduleId),
+          onModuleContextMenu: handleModuleContextMenu
+        } satisfies FolderGroupNodeData
+      } satisfies Node;
+    });
+
+    const layerSchemaNodes = layerSummaries.map((layer) => {
+      const frame = stackFrames.get(layer.node.node_id) ?? {
+        x: FOLDER_GROUP_X,
+        y: 0,
+        width: FOLDER_GROUP_WIDTH,
+        height: FOLDER_GROUP_HEIGHT
+      };
+      const defaultPosition = {
+        x: TRUNK_LAYER_X,
+        y: frame.y + Math.max(0, (frame.height - TRUNK_LAYER_HEIGHT) / 2)
+      };
+      return {
+        id: layer.node.node_id,
+        type: "layerContainer",
+        position: layerNodePositions[layer.node.node_id] ?? defaultPosition,
+        style: { width: 380, height: TRUNK_LAYER_HEIGHT },
+        draggable: true,
+        selectable: true,
+        data: {
+          schemaNode: layer.node,
+          layer_id: layer.node.node_id,
+          viewLabel: layer.displayLabel,
+          viewIndex: layer.displayIndex,
+          groupLabel: layer.groupLabel,
+          uiTags: uiTags[layer.node.node_id] ?? [],
+          uiGroup: uiGroups[layer.node.node_id] ?? "",
+          uiColor: uiColors[layer.node.node_id] ?? ""
+        }
+      } satisfies Node;
+    });
+
+    const schemaNodes = nodes
+      .filter((node) => node.type !== "layer_container" && visibleNodeIds.has(node.node_id))
+      .map((node) => ({
+        id: node.node_id,
+        type: "workflowNode",
+        position: node.position ?? { x: 0, y: 0 },
+        data: {
+          schemaNode: node,
+          layer_id: node.data?.layer_id
+        }
+      } satisfies Node));
+
+    return [...folderNodes, ...layerSchemaNodes, ...schemaNodes];
   }, [
-    activeLayer,
-    expandedLayerIds,
-    getFolderDisplayPosition,
-    getLayerDisplayPosition,
+    addModuleToLayer,
+    focusedModuleId,
     handleChildModulePreview,
     handleChildModuleSelect,
     handleModuleContextMenu,
-    focusedModuleId,
-    moduleUiColors,
-    moduleCatalogById,
-    layerById,
-    layerNodes,
     layerSummaries,
+    layerModules,
+    moduleCatalogById,
     moduleNames,
+    moduleUiColors,
     nodes,
+    layerNodePositions,
+    openCatalogModuleCanvas,
+    openDroppedModuleContextMenu,
+    openFolderContextMenu,
+    selectLayerModule,
+    selectedLayerModuleKeys,
+    setModuleColor,
     uiGroups,
     uiColors,
-    uiInputs,
-    uiNodeNames,
     uiTags,
-    layerModules,
-    addModuleToLayer,
-    removeModuleFromLayer,
-    setModuleColor,
-    selectedLayerModuleKeys,
-    selectLayerModule,
-    openCatalogModuleCanvas,
-    openFolderContextMenu,
-    openDroppedModuleContextMenu,
     visibleNodeIds
   ]);
 
-  const flowEdges = useMemo<Edge[]>(
-    () => {
-      const schemaNodeIds = new Set(flowNodes.filter((node) => !node.id.startsWith("ui-folder-")).map((node) => node.id));
-      const schemaEdges = edges
-        .filter((edge) => schemaNodeIds.has(edge.source) && schemaNodeIds.has(edge.target))
-        .map((edge) => ({
-          id: edge.edge_id,
-          source: edge.source,
-          target: edge.target,
-          sourceHandle: edge.source_port,
-          targetHandle: edge.target_port,
-          type: "smoothstep"
-        }));
+  const flowEdges = useMemo<Edge[]>(() => {
+    const folderToLayerEdges = layerSummaries.map((layer) => ({
+      id: `edge-ui-folder-${layer.node.node_id}`,
+      source: `ui-folder-${layer.node.node_id}`,
+      target: layer.node.node_id,
+      sourceHandle: "p_out",
+      targetHandle: "p_left_in",
+      type: "smoothstep",
+      selectable: false,
+      deletable: false,
+      focusable: false,
+      animated: false,
+      style: { stroke: "rgba(110, 231, 183, 0.95)", strokeWidth: 2 }
+    }));
 
-      const expandedLayers = [...expandedLayerIds].map((id) => layerById.get(id)).filter((layer): layer is LayerSummary => Boolean(layer));
-      if (!expandedLayers.length) {
-        return schemaEdges;
-      }
+    const layerSpineEdges = layerSummaries.slice(0, -1).map((layer, index) => {
+      const nextLayer = layerSummaries[index + 1];
+      return {
+        id: `edge-layer-spine-${layer.node.node_id}-${nextLayer.node.node_id}`,
+        source: layer.node.node_id,
+        target: nextLayer.node.node_id,
+        sourceHandle: "p_out",
+        targetHandle: "p_in",
+        type: "smoothstep",
+        selectable: false,
+        deletable: false,
+        focusable: false,
+        animated: false,
+        style: { stroke: "rgba(148, 163, 184, 0.72)", strokeWidth: 1.8 }
+      } satisfies Edge;
+    });
 
-      return [
-        ...schemaEdges,
-        ...expandedLayers.map((layer) => ({
-          id: `ui-folder-edge-${layer.node.node_id}`,
-          source: `ui-folder-${layer.node.node_id}`,
-          target: layer.node.node_id,
-          sourceHandle: "folder_out",
-          targetHandle: "p_left_in",
-          type: "smoothstep",
-          animated: false,
-          style: { stroke: "#7aa2f7", strokeWidth: 1.5 }
-        }))
-      ];
-    },
-    [edges, expandedLayerIds, flowNodes, layerById]
-  );
+    return [...folderToLayerEdges, ...layerSpineEdges];
+  }, [layerSummaries]);
 
   const requireWorkflow = useCallback(() => {
     if (!workflow) {
@@ -1609,23 +1717,11 @@ export function CanvasShell() {
     }
   }, [appendLog, requireWorkflow, setValidation, t]);
 
-  const handleMockRun = useCallback(async () => {
-    const currentWorkflow = requireWorkflow();
-    if (!currentWorkflow) {
-      return;
-    }
-
-    try {
-      const result = await api.mockRun(currentWorkflow);
-      const runArtifacts = (result.run.artifacts ?? []) as Artifact[];
-      setArtifacts(runArtifacts);
-      appendLog(`${t("status.mockRun")}: ${String(result.run.status ?? "-")}`);
-      setBottomTab("artifacts");
-      setActiveDrawer("artifacts");
-    } catch (error) {
-      appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
-    }
-  }, [appendLog, requireWorkflow, setArtifacts, t]);
+  // CLEAN V4: execution is backend-only (v0.3 via adapter). The UI never triggers
+  // a run. This handler is a disabled stub kept only so existing buttons compile.
+  const handleMockRun = useCallback(() => {
+    appendLog(t("status.executionDisabled", "Execution is backend-only (v0.3 adapter). UI does not run workflows."), "warn");
+  }, [appendLog, t]);
 
   const handleExportPreview = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
@@ -1655,8 +1751,15 @@ export function CanvasShell() {
         setLoadingTemplateType(templateType);
         appendLog(`${t("status.templateLoading", "Loading template")}: ${t(`template.${templateType}`, templateType)}`);
         try {
-          const result = await api.createPersonaBuilder(undefined, language);
-          setWorkflow(result.workflow);
+          // CLEAN V4: re-derive the canvas from the v0.4 module-catalog schema
+          // (no createPersonaBuilder / v0.3 workflow source).
+          const catalog = await api.fetchModuleCatalog();
+          setModuleCatalog(catalog);
+          setCatalogRevision((revision) => revision + 1);
+          const schemaWorkflow = buildSchemaWorkflow(catalog.layers ?? []);
+          if (schemaWorkflow) {
+            setWorkflow(schemaWorkflow);
+          }
           setUndoStack([]);
           setRedoStack([]);
           setSaveStatus("saved");
@@ -1669,6 +1772,7 @@ export function CanvasShell() {
           setResidentPreviewOutput(null);
           setDraggedNodeIds(new Set());
           setFolderNodePositions({});
+          setLayerNodePositions({});
           setModuleTabs([]);
           setActiveModuleTabId(null);
           setActiveDrawer("layers");
@@ -1753,6 +1857,13 @@ export function CanvasShell() {
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       if (node.id.startsWith("ui-folder-")) {
+        const layerId = node.id.slice("ui-folder-".length);
+        const layer = layerById.get(layerId);
+        if (layer) {
+          setSelectedNode(layer.node.node_id);
+          setActiveLayerId(layer.node.node_id);
+          setActiveDrawer("inspector");
+        }
         return;
       }
       setSelectedNode(node.id);
@@ -1768,17 +1879,9 @@ export function CanvasShell() {
           next.add(layer.node.node_id);
           return next;
         });
-        const layerPosition = getLayerDisplayPosition(layer.node, layer.displayIndex);
-        setFolderNodePositions((current) => ({
-          ...current,
-          [`ui-folder-${layer.node.node_id}`]: {
-            x: layerPosition.x - FOLDER_GROUP_WIDTH - FOLDER_GROUP_GAP,
-            y: layerPosition.y + (TRUNK_LAYER_HEIGHT - FOLDER_GROUP_HEIGHT) / 2
-          }
-        }));
       }
     },
-    [getLayerDisplayPosition, layerById, setSelectedNode]
+    [layerById, setSelectedNode]
   );
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -1800,7 +1903,15 @@ export function CanvasShell() {
     (changes: NodeChange[]) => {
       changes.forEach((change) => {
         if (change.type === "position" && change.position) {
+          const position = { x: change.position.x, y: change.position.y };
           if (change.id.startsWith("ui-folder-")) {
+            return;
+          }
+          if (layerById.has(change.id)) {
+            setLayerNodePositions((current) => ({
+              ...current,
+              [change.id]: position
+            }));
             return;
           }
           setDraggedNodeIds((current) => {
@@ -1811,7 +1922,7 @@ export function CanvasShell() {
             next.add(change.id);
             return next;
           });
-          updateNodePosition(change.id, change.position);
+          updateNodePosition(change.id, position);
         }
         if (change.type === "select" && change.selected) {
           if (change.id.startsWith("ui-folder-")) {
@@ -1832,7 +1943,7 @@ export function CanvasShell() {
         }
       });
     },
-    [setSelectedNode, updateNodePosition]
+    [layerById, setSelectedNode, updateNodePosition]
   );
 
   const handleEdgesChange = useCallback(
@@ -1864,10 +1975,18 @@ export function CanvasShell() {
         appendLog(`${t("status.nodeMoved", "Node moved")}: ${node.id}`);
         return;
       }
+      if (layerById.has(node.id)) {
+        setLayerNodePositions((current) => ({
+          ...current,
+          [node.id]: node.position
+        }));
+        appendLog(`${t("status.nodeMoved", "Node moved")}: ${node.id}`);
+        return;
+      }
       updateNodePosition(node.id, node.position);
       appendLog(`${t("status.nodeMoved", "Node moved")}: ${node.id}`);
     },
-    [appendLog, t, updateNodePosition]
+    [appendLog, layerById, t, updateNodePosition]
   );
 
   const handleNodeDragStart: OnNodeDrag<Node> = useCallback(() => {
@@ -1886,6 +2005,21 @@ export function CanvasShell() {
       if (!isSchemaNode(connection.source) || !isSchemaNode(connection.target)) {
         return;
       }
+      const nodeById = new Map(nodes.map((node) => [node.node_id, node]));
+      if (!edgeIsInsideSameLayer(
+        {
+          edge_id: "pending",
+          source: connection.source,
+          target: connection.target,
+          source_port: connection.sourceHandle || "p_out",
+          target_port: connection.targetHandle || "p_in"
+        } as WorkflowEdge,
+        nodeById,
+        layerNodes
+      )) {
+        appendLog(t("status.crossLayerEdgeBlocked", "Cross-layer edges are hidden in the layer stack layout"), "warn");
+        return;
+      }
       const newEdge = {
         edge_id: `edge_${Date.now()}_${Math.round(Math.random() * 10000)}`,
         source: connection.source,
@@ -1896,7 +2030,7 @@ export function CanvasShell() {
       commitWorkflowGraph(nodes, [...edges, newEdge]);
       appendLog(`${t("status.edgeAdded", "Edge added")}: ${connection.source} -> ${connection.target}`);
     },
-    [appendLog, commitWorkflowGraph, edges, nodes, t, workflow]
+    [appendLog, commitWorkflowGraph, edges, layerNodes, nodes, t, workflow]
   );
 
   const handleNodesDelete = useCallback(
@@ -2574,7 +2708,6 @@ export function CanvasShell() {
                     nodes={flowNodes}
                     edges={flowEdges}
                     nodeTypes={nodeTypes}
-                    fitView
                     onInit={(instance) => {
                       mainFlowRef.current = instance;
                     }}
@@ -4233,43 +4366,13 @@ function ModuleCanvasPanel({
     ]
   );
 
-  const handleRunWorkflow = useCallback(async () => {
-    try {
-      if (!workflow) {
-        throw new Error(t("error.noWorkflow", "No workflow loaded"));
-      }
-
-      const rawInput = runInputText;
-      let runInput: unknown = rawInput;
-      try {
-        const parsed = JSON.parse(rawInput);
-        runInput =
-          parsed && typeof parsed === "object" && !Array.isArray(parsed) && "input" in parsed
-            ? (parsed as { input?: unknown }).input
-            : parsed;
-      } catch {
-        runInput = rawInput;
-      }
-      setRunStatus("running");
-
-      const result = await api.fetchResidentInstance({
-        ...workflow,
-        metadata: {
-          ...(workflow.metadata ?? {}),
-          text_input: runInput
-        }
-      });
-      setExecutionResult(result);
-      onExecutionResult(result);
-      setExecutionError(null);
-      setRunStatus("success");
-    } catch (error) {
-      setExecutionResult(null);
-      onExecutionResult(null);
-      setExecutionError((error as Error)?.message ?? String(error));
-      setRunStatus("error");
-    }
-  }, [onExecutionResult, runInputText, t, workflow]);
+  // CLEAN V4: the UI must not trigger any execution / resident compile. This is a
+  // disabled stub — execution happens only in backend v0.3 via the adapter.
+  const handleRunWorkflow = useCallback(() => {
+    setExecutionResult(null);
+    setExecutionError(t("status.executionDisabled", "Execution is backend-only (v0.3 adapter). UI does not run workflows."));
+    setRunStatus("idle");
+  }, [t]);
   const runButtonLabel =
     runStatus === "running"
       ? t("run.running", "Running...")
