@@ -329,3 +329,49 @@ class MigrationResponseV04(V04BaseModel):
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     migrated_from: str
     workflow: WorkflowV04
+
+
+# --- Execution control plane (v0.4 orchestration over v0.3 runtime) --------
+# The control plane never executes anything itself. It resolves the
+# Node -> Slot -> Engine chain, computes permission/risk decisions, translates
+# the v0.4 workflow to a v0.3 workflow, and forwards to the v0.3 runtime through
+# the single Execution Adapter. v0.3 remains the only execution core.
+class V4ResolvedBinding(V04BaseModel):
+    node_id: str
+    node_type: str
+    slot_id: Optional[str] = None
+    slot_type: Optional[SlotType] = None
+    engine_id: Optional[str] = None
+    engine_provider: Optional[str] = None
+    execution_mode: Optional[ExecutionMode] = None
+    module_id: Optional[str] = None
+    resolved: bool = False
+    note: str = ""
+
+
+class V4ExecutionPlan(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    workflow_id: str
+    action: str
+    target_runtime: Literal["v0.3"] = "v0.3"
+    resolved_bindings: List[V4ResolvedBinding] = Field(default_factory=list)
+    permission_decisions: List[PermissionDecisionV04] = Field(default_factory=list)
+    audit_log: List[AuditLogEntryV04] = Field(default_factory=list)
+    blocked: bool = False
+    v0_3_workflow: Dict[str, Any] = Field(default_factory=dict)
+    notes: List[str] = Field(default_factory=list)
+
+
+class V4ExecutionRequest(V04BaseModel):
+    workflow: Any = None
+    action: Literal["validate", "audit", "mock_run", "compile"] = "mock_run"
+
+
+class V4ExecutionResponse(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    runtime: Literal["v0.3"] = "v0.3"
+    executed: bool
+    plan: V4ExecutionPlan
+    result: Dict[str, Any] = Field(default_factory=dict)

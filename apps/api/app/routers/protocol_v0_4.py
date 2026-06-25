@@ -23,6 +23,9 @@ from ..models.v0_4 import (
     RiskLevel,
     SlotCatalogResponseV04,
     SlotV04,
+    V4ExecutionPlan,
+    V4ExecutionRequest,
+    V4ExecutionResponse,
     WorkflowV04,
     WorkflowValidationResponseV04,
 )
@@ -40,6 +43,8 @@ from ..services.migration_v0_4 import (
     validate_workflow_v0_4,
 )
 from ..services.permissions_v0_4 import evaluate_permission, runtime_check_order
+from ..services.v4_orchestrator import execute as orchestrate_execute
+from ..services.v4_orchestrator import plan_execution
 
 router = APIRouter(prefix="/protocol", tags=["protocol-v0.4"])
 
@@ -98,6 +103,20 @@ def permission_evaluate(req: PermissionRequest) -> PermissionDecisionV04:
         permission_granted=req.permission_granted,
         human_confirmed=req.human_confirmed,
     )
+
+
+@router.post("/plan", response_model=V4ExecutionPlan)
+def plan(req: V4ExecutionRequest) -> V4ExecutionPlan:
+    # Control-plane only: resolve Node->Slot->Engine + gate + translate to v0.3.
+    # Does NOT forward to the runtime.
+    return plan_execution(req.workflow, req.action)
+
+
+@router.post("/execute", response_model=V4ExecutionResponse)
+def execute(req: V4ExecutionRequest) -> V4ExecutionResponse:
+    # v0.4 workflow -> orchestrator -> translator -> Execution Adapter -> v0.3.
+    # The orchestrator never executes; v0.3 remains the sole execution core.
+    return orchestrate_execute(req.workflow, req.action)
 
 
 class PersonaPayload(BaseModel):
