@@ -1125,22 +1125,37 @@ export function CanvasShell() {
   const ensureModuleInstance = useCallback((moduleId: string, layerId: string): ModuleInstance => {
     const instanceId = `${layerId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
     const instance = { instanceId, moduleId, layerId } satisfies ModuleInstance;
-    setModuleInstanceRegistry((current) => (current[instanceId] ? current : { ...current, [instanceId]: instance }));
+    setModuleInstanceRegistry((current) => {
+      if (current[instanceId]) {
+        console.log("[moduleInstance] already exists:", { instanceId, moduleId, layerId });
+        return current;
+      }
+      console.log("[moduleInstance] created and persisting:", { instanceId, moduleId, layerId });
+      return { ...current, [instanceId]: instance };
+    });
     return instance;
   }, []);
   const addModuleToLayer = useCallback(
     (layerNodeId: string, moduleId: string) => {
+      console.log("[addModuleToLayer] called:", { layerNodeId, moduleId });
       if (!moduleCatalogById.has(moduleId)) {
+        console.warn("[addModuleToLayer] moduleId not found in catalog:", moduleId);
         return;
       }
+      // 1. Ensure instance is created and registered
       ensureModuleInstance(moduleId, layerNodeId);
+      // 2. Add to layer modules list (with dedup check)
       setLayerModules((current) => {
         const existing = current[layerNodeId] ?? [];
         if (existing.includes(moduleId)) {
+          console.log("[addModuleToLayer] moduleId already in layer:", { layerNodeId, moduleId });
           return current;
         }
-        return { ...current, [layerNodeId]: [...existing, moduleId] };
+        const updated = { ...current, [layerNodeId]: [...existing, moduleId] };
+        console.log("[addModuleToLayer] module added to layer:", { layerNodeId, moduleId, count: updated[layerNodeId].length });
+        return updated;
       });
+      // 3. Mark dirty for autosave
       setSaveStatus("dirty");
     },
     [ensureModuleInstance, moduleCatalogById]
@@ -1296,6 +1311,10 @@ export function CanvasShell() {
   // Autosave of layer module state to localStorage (persists module instances)
   useEffect(() => {
     const timer = setTimeout(() => {
+      console.log("[autosave-layer] persisting layerModules and moduleInstanceRegistry", {
+        layerCount: Object.keys(layerModules).length,
+        instanceCount: Object.keys(moduleInstanceRegistry).length
+      });
       saveLayerModuleState(layerModules, moduleInstanceRegistry);
     }, 500);
     return () => clearTimeout(timer);
