@@ -1299,7 +1299,109 @@ export function CanvasShell() {
     return () => clearTimeout(timer);
   }, [layerModules, moduleInstanceRegistry, saveLayerModuleState]);
 
-  const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
+  // 双层保存系统：聚合所有状态并保存到 localStorage
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const fullCanvasState = deserializeCanvasState({
+        moduleTabs,
+        moduleNames,
+        uiNodeNames,
+        uiTags,
+        uiGroups,
+        uiColors,
+        moduleUiColors,
+        layerModules,
+        moduleInstanceRegistry,
+      });
+      saveCanvasStateToLocalStorage(fullCanvasState);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [
+    moduleTabs,
+    moduleNames,
+    uiNodeNames,
+    uiTags,
+    uiGroups,
+    uiColors,
+    moduleUiColors,
+    layerModules,
+    moduleInstanceRegistry,
+  ]);
+
+  // 导出 Canvas 状态为 JSON 文件
+  const handleExportCanvasState = useCallback(() => {
+    const canvasState = deserializeCanvasState({
+      moduleTabs,
+      moduleNames,
+      uiNodeNames,
+      uiTags,
+      uiGroups,
+      uiColors,
+      moduleUiColors,
+      layerModules,
+      moduleInstanceRegistry,
+    });
+    downloadCanvasState(canvasState);
+    appendLog(t("export.success", "Canvas 状态已导出"), "info");
+  }, [
+    moduleTabs,
+    moduleNames,
+    uiNodeNames,
+    uiTags,
+    uiGroups,
+    uiColors,
+    moduleUiColors,
+    layerModules,
+    moduleInstanceRegistry,
+    appendLog,
+    t,
+  ]);
+
+  // 导入 Canvas 状态
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const handleImportCanvasState = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const result = await readCanvasStateFromFile(file);
+        if (!result.success || !result.state) {
+          appendLog(`导入失败: ${result.error || "未知错误"}`, "error");
+          return;
+        }
+
+        const state = result.state;
+        
+        // 恢复所有状态
+        setModuleTabs(state.moduleTabs);
+        setModuleNames(state.moduleNames);
+        setUiNodeNames(state.uiNodeNames);
+        setUiTags(state.uiTags);
+        setUiGroups(state.uiGroups);
+        setUiColors(state.uiColors);
+        setModuleUiColors(state.moduleUiColors);
+        setLayerModules(state.layerModules);
+        setModuleInstanceRegistry(state.moduleInstanceRegistry);
+        
+        appendLog(t("import.success", "Canvas 状态已导入"), "info");
+      } catch (error) {
+        appendLog(`导入异常: ${error instanceof Error ? error.message : "未知错误"}`, "error");
+      } finally {
+        // 重置文件输入，以便可以再次选择同一文件
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      }
+    },
+    [appendLog, t, setModuleTabs, setModuleNames, setUiNodeNames, setUiTags, setUiGroups, setUiColors, setModuleUiColors, setLayerModules, setModuleInstanceRegistry]
+  );
+
+  const handleImportCanvasStateClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
   const handleUndo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
   }, [appendLog, t]);
@@ -1345,6 +1447,7 @@ export function CanvasShell() {
 	    () => new Map(catalogLayers.map((layer) => [layer.layer_id, layer])),
 	    [catalogLayers]
 	  );
+  const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const selectedNode = useMemo(() => nodes.find((node) => node.node_id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
   const resolveModuleNode = useCallback(
     (id: string) => {
@@ -2533,6 +2636,15 @@ export function CanvasShell() {
 	            <button onClick={handleValidate}>{t("toolbar.validate")}</button>
 	            <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
 	            <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
+            <button onClick={handleExportCanvasState}>{t("canvas.export", "导出项目")}</button>
+            <button onClick={handleImportCanvasStateClick}>{t("canvas.import", "导入项目")}</button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImportCanvasState}
+              style={{ display: "none" }}
+            />
           </div>
           <label className="language-select">
             <span>{t("toolbar.language")}</span>
