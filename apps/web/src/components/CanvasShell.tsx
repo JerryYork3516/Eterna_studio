@@ -790,6 +790,7 @@ function makeFlowNode(schemaNode: WorkflowNode, offset?: { x: number; y: number 
 
 function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const language = useCanvasStore((state) => state.language);
+  const debugRef = useRef(false);
   const {
     layer,
     moduleCatalog,
@@ -810,6 +811,15 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const visibleModules = modules.slice(0, 6);
   const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
   const selectedModuleSet = new Set(selectedModuleKeys);
+
+  if (modules.length > 0 && !debugRef.current) {
+    debugRef.current = true;
+    console.log(`[FolderGroupNode ${layer.layer_id}] Rendering with modules:`, {
+      moduleCount: modules.length,
+      moduleIds: modules.map(m => m.module_id),
+      visibleCount: visibleModules.length
+    });
+  }
 
   return (
     <section
@@ -884,6 +894,12 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
                   onDoubleClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
+                    console.log(`[FolderGroupNode] Double click on module:`, {
+                      modId,
+                      moduleData: mod,
+                      layerNodeId: layer.layer_id,
+                      onOpenDroppedModule: Boolean(onOpenDroppedModule)
+                    });
                     onOpenDroppedModule(modId);
                   }}
                   onContextMenu={(event) => {
@@ -985,8 +1001,12 @@ export function CanvasShell() {
   
   // Helper: load module canvas state from localStorage
   const loadModuleCanvasState = useCallback(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
     try {
-      const stored = localStorage.getItem(moduleCanvasStateKey);
+      const stored = window.localStorage.getItem(moduleCanvasStateKey);
       if (stored) {
         const parsed = JSON.parse(stored);
         return {
@@ -1014,8 +1034,12 @@ export function CanvasShell() {
       uiGroups: Record<string, string>;
       uiColors: Record<string, string>;
     }) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
       try {
-        localStorage.setItem(moduleCanvasStateKey, JSON.stringify(state));
+        window.localStorage.setItem(moduleCanvasStateKey, JSON.stringify(state));
       } catch (e) {
         console.error("Failed to save module canvas state to localStorage:", e);
       }
@@ -1426,16 +1450,30 @@ export function CanvasShell() {
   const openCatalogModuleCanvas = useCallback(
     (layerNodeId: string, moduleId: string) => {
       const moduleNodeId = `${layerNodeId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
-      const mod = moduleCatalogById.get(moduleId);
+      let mod = moduleCatalogById.get(moduleId);
+      
+      // 如果在 moduleCatalogById 中找不到，则尝试从 moduleCatalog.modules 中直接查找
+      if (!mod && moduleCatalog) {
+        mod = moduleCatalog.modules.find((m) => m.module_id === moduleId);
+      }
+      
       if (!mod) {
+        console.warn(`[openCatalogModuleCanvas] Module not found:`, {
+          moduleId,
+          layerNodeId,
+          catalogLoaded: Boolean(moduleCatalog),
+          availableModules: moduleCatalog?.modules.map((m) => m.module_id) ?? []
+        });
+        appendLog(`模块未找到: ${moduleId}`, "error");
         return;
       }
+      
       setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
       setActiveModuleTabId(moduleNodeId);
       setActiveDrawer(null);
       appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod)}`);
     },
-    [appendLog, moduleCatalogById, t]
+    [appendLog, moduleCatalogById, moduleCatalog, t]
   );
 
   const renameUiNode = useCallback(
@@ -1693,8 +1731,26 @@ export function CanvasShell() {
       const layerId = layer.layer_id;
       const subnodes: WorkflowNode[] = [];
       const attachedModuleIds = layerModules[layerId] ?? [];
+      
+      // 调试：打印 module 加载情况
+      if (attachedModuleIds.length > 0) {
+        console.log(`[CanvasShell] Layer ${layerId} attachedModuleIds:`, {
+          ids: attachedModuleIds,
+          catalogModuleIds: moduleCatalog?.modules?.map(m => m.module_id) ?? [],
+          catalogKeys: Array.from(moduleCatalogById.keys()),
+          missing: attachedModuleIds.filter(id => !moduleCatalogById.has(id))
+        });
+      }
+      
       const attachedModules = attachedModuleIds
-        .map((id) => moduleCatalogById.get(id))
+        .map((id) => {
+          const mod = moduleCatalogById.get(id);
+          if (!mod && moduleCatalog) {
+            // 备用查询：直接从 moduleCatalog.modules 数组查询
+            return moduleCatalog.modules.find((m) => m.module_id === id);
+          }
+          return mod;
+        })
         .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
       const attachedModuleColors = Object.fromEntries(attachedModuleIds.map((id) => [id, moduleUiColors[`${layerId}:${id}`] ?? ""]));
       const frame = stackFrames.get(layerId);
@@ -1974,9 +2030,19 @@ export function CanvasShell() {
       if (node.id.startsWith("ui-folder-")) {
         return;
       }
+      const [layerNodeId, moduleId] = node.id.split(MODULE_INSTANCE_SEPARATOR);
+      if (layerNodeId && moduleId) {
+        openCatalogModuleCanvas(layerNodeId, moduleId);
+        return;
+      }
+      const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
+      if (schemaNode?.type === "module") {
+        handleChildModulePreview(schemaNode);
+        return;
+      }
       setSelectedNode(node.id);
     },
-    [setSelectedNode]
+    [handleChildModulePreview, openCatalogModuleCanvas, setSelectedNode]
   );
 
   const handlePaneClick = useCallback(() => {
