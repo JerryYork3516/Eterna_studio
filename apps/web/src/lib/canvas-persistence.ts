@@ -9,6 +9,12 @@ export type ModuleInstance = {
   layerId: string;
 };
 
+export type ModuleGraphState = {
+  moduleId: string;
+  nodes: unknown[];
+  edges: unknown[];
+};
+
 export type CanvasState = {
   version: "v4";
   timestamp: string;
@@ -25,6 +31,9 @@ export type CanvasState = {
   // 模块状态
   layerModules: Record<string, string[]>;
   moduleInstanceRegistry: Record<string, ModuleInstance>;
+  
+  // 模块画布内的图（节点和边）
+  moduleGraphs: Record<string, ModuleGraphState>;
   
   // 画布视口（可选）
   viewport?: {
@@ -53,6 +62,7 @@ export function createEmptyCanvasState(): CanvasState {
     moduleUiColors: {},
     layerModules: {},
     moduleInstanceRegistry: {},
+    moduleGraphs: {},
   };
 }
 
@@ -72,6 +82,7 @@ export function serializeCanvasState(state: Partial<CanvasState>): CanvasState {
     moduleUiColors: state.moduleUiColors ?? {},
     layerModules: state.layerModules ?? {},
     moduleInstanceRegistry: state.moduleInstanceRegistry ?? {},
+    moduleGraphs: state.moduleGraphs ?? {},
     viewport: state.viewport,
   };
 }
@@ -261,4 +272,56 @@ export function readCanvasStateFromFile(file: File): Promise<{ success: boolean;
     
     reader.readAsText(file);
   });
+}
+
+/**
+ * 保存模块内画布图 (nodes + edges) 到 localStorage
+ */
+export function saveModuleGraphState(moduleId: string, nodes: unknown[], edges: unknown[]): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const key = `module_graph_${moduleId}`;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ moduleId, nodes, edges })
+    );
+    return true;
+  } catch (error) {
+    console.error(`Failed to save module graph for ${moduleId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * 从 localStorage 加载模块内画布图
+ */
+export function loadModuleGraphState(moduleId: string): ModuleGraphState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const key = `module_graph_${moduleId}`;
+    const stored = window.localStorage.getItem(key);
+    if (!stored) {
+      return null;
+    }
+
+    const parsed = JSON.parse(stored) as Partial<ModuleGraphState>;
+    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+      return null;
+    }
+
+    return {
+      moduleId,
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+    };
+  } catch (error) {
+    console.error(`Failed to load module graph for ${moduleId}:`, error);
+    return null;
+  }
 }

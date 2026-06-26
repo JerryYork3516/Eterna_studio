@@ -37,7 +37,9 @@ import {
   loadCanvasStateFromLocalStorage,
   readCanvasStateFromFile,
   saveCanvasStateToLocalStorage,
-  validateCanvasState
+  validateCanvasState,
+  loadModuleGraphState,
+  saveModuleGraphState
 } from "@/lib/canvas-persistence";
 
 type MockNodeType =
@@ -3895,6 +3897,16 @@ function ModuleCanvasPanel({
 
 	  // Seed module sub-canvas from the current v0.4 schema-derived view only.
 	  const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
+	    // 先尝试从 localStorage 恢复模块图
+	    const saved = loadModuleGraphState(moduleNode.node_id);
+	    if (saved) {
+	      return {
+	        nodes: (saved.nodes ?? []) as Node[],
+	        edges: (saved.edges ?? []) as Edge[]
+	      };
+	    }
+	    
+	    // 如果没有保存的数据，则从初始子节点生成
 	    // Module is a container, not an execution node — never show the module's own
 	    // node inside its canvas. Only workflow nodes (input/transform/personality/...).
 	    const seeds = initialSubnodes.filter((node) => String(node.type) !== "module");
@@ -4045,6 +4057,14 @@ function ModuleCanvasPanel({
     },
     [setModuleNodes]
   );
+
+  // 自动保存模块画布图 (nodes + edges) 到 localStorage
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveModuleGraphState(moduleNode.node_id, moduleNodes, moduleEdges);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [moduleNode.node_id, moduleNodes, moduleEdges]);
 
   // Inject inline name / color edit callbacks so the node's collapsed param
   // panel can write back into the module canvas state.
