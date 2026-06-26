@@ -1139,38 +1139,48 @@ export function CanvasShell() {
     const instance = { instanceId, moduleId, layerId } satisfies ModuleInstance;
     setModuleInstanceRegistry((current) => {
       if (current[instanceId]) {
-        console.log("[moduleInstance] already exists:", { instanceId, moduleId, layerId });
+        console.log("[NODE-C-DEDUP] ensureModuleInstance already exists, no duplicate created:", { instanceId });
         return current;
       }
-      console.log("[moduleInstance] created and persisting:", { instanceId, moduleId, layerId });
+      console.log("[NODE-C-DEDUP] ensureModuleInstance creating new:", { instanceId, moduleId, layerId });
       return { ...current, [instanceId]: instance };
     });
     return instance;
   }, []);
   const addModuleToLayer = useCallback(
     (layerNodeId: string, moduleId: string) => {
-      console.log("[addModuleToLayer] called:", { layerNodeId, moduleId });
+      console.log("[NODE-C-DEDUP] addModuleToLayer called:", { layerNodeId, moduleId });
       if (!moduleCatalogById.has(moduleId)) {
-        console.warn("[addModuleToLayer] moduleId not found in catalog:", moduleId);
+        console.warn("[NODE-C-DEDUP] moduleId not found in catalog:", moduleId);
         return;
       }
-      // 1. Ensure instance is created and registered
+      
+      // Pre-check: verify moduleId is not already in this layer
+      const existingBefore = layerModules[layerNodeId] ?? [];
+      if (existingBefore.includes(moduleId)) {
+        console.warn("[NODE-C-DEDUP] DUPLICATE PREVENTED: moduleId already in this layer:", { layerNodeId, moduleId });
+        return;
+      }
+      
+      // 1. Ensure instance is created and registered (dedup at instance level)
       ensureModuleInstance(moduleId, layerNodeId);
+      
       // 2. Add to layer modules list (with dedup check)
       setLayerModules((current) => {
         const existing = current[layerNodeId] ?? [];
         if (existing.includes(moduleId)) {
-          console.log("[addModuleToLayer] moduleId already in layer:", { layerNodeId, moduleId });
+          console.warn("[NODE-C-DEDUP] DUPLICATE in setLayerModules (race condition prevented):", { layerNodeId, moduleId });
           return current;
         }
         const updated = { ...current, [layerNodeId]: [...existing, moduleId] };
-        console.log("[addModuleToLayer] module added to layer:", { layerNodeId, moduleId, count: updated[layerNodeId].length });
+        console.log("[NODE-C-DEDUP] module successfully added to layer:", { layerNodeId, moduleId, totalInLayer: updated[layerNodeId].length });
         return updated;
       });
+      
       // 3. Mark dirty for autosave
       setSaveStatus("dirty");
     },
-    [ensureModuleInstance, moduleCatalogById]
+    [ensureModuleInstance, moduleCatalogById, layerModules]
   );
   const removeModuleFromLayer = useCallback((layerNodeId: string, moduleId: string) => {
     setLayerModules((current) => ({ ...current, [layerNodeId]: (current[layerNodeId] ?? []).filter((id) => id !== moduleId) }));
