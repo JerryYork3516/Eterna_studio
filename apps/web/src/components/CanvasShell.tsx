@@ -3967,14 +3967,25 @@ function ModuleCanvasPanel({
 
 	  // Seed module sub-canvas from the current v0.4 schema-derived view only.
 	  const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
+	    console.log("[NODE-E] initialGraph computing for moduleNode:", { moduleNodeId: moduleNode.node_id });
 	    // 先尝试从 localStorage 恢复模块图
 	    const saved = loadModuleGraphState(moduleNode.node_id);
 	    if (saved) {
+	      console.log("[NODE-E-HYDRATE] moduleGraphs restored from localStorage:", {
+	        moduleId: moduleNode.node_id,
+	        nodeCount: saved.nodes?.length ?? 0,
+	        edgeCount: saved.edges?.length ?? 0
+	      });
 	      return {
 	        nodes: (saved.nodes ?? []) as Node[],
 	        edges: (saved.edges ?? []) as Edge[]
 	      };
 	    }
+	    
+	    console.log("[NODE-E] no saved moduleGraphs, using initialSubnodes:", {
+	      moduleId: moduleNode.node_id,
+	      initialSubnodeCount: initialSubnodes.length
+	    });
 	    
 	    // 如果没有保存的数据，则从初始子节点生成
 	    // Module is a container, not an execution node — never show the module's own
@@ -4131,6 +4142,11 @@ function ModuleCanvasPanel({
   // 自动保存模块画布图 (nodes + edges) 到 localStorage
   useEffect(() => {
     const timer = setTimeout(() => {
+      console.log("[NODE-E-PERSIST] saveModuleGraphState called:", {
+        moduleId: moduleNode.node_id,
+        nodeCount: moduleNodes.length,
+        edgeCount: moduleEdges.length
+      });
       saveModuleGraphState(moduleNode.node_id, moduleNodes, moduleEdges);
     }, 500);
     return () => clearTimeout(timer);
