@@ -648,8 +648,12 @@ function buildLayerSpineEdge(layer: CatalogLayerInput, nextLayer: CatalogLayerIn
 
 function checkCanvasStructureConsistency(layers: CatalogLayerInput[], nodes: WorkflowNode[], frames: Map<string, LayerStackFrame>, moduleCatalog: ModuleCatalogResponseV04) {
   const warnings: string[] = [];
+  
+  // NODE F: CRITICAL 13-layer check (should never fail if earlier validation passed)
   if (layers.length !== 13) {
-    warnings.push(`expected 13 layers, received ${layers.length}`);
+    const critical = `[NODE-F-CRITICAL] canvas rendering 13-layer check FAILED: ${layers.length} layers`;
+    console.error(critical);
+    warnings.push(critical);
   }
 
   const ordered = layers.slice().sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b));
@@ -1288,9 +1292,35 @@ export function CanvasShell() {
         if (!active) {
           return;
         }
+        
+        // NODE F: CANONICAL_LAYERS validation - 13-layer strict check
+        console.log("[NODE-F-VALIDATE] moduleCatalog received, validating 13-layer structure");
+        
+        const layerCount = modules.layers.length;
+        if (layerCount !== 13) {
+          const error = `[NODE-F-VALIDATE] CRITICAL: backend layer count = ${layerCount}, expected 13`;
+          console.error(error);
+          appendLog(error, "error");
+          setApiReady(false);
+          return;
+        }
+        
+        // Verify layer order is strictly 1-13
+        const sorted = [...modules.layers].sort((a, b) => (a.layer_order ?? 0) - (b.layer_order ?? 0));
+        for (let i = 0; i < sorted.length; i += 1) {
+          if (sorted[i].layer_order !== i + 1) {
+            const error = `[NODE-F-VALIDATE] CRITICAL: layer_order mismatch at index ${i}: expected ${i + 1}, got ${sorted[i].layer_order}`;
+            console.error(error);
+            appendLog(error, "error");
+            setApiReady(false);
+            return;
+          }
+        }
+        
+        console.log("[NODE-F-VALIDATE] moduleCatalog passed 13-layer validation ✓");
         setModuleCatalog(modules);
         setCatalogRevision((revision) => revision + 1);
-        appendLog(`Module catalog loaded: ${modules.modules.length}; layers: ${modules.layers.length}`);
+        appendLog(`Module catalog loaded and validated: ${modules.modules.length} modules; 13 layers (canonical structure OK)`);
       })
       .catch((error) => {
         if (active) {
