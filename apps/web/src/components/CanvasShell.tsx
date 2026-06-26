@@ -1847,16 +1847,21 @@ export function CanvasShell() {
 
   const closeModuleTab = useCallback(
     (id: string) => {
+      console.log("[NODE-D] closeModuleTab called:", { id });
       const index = moduleTabs.indexOf(id);
       const next = moduleTabs.filter((tabId) => tabId !== id);
       setModuleTabs(next);
       setActiveModuleTabId((current) => (current === id ? next[Math.max(0, index - 1)] ?? null : current));
       appendLog(`${t("status.moduleCanvasClosed", "Module canvas closed")}: ${id}`);
+      // Trigger immediate autosave for moduleTabs
+      console.log("[NODE-D] closeModuleTab autosave triggered");
+      setSaveStatus("dirty");
     },
     [appendLog, moduleTabs, t]
   );
 
   const reorderModuleTab = useCallback((fromId: string, toId: string) => {
+    console.log("[NODE-D] reorderModuleTab called:", { fromId, toId });
     setModuleTabs((tabs) => {
       const from = tabs.indexOf(fromId);
       const to = tabs.indexOf(toId);
@@ -1866,12 +1871,22 @@ export function CanvasShell() {
       const next = [...tabs];
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved);
+      console.log("[NODE-D] moduleTab reordered successfully");
       return next;
     });
+    // Trigger immediate autosave for moduleTabs
+    setSaveStatus("dirty");
   }, []);
 
   const pinModuleTab = useCallback((id: string) => {
-    setModuleTabs((tabs) => (!tabs.includes(id) || tabs[0] === id ? tabs : [id, ...tabs.filter((tabId) => tabId !== id)]));
+    console.log("[NODE-D] pinModuleTab called:", { id });
+    setModuleTabs((tabs) => {
+      const nextTabs = !tabs.includes(id) || tabs[0] === id ? tabs : [id, ...tabs.filter((tabId) => tabId !== id)];
+      console.log("[NODE-D] moduleTab pinned:", { id, wasAlreadyFirst: tabs[0] === id });
+      return nextTabs;
+    });
+    // Trigger immediate autosave for moduleTabs
+    setSaveStatus("dirty");
   }, []);
 
   const buildModuleAddMenu = useCallback(
