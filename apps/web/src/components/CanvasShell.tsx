@@ -41,6 +41,14 @@ import {
   loadModuleGraphState,
   saveModuleGraphState
 } from "@/lib/canvas-persistence";
+import {
+  initializeModuleState,
+  ensureModuleGraphExists,
+  cleanupOrphanedGraphs,
+  ensureAllTabsHaveGraphs,
+  handleTabOpened,
+  handleTabClosed
+} from "@/store/module-state-bridge";
 
 type MockNodeType =
   | "text_input"
@@ -1254,6 +1262,14 @@ export function CanvasShell() {
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
 
+  // P1-BRIDGE：在挂载时初始化 store 状态（从 localStorage 恢复）
+  useEffect(() => {
+    console.log("[P1-BRIDGE] Initializing module state on mount");
+    initializeModuleState();
+    cleanupOrphanedGraphs();
+    ensureAllTabsHaveGraphs();
+  }, []); // run once on mount
+
   // NODE B HYDRATION: Verify moduleInstanceRegistry and layerModules were restored on mount
   useEffect(() => {
     const instanceCount = Object.keys(moduleInstanceRegistry).length;
@@ -1360,8 +1376,13 @@ export function CanvasShell() {
   }, [appendLog, language]);
 
   // Debounced autosave of module canvas state to localStorage
+  // P1-BRIDGE：同时同步到 store
   useEffect(() => {
     const timer = setTimeout(() => {
+      console.log("[P1-SYNC] autosave: syncing state to both localStorage and store");
+      const store = useCanvasStore.getState();
+      
+      // 同步到 localStorage
       saveModuleCanvasState({
         moduleTabs,
         moduleNames,
@@ -1370,25 +1391,45 @@ export function CanvasShell() {
         uiGroups,
         uiColors,
       });
+      
+      // P1-BRIDGE：同步到 store
+      store.setModuleTabs(moduleTabs);
+      store.setModuleNames(moduleNames);
+      store.setUiNodeNames(uiNodeNames);
+      store.setUiTags(uiTags);
+      store.setUiGroups(uiGroups);
+      store.setUiColors(uiColors);
     }, 500);
     return () => clearTimeout(timer);
   }, [moduleTabs, moduleNames, uiNodeNames, uiTags, uiGroups, uiColors, saveModuleCanvasState]);
 
   // Autosave of layer module state to localStorage (persists module instances)
+  // P1-BRIDGE：同时同步到 store
   useEffect(() => {
     const timer = setTimeout(() => {
-      console.log("[autosave-layer] persisting layerModules and moduleInstanceRegistry", {
+      console.log("[P1-SYNC] autosave layer modules: syncing to both localStorage and store", {
         layerCount: Object.keys(layerModules).length,
         instanceCount: Object.keys(moduleInstanceRegistry).length
       });
+      const store = useCanvasStore.getState();
+      
+      // 同步到 localStorage
       saveLayerModuleState(layerModules, moduleInstanceRegistry);
+      
+      // P1-BRIDGE：同步到 store
+      store.setLayerModules(layerModules);
+      store.setModuleInstanceRegistry(moduleInstanceRegistry);
     }, 500);
     return () => clearTimeout(timer);
   }, [layerModules, moduleInstanceRegistry, saveLayerModuleState]);
 
   // 双层保存系统：聚合所有状态并保存到 localStorage
+  // P1-BRIDGE：同时同步到 store
   useEffect(() => {
     const timer = setTimeout(() => {
+      console.log("[P1-SYNC] full canvas state autosave triggered");
+      const store = useCanvasStore.getState();
+      
       const fullCanvasState = deserializeCanvasState({
         moduleTabs,
         moduleNames,
@@ -1400,7 +1441,20 @@ export function CanvasShell() {
         layerModules,
         moduleInstanceRegistry,
       });
+      
+      // 保存到 localStorage
       saveCanvasStateToLocalStorage(fullCanvasState);
+      
+      // P1-BRIDGE：同步所有状态到 store（确保 store 是最新的）
+      store.setModuleTabs(moduleTabs);
+      store.setModuleNames(moduleNames);
+      store.setUiNodeNames(uiNodeNames);
+      store.setUiTags(uiTags);
+      store.setUiGroups(uiGroups);
+      store.setUiColors(uiColors);
+      store.setModuleUiColors(moduleUiColors);
+      store.setLayerModules(layerModules);
+      store.setModuleInstanceRegistry(moduleInstanceRegistry);
     }, 1000);
     return () => clearTimeout(timer);
   }, [
@@ -1472,6 +1526,19 @@ export function CanvasShell() {
         setModuleUiColors(state.moduleUiColors);
         setLayerModules(state.layerModules);
         setModuleInstanceRegistry(state.moduleInstanceRegistry);
+        
+        // P1-BRIDGE：同时同步到 store
+        console.log("[P1-SYNC] Syncing imported canvas state to store");
+        const store = useCanvasStore.getState();
+        store.setModuleTabs(state.moduleTabs);
+        store.setModuleNames(state.moduleNames);
+        store.setUiNodeNames(state.uiNodeNames);
+        store.setUiTags(state.uiTags);
+        store.setUiGroups(state.uiGroups);
+        store.setUiColors(state.uiColors);
+        store.setModuleUiColors(state.moduleUiColors);
+        store.setLayerModules(state.layerModules);
+        store.setModuleInstanceRegistry(state.moduleInstanceRegistry);
         
         appendLog(t("import.success", "Canvas 状态已导入"), "info");
       } catch (error) {
@@ -1672,6 +1739,9 @@ export function CanvasShell() {
 
   const handleChildModulePreview = useCallback(
     (node: WorkflowNode) => {
+      console.log("[P1-SYNC] handleChildModulePreview called:", { moduleId: node.node_id });
+      // P1-BRIDGE：使用 bridge 来处理 tab 打开，确保 graph 也被创建
+      handleTabOpened(node.node_id);
       setModuleTabs((tabs) => (tabs.includes(node.node_id) ? tabs : [...tabs, node.node_id]));
       setActiveModuleTabId(node.node_id);
       setActiveDrawer(null);
@@ -1699,6 +1769,7 @@ export function CanvasShell() {
 
   const openCatalogModuleCanvas = useCallback(
     (layerNodeId: string, moduleId: string) => {
+      console.log("[P1-SYNC] openCatalogModuleCanvas: using bridge to open tab");
       const moduleInstance = ensureModuleInstance(moduleId, layerNodeId);
       const moduleNodeId = moduleInstance.instanceId;
       let mod = moduleCatalogById.get(moduleId);
@@ -1719,6 +1790,8 @@ export function CanvasShell() {
       }
 
       console.log("[module-open] open module canvas", { moduleId, layerId: layerNodeId, tabId: moduleNodeId });
+      // P1-BRIDGE：使用 bridge 来确保 graph 也被创建
+      handleTabOpened(moduleNodeId);
       setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
       setActiveModuleTabId(moduleNodeId);
       setActiveDrawer(null);
@@ -1878,10 +1951,13 @@ export function CanvasShell() {
   const closeModuleTab = useCallback(
     (id: string) => {
       console.log("[NODE-D] closeModuleTab called:", { id });
+      console.log("[P1-SYNC] Syncing tab close to store");
       const index = moduleTabs.indexOf(id);
       const next = moduleTabs.filter((tabId) => tabId !== id);
       setModuleTabs(next);
       setActiveModuleTabId((current) => (current === id ? next[Math.max(0, index - 1)] ?? null : current));
+      // P1-BRIDGE：同时调用 store 的 closeModuleTab
+      handleTabClosed(id);
       appendLog(`${t("status.moduleCanvasClosed", "Module canvas closed")}: ${id}`);
       // Trigger immediate autosave for moduleTabs
       console.log("[NODE-D] closeModuleTab autosave triggered");
@@ -4044,6 +4120,7 @@ function ModuleCanvasPanel({
 	  const addedRef = useRef(0);
 
   const addModuleNode = useCallback((type: ModuleNodeType, position?: { x: number; y: number }) => {
+    console.log("[P1-NODE-CRUD] addModuleNode: adding new node", { type, position });
     addedRef.current += 1;
     const seq = addedRef.current;
     const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
@@ -4066,16 +4143,24 @@ function ModuleCanvasPanel({
       ports: { inputs: [], outputs: [] },
       validation: null
     } as unknown as WorkflowNode);
-    setModuleNodes((current) => [
-      ...current,
-      {
-        id,
-        type: "workflowNode",
-        position: position ?? { x: 360, y: 80 + current.length * 70 },
-        deletable: true,
-        data: { schemaNode }
-      }
-    ]);
+    setModuleNodes((current) => {
+      const next = [
+        ...current,
+        {
+          id,
+          type: "workflowNode",
+          position: position ?? { x: 360, y: 80 + current.length * 70 },
+          deletable: true,
+          data: { schemaNode }
+        }
+      ];
+      console.log("[P1-NODE-CRUD] addModuleNode success:", { 
+        nodeId: id, 
+        type, 
+        totalNodesAfter: next.length 
+      });
+      return next;
+    });
     setSelectedId(id);
   }, [moduleNode.node_id, setModuleNodes]);
 
@@ -4222,12 +4307,35 @@ function ModuleCanvasPanel({
     if (!selectedNodes.length && !selectedEdges.length) {
       return;
     }
+    console.log("[P1-NODE-CRUD] deleteSelected:", {
+      selectedNodeCount: selectedNodes.length,
+      selectedEdgeCount: selectedEdges.length
+    });
+    
     const removedNodes = new Set(selectedNodes);
     const removedEdges = new Set(selectedEdges);
-    setModuleNodes((current) => current.filter((node) => !removedNodes.has(node.id)));
-    setModuleEdges((current) =>
-      current.filter((edge) => !removedEdges.has(edge.id) && !removedNodes.has(edge.source) && !removedNodes.has(edge.target))
-    );
+    
+    setModuleNodes((current) => {
+      const next = current.filter((node) => !removedNodes.has(node.id));
+      console.log("[P1-NODE-CRUD] deleteSelected nodes success:", {
+        deletedCount: selectedNodes.length,
+        totalNodesAfter: next.length
+      });
+      return next;
+    });
+    
+    setModuleEdges((current) => {
+      const next = current.filter(
+        (edge) => !removedEdges.has(edge.id) && !removedNodes.has(edge.source) && !removedNodes.has(edge.target)
+      );
+      console.log("[P1-NODE-CRUD] deleteSelected edges success:", {
+        deletedCount: selectedEdges.length,
+        cascadeDeletedEdges: current.length - next.length,
+        totalEdgesAfter: next.length
+      });
+      return next;
+    });
+    
     setSelectedId((current) => (current && removedNodes.has(current) ? "" : current));
   }, [moduleEdges, moduleNodes, setModuleEdges, setModuleNodes]);
 
@@ -4257,8 +4365,26 @@ function ModuleCanvasPanel({
 
   const deleteModuleNodeById = useCallback(
     (nodeId: string) => {
-      setModuleNodes((current) => current.filter((node) => node.id !== nodeId));
-      setModuleEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+      console.log("[P1-NODE-CRUD] deleteModuleNodeById:", { nodeId });
+      setModuleNodes((current) => {
+        const next = current.filter((node) => node.id !== nodeId);
+        console.log("[P1-NODE-CRUD] deleteModuleNodeById success:", {
+          deletedNodeId: nodeId,
+          totalNodesAfter: next.length
+        });
+        return next;
+      });
+      setModuleEdges((current) => {
+        const relatedEdges = current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
+        const deletedEdgeCount = current.length - relatedEdges.length;
+        if (deletedEdgeCount > 0) {
+          console.log("[P1-NODE-CRUD] deleteModuleNodeById also removed edges:", {
+            deletedEdgeCount,
+            totalEdgesAfter: relatedEdges.length
+          });
+        }
+        return relatedEdges;
+      });
       setSelectedId((current) => (current === nodeId ? "" : current));
     },
     [setModuleEdges, setModuleNodes]

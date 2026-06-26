@@ -1,4 +1,57 @@
 import type { components } from "@eterna/shared-schema/openapi";
+import {
+  CANONICAL_LAYERS,
+  CANONICAL_LAYER_IDS,
+  CANONICAL_LAYER_NAMES,
+  CANONICAL_LAYER_ORDERS,
+  CANONICAL_LAYER_ID_TO_NAME,
+  CANONICAL_LAYER_ID_TO_ORDER,
+  validateCanonicalLayers,
+  isValidLayerId,
+  getLayerName,
+  getLayerOrder,
+  type CanonicalLayerTuple,
+} from "./canonical-layers";
+
+export {
+  CANONICAL_LAYERS,
+  CANONICAL_LAYER_IDS,
+  CANONICAL_LAYER_NAMES,
+  CANONICAL_LAYER_ORDERS,
+  CANONICAL_LAYER_ID_TO_NAME,
+  CANONICAL_LAYER_ID_TO_ORDER,
+  validateCanonicalLayers,
+  isValidLayerId,
+  getLayerName,
+  getLayerOrder,
+  type CanonicalLayerTuple,
+};
+
+// P2-D：Slot Catalog 校验
+export {
+  ALLOWED_SLOT_TYPES,
+  isValidSlotType,
+  validateSlotEntry,
+  validateSlotCatalog,
+  findSlotById,
+  validateSlotBinding,
+  getSlotCatalogStats,
+} from "./slot-catalog-v0.4";
+
+// P2-E：Engine Registry 校验
+export {
+  ALLOWED_ENGINE_TYPES,
+  ALLOWED_PROVIDERS,
+  isValidEngineType,
+  isValidProvider,
+  validateEngineEntry,
+  validateEngineRegistry,
+  findEngineById,
+  findEngineByBinding,
+  getEngineMockDisplay,
+  getEngineRegistryStats,
+  checkForRealProviders,
+} from "./engine-registry-v0.4";
 
 export type Artifact = components["schemas"]["Artifact"];
 export type ExportPreview = components["schemas"]["ExportPreview"];
@@ -119,6 +172,25 @@ export type WorkflowNode = {
     outputs: WorkflowPort[];
   };
   validation?: { status?: string; [key: string]: unknown } | null;
+  /**
+   * P2-C：Node slot binding
+   * 指向 Slot Catalog 中的某个 slot_id
+   * 如果存在，表示该节点需要调用该 Slot 对应的能力
+   * 当前阶段仅支持 mock slot
+   */
+  slot_binding?: string | null;
+  /**
+   * P2-C：Node layer reference
+   * 指向某个 layer_id（必须是 CANONICAL_LAYER_IDS 中的值）
+   * 用于在 UI 上展示 node 所属的层级
+   */
+  layer_id?: string | null;
+  /**
+   * P2-C：Node module reference
+   * 指向某个 module_id
+   * 当前阶段可为空
+   */
+  module_id?: string | null;
 };
 
 export type WorkflowEdge = {
@@ -132,6 +204,11 @@ export type WorkflowEdge = {
 export type Workflow = {
   // Schema lock: v0.4 single-source enforcement — exactly "0.4.0", no string union.
   schema_version: "0.4.0";
+  /**
+   * P2-C：Protocol version
+   * 必须为 "0.4.0"
+   */
+  protocol_version?: "0.4.0";
   workflow_id?: string;
   name: string;
   version?: string;
@@ -140,6 +217,41 @@ export type Workflow = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   viewport?: { x: number; y: number; zoom: number } | null;
+  /**
+   * P2-C：Module registry
+   * 当前在这个 workflow 中使用的所有 module
+   */
+  modules?: Array<{
+    module_id: string;
+    module_name?: string;
+    layer_id?: string;
+    [key: string]: unknown;
+  }>;
+  /**
+   * P2-C：Workflow permissions
+   * 工作流级别的权限声明
+   */
+  permissions?: string[];
+  /**
+   * P2-C：Risk level
+   * 工作流的风险等级
+   */
+  risk_level?: "none" | "low" | "medium" | "high" | "critical";
+  /**
+   * P2-C：Audit log
+   * 审计日志列表
+   */
+  audit_log?: Array<{
+    timestamp?: string;
+    action?: string;
+    actor?: string;
+    [key: string]: unknown;
+  }>;
+  /**
+   * P2-C：Extensions
+   * 扩展字段，保存 v0.3 兼容信息等
+   */
+  extensions?: Record<string, unknown>;
   metadata: Record<string, unknown> & { ui_language?: "zh" | "en" | string };
   created_at?: string;
   updated_at?: string;

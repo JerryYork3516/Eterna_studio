@@ -9,10 +9,11 @@ export type ModuleInstance = {
   layerId: string;
 };
 
+// P1-FIX：改进 ModuleGraphState 类型定义
 export type ModuleGraphState = {
   moduleId: string;
-  nodes: unknown[];
-  edges: unknown[];
+  nodes: any[];  // 仍然使用 any[]（兼容 Node 类型），但在 store 层使用 WorkflowNode[]
+  edges: any[];  // 仍然使用 any[]（兼容 Edge 类型），但在 store 层使用 WorkflowEdge[]
 };
 
 export type CanvasState = {
