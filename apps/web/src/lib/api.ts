@@ -111,6 +111,10 @@ export const api = {
       body: JSON.stringify({ workflow })
     });
   },
+  /**
+   * @deprecated Use protocol v0.4 endpoints instead. This mock-run is v0.3 only and does not support v0.4 workflows.
+   * Execution is handled backend-only through the v0.3 adapter.
+   */
   mockRun(workflow: Workflow) {
     return request<{ run: RunResult }>("/workflow/mock-run", {
       method: "POST",
@@ -135,6 +139,10 @@ export const api = {
   fetchEngineRegistry() {
     return request<EngineRegistryResponseV04>("/schema/engine-registry-v0.4");
   },
+  /**
+   * @deprecated Execution is backend-only (v0.3 adapter). UI does not directly compile residents.
+   * This method is kept for compatibility but should not be called from the UI.
+   */
   fetchResidentInstance(workflow: Workflow) {
     return request<ResidentCompileResponse>("/resident/compile", {
       method: "POST",

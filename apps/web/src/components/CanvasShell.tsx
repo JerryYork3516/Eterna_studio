@@ -160,11 +160,6 @@ function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: M
 function catalogLayerToWorkflowNode(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04): WorkflowNode {
   const layerOrder = catalogLayerOrder(layer);
   const catalogLayerName = layer.layer_name;
-  console.log("workflow layer_name from moduleCatalog.find", {
-    layer_id: layer.layer_id,
-    layer_name: catalogLayerName,
-    fromModuleCatalogFind: Boolean(layer.layer_name)
-  });
   return {
     node_id: layer.layer_id,
     type: "layer_container",
@@ -544,11 +539,6 @@ function buildLayerContainerFlowNode({
   const layerId = layer.layer_id;
   const catalogLayerName = layer.layer_name;
   const displayFields = getLayerCatalogDisplayFields(layer, moduleCatalog);
-  console.log("layer_name from moduleCatalog.find", {
-    layer_id: layer.layer_id,
-    layer_name: catalogLayerName,
-    fromModuleCatalogFind: Boolean(layer.layer_name)
-  });
   const schemaNode = {
     node_id: layer.layer_id,
     type: "layer_container",
@@ -816,11 +806,6 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
     onDroppedModuleContextMenu
   } = data;
   const label = moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "";
-  console.log("folder layer_name from moduleCatalog.find", {
-    layer_id: layer.layer_id,
-    layer_name: label,
-    fromModuleCatalogFind: Boolean(moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
-  });
   const parameterCount = Object.keys(layer).length;
   const visibleModules = modules.slice(0, 6);
   const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
@@ -1643,7 +1628,6 @@ export function CanvasShell() {
       return [];
     }
     const catalogLayersForRender = moduleCatalog.layers.slice().sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b));
-    console.log("layer source", "v0.4 module-catalog ONLY");
     const stackFrames = computeLayerStackFrames(catalogLayersForRender, computeLayerModuleCounts(catalogLayersForRender, layerModules));
     const folderNodes = catalogLayersForRender.map((layer) => {
       const layerId = layer.layer_id;
@@ -1840,11 +1824,6 @@ export function CanvasShell() {
   const openLayerWorkspace = useCallback(
     (layer: CatalogLayerInput, mode: WorkspaceMode) => {
       const catalogLayerName = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
-      console.log("open layer_name from moduleCatalog.find", {
-        layer_id: layer.layer_id,
-        layer_name: catalogLayerName,
-        fromModuleCatalogFind: Boolean(moduleCatalog?.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
-      });
       setSelectedNode(layer.layer_id);
       setActiveLayerId(layer.layer_id);
       setWorkspaceMode(mode);
@@ -3060,11 +3039,6 @@ function LayerNavigator({
     <div className="layer-navigator">
       {layers.map((layer) => {
         const label = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
-        console.log("navigator layer_name from moduleCatalog.find", {
-          layer_id: layer.layer_id,
-          layer_name: label,
-          fromModuleCatalogFind: Boolean(moduleCatalog?.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
-        });
         const collapsed = collapsedLayerIds.has(layer.layer_id);
         return (
           <div key={layer.layer_id} className="layer-nav-section">
@@ -3259,11 +3233,6 @@ function LayerWorkspacePanel({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const label = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
-  console.log("workspace layer_name from moduleCatalog.find", {
-    layer_id: layer.layer_id,
-    layer_name: label,
-    fromModuleCatalogFind: Boolean(moduleCatalog?.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
-  });
   const parameterCount = Object.keys(layer).length;
 
   return (
@@ -3409,11 +3378,6 @@ function FloatingWorkspace({
   onPreviewNode: (node: WorkflowNode) => void;
 }) {
   const label = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
-  console.log("floating layer_name from moduleCatalog.find", {
-    layer_id: layer.layer_id,
-    layer_name: label,
-    fromModuleCatalogFind: Boolean(moduleCatalog?.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name)
-  });
   return (
     <FloatingPortal>
       <div className="floating-workspace" style={{ transform: `translate(${index * 22}px, ${index * 18}px)` }}>

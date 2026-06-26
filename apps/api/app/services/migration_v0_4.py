@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.v0_3 import ResidentInstanceV03, WorkflowV03
 from ..models.v0_4 import (
+    CANONICAL_LAYERS,
     CANONICAL_LAYER_IDS,
     EdgeV04,
     LayerRefV04,
@@ -57,15 +58,20 @@ def migrate_workflow_to_v0_4(value: Any) -> WorkflowV04:
     node_layer = _node_layer_map(workflow)
     node_module = _node_module_map(workflow)
 
+    # Build strict canonical layer map from CANONICAL_LAYERS only.
+    # This ensures layer_name is NEVER polluted by workflow.layers, module_catalog, or v0.3 inference.
+    canonical_layer_map = {layer_id: (layer_name, layer_order) for layer_id, layer_name, layer_order in CANONICAL_LAYERS}
+
+    # Reconstruct layers in CANONICAL_LAYERS order, using ONLY canonical names/orders.
     layers = [
         LayerRefV04(
-            layer_id=layer.id,
-            layer_name=layer.name,
-            layer_order=_layer_order(layer.id, index + 1),
-            module_ids=list(layer.module_ids),
-            node_ids=list(layer.node_ids),
+            layer_id=layer_id,
+            layer_name=layer_name,  # FORCED from CANONICAL_LAYERS
+            layer_order=layer_order,  # FORCED from CANONICAL_LAYERS
+            module_ids=[],
+            node_ids=[],
         )
-        for index, layer in enumerate(workflow.layers)
+        for layer_id, layer_name, layer_order in CANONICAL_LAYERS
     ]
 
     nodes = [
