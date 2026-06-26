@@ -28,6 +28,17 @@ import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNod
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard } from "@/components/canvas/WorkflowNodeCard";
+import {
+  type CanvasState,
+  type ModuleInstance as PersistenceModuleInstance,
+  createEmptyCanvasState,
+  deserializeCanvasState,
+  downloadCanvasState,
+  loadCanvasStateFromLocalStorage,
+  readCanvasStateFromFile,
+  saveCanvasStateToLocalStorage,
+  validateCanvasState
+} from "@/lib/canvas-persistence";
 
 type MockNodeType =
   | "text_input"
