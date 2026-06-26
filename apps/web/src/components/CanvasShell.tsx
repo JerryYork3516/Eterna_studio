@@ -1093,7 +1093,11 @@ export function CanvasShell() {
   );
 
   // uiState: module tabs, naming, labels, groups, colors, and transient module UI.
-  const [moduleTabs, setModuleTabs] = useState<string[]>(() => loadModuleCanvasState()?.moduleTabs ?? []);
+  const [moduleTabs, setModuleTabs] = useState<string[]>(() => {
+    const loaded = loadModuleCanvasState()?.moduleTabs ?? [];
+    console.log("[hydrate-init] moduleTabs restored:", { count: loaded.length });
+    return loaded;
+  });
   const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
   const [pendingModuleAdd, setPendingModuleAdd] = useState<PendingModuleAdd | null>(null);
   const [focusedModuleId, setFocusedModuleId] = useState<string | null>(null);
@@ -1105,8 +1109,16 @@ export function CanvasShell() {
   const [uiInputs, setUiInputs] = useState<Record<string, Record<string, unknown>>>({});
   // Stage 5: capability modules attached to each left folder workspace (Module != Node,
   // not part of workflow execution). Keyed by layer node_id -> module ids.
-  const [layerModules, setLayerModules] = useState<Record<string, string[]>>(() => loadLayerModuleState()?.layerModules ?? {});
-  const [moduleInstanceRegistry, setModuleInstanceRegistry] = useState<Record<string, ModuleInstance>>(() => loadLayerModuleState()?.moduleInstanceRegistry ?? {});
+  const [layerModules, setLayerModules] = useState<Record<string, string[]>>(() => {
+    const loaded = loadLayerModuleState()?.layerModules ?? {};
+    console.log("[hydrate-init] layerModules restored:", { layerCount: Object.keys(loaded).length });
+    return loaded;
+  });
+  const [moduleInstanceRegistry, setModuleInstanceRegistry] = useState<Record<string, ModuleInstance>>(() => {
+    const loaded = loadLayerModuleState()?.moduleInstanceRegistry ?? {};
+    console.log("[hydrate-init] moduleInstanceRegistry restored:", { instanceCount: Object.keys(loaded).length });
+    return loaded;
+  });
   const [focusLayerId, setFocusLayerId] = useState<string | null>(null);
   const [moduleUiColors, setModuleUiColors] = useState<Record<string, string>>({});
   const [selectedLayerModuleKeys, setSelectedLayerModuleKeys] = useState<Set<string>>(() => new Set());
@@ -1227,6 +1239,20 @@ export function CanvasShell() {
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
+
+  // NODE B HYDRATION: Verify moduleInstanceRegistry and layerModules were restored on mount
+  useEffect(() => {
+    const instanceCount = Object.keys(moduleInstanceRegistry).length;
+    const layerCount = Object.keys(layerModules).length;
+    if (instanceCount > 0 || layerCount > 0) {
+      const msg = `[NODE-B-HYDRATION] moduleInstances restored on mount: ${instanceCount} instances across ${layerCount} layers`;
+      console.log(msg);
+      appendLog(msg);
+    } else {
+      console.log("[NODE-B-HYDRATION] no moduleInstances to restore on this mount");
+    }
+  }, []); // run once on mount
+
   useEffect(() => {
     let active = true;
 
