@@ -286,6 +286,12 @@ type ResidentInstance = ResidentInstanceV03;
 
 type ResidentPreviewTab = "dialogue" | "voice" | "avatar";
 
+type ModuleInstance = {
+  instanceId: string;
+  moduleId: string;
+  layerId: string;
+};
+
 type FolderGroupNodeData = {
   layer: CatalogLayerInput;
   moduleCatalog: ModuleCatalogResponseV04;
@@ -790,7 +796,6 @@ function makeFlowNode(schemaNode: WorkflowNode, offset?: { x: number; y: number 
 
 function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const language = useCanvasStore((state) => state.language);
-  const debugRef = useRef(false);
   const {
     layer,
     moduleCatalog,
@@ -811,15 +816,6 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   const visibleModules = modules.slice(0, 6);
   const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
   const selectedModuleSet = new Set(selectedModuleKeys);
-
-  if (modules.length > 0 && !debugRef.current) {
-    debugRef.current = true;
-    console.log(`[FolderGroupNode ${layer.layer_id}] Rendering with modules:`, {
-      moduleCount: modules.length,
-      moduleIds: modules.map(m => m.module_id),
-      visibleCount: visibleModules.length
-    });
-  }
 
   return (
     <section
@@ -886,20 +882,16 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
                 <button
                   key={modId}
                   type="button"
-                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
+                  className={`submodule-card module-drop-card nodrag nopan cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
                   style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
                   onClick={(event) => {
+                    event.stopPropagation();
                     onSelectDroppedModule(modId, event.ctrlKey || event.metaKey);
                   }}
                   onDoubleClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    console.log(`[FolderGroupNode] Double click on module:`, {
-                      modId,
-                      moduleData: mod,
-                      layerNodeId: layer.layer_id,
-                      onOpenDroppedModule: Boolean(onOpenDroppedModule)
-                    });
+                    console.log("[module-open] dropped module double-click", { moduleId: modId, layerId: layer.layer_id });
                     onOpenDroppedModule(modId);
                   }}
                   onContextMenu={(event) => {
@@ -995,9 +987,9 @@ export function CanvasShell() {
   // layoutState: ReactFlow positions and canvas layout-only overrides.
   const [draggedNodeIds, setDraggedNodeIds] = useState<Set<string>>(() => new Set());
 
-  // localStorage key for module canvas state persistence
-  // Use a timestamp-based or static key since workflow is declared later
-  const moduleCanvasStateKey = useRef(`moduleCanvasState_${Date.now()}`).current;
+  // localStorage keys for module canvas state persistence
+  const moduleCanvasStateKey = useRef("moduleCanvasState_v04").current;
+  const layerModuleStateKey = useRef("layerModuleState_v04").current;
   
   // Helper: load module canvas state from localStorage
   const loadModuleCanvasState = useCallback(() => {
@@ -1047,6 +1039,46 @@ export function CanvasShell() {
     [moduleCanvasStateKey]
   );
 
+  // Helper: load layer module state from localStorage
+  const loadLayerModuleState = useCallback(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(layerModuleStateKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return {
+          layerModules: parsed.layerModules ?? {},
+          moduleInstanceRegistry: parsed.moduleInstanceRegistry ?? {},
+        };
+      }
+    } catch (e) {
+      console.error("Failed to load layer module state from localStorage:", e);
+    }
+    return null;
+  }, [layerModuleStateKey]);
+
+  // Helper: save layer module state to localStorage
+  const saveLayerModuleState = useCallback(
+    (layerModules: Record<string, string[]>, moduleInstanceRegistry: Record<string, ModuleInstance>) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      try {
+        window.localStorage.setItem(
+          layerModuleStateKey,
+          JSON.stringify({ layerModules, moduleInstanceRegistry })
+        );
+      } catch (e) {
+        console.error("Failed to save layer module state to localStorage:", e);
+      }
+    },
+    [layerModuleStateKey]
+  );
+
   // uiState: module tabs, naming, labels, groups, colors, and transient module UI.
   const [moduleTabs, setModuleTabs] = useState<string[]>(() => loadModuleCanvasState()?.moduleTabs ?? []);
   const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
@@ -1060,7 +1092,8 @@ export function CanvasShell() {
   const [uiInputs, setUiInputs] = useState<Record<string, Record<string, unknown>>>({});
   // Stage 5: capability modules attached to each left folder workspace (Module != Node,
   // not part of workflow execution). Keyed by layer node_id -> module ids.
-  const [layerModules, setLayerModules] = useState<Record<string, string[]>>({});
+  const [layerModules, setLayerModules] = useState<Record<string, string[]>>(() => loadLayerModuleState()?.layerModules ?? {});
+  const [moduleInstanceRegistry, setModuleInstanceRegistry] = useState<Record<string, ModuleInstance>>(() => loadLayerModuleState()?.moduleInstanceRegistry ?? {});
   const [focusLayerId, setFocusLayerId] = useState<string | null>(null);
   const [moduleUiColors, setModuleUiColors] = useState<Record<string, string>>({});
   const [selectedLayerModuleKeys, setSelectedLayerModuleKeys] = useState<Set<string>>(() => new Set());
@@ -1076,11 +1109,18 @@ export function CanvasShell() {
     }
     return grouped;
   }, [moduleCatalog, catalogRevision]);
+  const ensureModuleInstance = useCallback((moduleId: string, layerId: string): ModuleInstance => {
+    const instanceId = `${layerId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
+    const instance = { instanceId, moduleId, layerId } satisfies ModuleInstance;
+    setModuleInstanceRegistry((current) => (current[instanceId] ? current : { ...current, [instanceId]: instance }));
+    return instance;
+  }, []);
   const addModuleToLayer = useCallback(
     (layerNodeId: string, moduleId: string) => {
       if (!moduleCatalogById.has(moduleId)) {
         return;
       }
+      ensureModuleInstance(moduleId, layerNodeId);
       setLayerModules((current) => {
         const existing = current[layerNodeId] ?? [];
         if (existing.includes(moduleId)) {
@@ -1090,7 +1130,7 @@ export function CanvasShell() {
       });
       setSaveStatus("dirty");
     },
-    [moduleCatalogById]
+    [ensureModuleInstance, moduleCatalogById]
   );
   const removeModuleFromLayer = useCallback((layerNodeId: string, moduleId: string) => {
     setLayerModules((current) => ({ ...current, [layerNodeId]: (current[layerNodeId] ?? []).filter((id) => id !== moduleId) }));
@@ -1240,6 +1280,14 @@ export function CanvasShell() {
     return () => clearTimeout(timer);
   }, [moduleTabs, moduleNames, uiNodeNames, uiTags, uiGroups, uiColors, saveModuleCanvasState]);
 
+  // Autosave of layer module state to localStorage (persists module instances)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveLayerModuleState(layerModules, moduleInstanceRegistry);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [layerModules, moduleInstanceRegistry, saveLayerModuleState]);
+
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const handleUndo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
@@ -1276,10 +1324,11 @@ export function CanvasShell() {
   const edges = useMemo(() => [], []);
 
   useEffect(() => {
-    setLayerModules({});
+    // Only reset module UI state when schema actually changes, not on every catalog update
     setSelectedLayerModuleKeys(new Set());
     setModuleUiColors({});
-  }, [moduleCatalog?.schema_version, catalogRevision]);
+    // Do NOT reset layerModules here as it causes loss of user-added modules on page refresh
+  }, [moduleCatalog?.schema_version]);
 
 	  const layerById = useMemo(
 	    () => new Map(catalogLayers.map((layer) => [layer.layer_id, layer])),
@@ -1449,16 +1498,16 @@ export function CanvasShell() {
 
   const openCatalogModuleCanvas = useCallback(
     (layerNodeId: string, moduleId: string) => {
-      const moduleNodeId = `${layerNodeId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
+      const moduleInstance = ensureModuleInstance(moduleId, layerNodeId);
+      const moduleNodeId = moduleInstance.instanceId;
       let mod = moduleCatalogById.get(moduleId);
-      
-      // 如果在 moduleCatalogById 中找不到，则尝试从 moduleCatalog.modules 中直接查找
+
       if (!mod && moduleCatalog) {
         mod = moduleCatalog.modules.find((m) => m.module_id === moduleId);
       }
-      
+
       if (!mod) {
-        console.warn(`[openCatalogModuleCanvas] Module not found:`, {
+        console.warn("[module-open] module not found", {
           moduleId,
           layerNodeId,
           catalogLoaded: Boolean(moduleCatalog),
@@ -1467,13 +1516,14 @@ export function CanvasShell() {
         appendLog(`模块未找到: ${moduleId}`, "error");
         return;
       }
-      
+
+      console.log("[module-open] open module canvas", { moduleId, layerId: layerNodeId, tabId: moduleNodeId });
       setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
       setActiveModuleTabId(moduleNodeId);
       setActiveDrawer(null);
       appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod)}`);
     },
-    [appendLog, moduleCatalogById, moduleCatalog, t]
+    [appendLog, ensureModuleInstance, moduleCatalogById, moduleCatalog, t]
   );
 
   const renameUiNode = useCallback(
@@ -1704,6 +1754,10 @@ export function CanvasShell() {
       const menu = makeContextMenu(event, [
         { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count", "个模块")}` : mod ? moduleCatalogName(mod) : moduleId, disabled: true },
         {
+          label: t("module.open", "打开模组"),
+          onSelect: () => openCatalogModuleCanvas(layer.layer_id, moduleId)
+        },
+        {
           label: t("module.colorMenu", "修改颜色"),
           children: colorItems
         },
@@ -1718,7 +1772,7 @@ export function CanvasShell() {
         setMainContextMenu(menu);
       }
     },
-    [moduleCatalogById, removeModuleFromLayer, selectedLayerModuleKeys, setModuleColor, t]
+    [moduleCatalogById, openCatalogModuleCanvas, removeModuleFromLayer, selectedLayerModuleKeys, setModuleColor, t]
   );
 
   const flowNodes = useMemo<Node[]>(() => {
@@ -1731,17 +1785,7 @@ export function CanvasShell() {
       const layerId = layer.layer_id;
       const subnodes: WorkflowNode[] = [];
       const attachedModuleIds = layerModules[layerId] ?? [];
-      
-      // 调试：打印 module 加载情况
-      if (attachedModuleIds.length > 0) {
-        console.log(`[CanvasShell] Layer ${layerId} attachedModuleIds:`, {
-          ids: attachedModuleIds,
-          catalogModuleIds: moduleCatalog?.modules?.map(m => m.module_id) ?? [],
-          catalogKeys: Array.from(moduleCatalogById.keys()),
-          missing: attachedModuleIds.filter(id => !moduleCatalogById.has(id))
-        });
-      }
-      
+
       const attachedModules = attachedModuleIds
         .map((id) => {
           const mod = moduleCatalogById.get(id);
