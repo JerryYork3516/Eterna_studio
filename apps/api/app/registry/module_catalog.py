@@ -53,22 +53,22 @@ def _module(
 # Catalog: each module bound to a frozen layer_id. module_id values are unique.
 MODULE_CATALOG: List[ModuleV04] = [
     # Active / core trunk capabilities
-    _module("module_identity_core", "identity", "Identity Core", "layer_2", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
-    _module("module_legal_permission", "permission", "Legal Permission", "layer_3", status=ProtocolStatus.core, risk_level=RiskLevel.medium, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
-    _module("module_safety_boundary", "safety", "Safety Boundary", "layer_4", status=ProtocolStatus.core, risk_level=RiskLevel.high, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
-    _module("module_personality", "personality", "Personality", "layer_6", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
-    _module("module_memory", "memory", "Memory", "layer_7", status=ProtocolStatus.mock, slot_type=SlotType.memory, category="cognition", color_status="amber"),
-    _module("module_knowledge", "knowledge", "Knowledge", "layer_8", status=ProtocolStatus.mock, slot_type=SlotType.llm, category="cognition", color_status="amber"),
-    _module("module_voice", "voice", "Voice Profile", "layer_12", status=ProtocolStatus.mock, slot_type=SlotType.tts, category="multimodal", color_status="amber"),
-    _module("module_avatar", "avatar", "Particle Avatar", "layer_12", status=ProtocolStatus.mock, slot_type=SlotType.avatar, category="multimodal", color_status="amber"),
+    _module("module_identity_core", "identity", "Identity Core", "layer_1", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
+    _module("module_personality", "personality", "Personality", "layer_2", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
+    _module("module_safety_boundary", "safety", "Safety Boundary", "layer_3", status=ProtocolStatus.core, risk_level=RiskLevel.high, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
+    _module("module_legal_permission", "permission", "Legal Permission", "layer_4", status=ProtocolStatus.core, risk_level=RiskLevel.medium, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
+    _module("module_memory", "memory", "Memory", "layer_5", status=ProtocolStatus.mock, slot_type=SlotType.memory, category="cognition", color_status="amber"),
+    _module("module_knowledge", "knowledge", "Knowledge", "layer_6", status=ProtocolStatus.mock, slot_type=SlotType.llm, category="cognition", color_status="amber"),
+    _module("module_voice", "voice", "Voice Profile", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.tts, category="multimodal", color_status="amber"),
+    _module("module_avatar", "avatar", "Particle Avatar", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.avatar, category="multimodal", color_status="amber"),
     _module("module_audit_export", "audit", "Audit / Export / Deploy", "layer_13", status=ProtocolStatus.ready, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
     # Future capabilities — registered as placeholders only (no logic this stage)
-    _module("module_agent", "agent", "Agent", "layer_11", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", audit_required=True, human_confirm_required=True),
-    _module("module_wallet", "wallet", "Wallet", "layer_11", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.critical, category="capability", audit_required=True, human_confirm_required=True),
-    _module("module_phone", "phone", "Phone", "layer_11", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", audit_required=True, human_confirm_required=True),
-    _module("module_social", "social", "Social", "layer_9", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.medium, category="relationship", audit_required=True),
-    _module("module_ar", "ar", "AR Presence", "layer_12", status=ProtocolStatus.planned, slot_type=SlotType.ar, risk_level=RiskLevel.medium, category="multimodal"),
-    _module("module_emergency_contact", "emergency_contact", "Emergency Contact", "layer_3", status=ProtocolStatus.later, risk_level=RiskLevel.high, category="governance", audit_required=True, human_confirm_required=True),
+    _module("module_agent", "agent", "Agent", "layer_9", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", audit_required=True, human_confirm_required=True),
+    _module("module_wallet", "wallet", "Wallet", "layer_9", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.critical, category="capability", audit_required=True, human_confirm_required=True),
+    _module("module_phone", "phone", "Phone", "layer_9", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", audit_required=True, human_confirm_required=True),
+    _module("module_social", "social", "Social", "layer_11", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.medium, category="relationship", audit_required=True),
+    _module("module_ar", "ar", "AR Presence", "layer_10", status=ProtocolStatus.planned, slot_type=SlotType.ar, risk_level=RiskLevel.medium, category="multimodal"),
+    _module("module_emergency_contact", "emergency_contact", "Emergency Contact", "layer_4", status=ProtocolStatus.later, risk_level=RiskLevel.high, category="governance", audit_required=True, human_confirm_required=True),
 ]
 
 

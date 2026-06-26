@@ -979,16 +979,60 @@ export function CanvasShell() {
   // layoutState: ReactFlow positions and canvas layout-only overrides.
   const [draggedNodeIds, setDraggedNodeIds] = useState<Set<string>>(() => new Set());
 
+  // localStorage key for module canvas state persistence
+  // Use a timestamp-based or static key since workflow is declared later
+  const moduleCanvasStateKey = useRef(`moduleCanvasState_${Date.now()}`).current;
+  
+  // Helper: load module canvas state from localStorage
+  const loadModuleCanvasState = useCallback(() => {
+    try {
+      const stored = localStorage.getItem(moduleCanvasStateKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return {
+          moduleTabs: parsed.moduleTabs ?? [],
+          moduleNames: parsed.moduleNames ?? {},
+          uiNodeNames: parsed.uiNodeNames ?? {},
+          uiTags: parsed.uiTags ?? {},
+          uiGroups: parsed.uiGroups ?? {},
+          uiColors: parsed.uiColors ?? {},
+        };
+      }
+    } catch (e) {
+      console.error("Failed to load module canvas state from localStorage:", e);
+    }
+    return null;
+  }, [moduleCanvasStateKey]);
+  
+  // Helper: save module canvas state to localStorage
+  const saveModuleCanvasState = useCallback(
+    (state: {
+      moduleTabs: string[];
+      moduleNames: Record<string, string>;
+      uiNodeNames: Record<string, string>;
+      uiTags: Record<string, string[]>;
+      uiGroups: Record<string, string>;
+      uiColors: Record<string, string>;
+    }) => {
+      try {
+        localStorage.setItem(moduleCanvasStateKey, JSON.stringify(state));
+      } catch (e) {
+        console.error("Failed to save module canvas state to localStorage:", e);
+      }
+    },
+    [moduleCanvasStateKey]
+  );
+
   // uiState: module tabs, naming, labels, groups, colors, and transient module UI.
-  const [moduleTabs, setModuleTabs] = useState<string[]>([]);
+  const [moduleTabs, setModuleTabs] = useState<string[]>(() => loadModuleCanvasState()?.moduleTabs ?? []);
   const [activeModuleTabId, setActiveModuleTabId] = useState<string | null>(null);
   const [pendingModuleAdd, setPendingModuleAdd] = useState<PendingModuleAdd | null>(null);
   const [focusedModuleId, setFocusedModuleId] = useState<string | null>(null);
-  const [moduleNames, setModuleNames] = useState<Record<string, string>>({});
-  const [uiNodeNames, setUiNodeNames] = useState<Record<string, string>>({});
-  const [uiTags, setUiTags] = useState<Record<string, string[]>>({});
-  const [uiGroups, setUiGroups] = useState<Record<string, string>>({});
-  const [uiColors, setUiColors] = useState<Record<string, string>>({});
+  const [moduleNames, setModuleNames] = useState<Record<string, string>>(() => loadModuleCanvasState()?.moduleNames ?? {});
+  const [uiNodeNames, setUiNodeNames] = useState<Record<string, string>>(() => loadModuleCanvasState()?.uiNodeNames ?? {});
+  const [uiTags, setUiTags] = useState<Record<string, string[]>>(() => loadModuleCanvasState()?.uiTags ?? {});
+  const [uiGroups, setUiGroups] = useState<Record<string, string>>(() => loadModuleCanvasState()?.uiGroups ?? {});
+  const [uiColors, setUiColors] = useState<Record<string, string>>(() => loadModuleCanvasState()?.uiColors ?? {});
   const [uiInputs, setUiInputs] = useState<Record<string, Record<string, unknown>>>({});
   // Stage 5: capability modules attached to each left folder workspace (Module != Node,
   // not part of workflow execution). Keyed by layer node_id -> module ids.
@@ -1156,6 +1200,22 @@ export function CanvasShell() {
       active = false;
     };
   }, [appendLog, language]);
+
+  // Debounced autosave of module canvas state to localStorage
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveModuleCanvasState({
+        moduleTabs,
+        moduleNames,
+        uiNodeNames,
+        uiTags,
+        uiGroups,
+        uiColors,
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [moduleTabs, moduleNames, uiNodeNames, uiTags, uiGroups, uiColors, saveModuleCanvasState]);
+
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const handleUndo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
