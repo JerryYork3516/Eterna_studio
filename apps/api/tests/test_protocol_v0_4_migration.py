@@ -108,3 +108,23 @@ def test_protocol_version_and_catalogs_reachable():
     assert client.get("/schema/module-catalog-v0.4").status_code == 200
     assert client.get("/schema/slot-catalog-v0.4").status_code == 200
     assert client.get("/schema/engine-registry-v0.4").status_code == 200
+
+
+# --- VI. CANONICAL_LAYERS anti-drift safeguard ----------------------------
+def test_module_catalog_layers_match_canonical():
+    """Ensure module-catalog layers are always aligned with CANONICAL_LAYERS.
+    
+    This safeguards against accidental reordering, renaming, or modification
+    of the frozen 13-layer trunk. The module-catalog must return layers in
+    strict CANONICAL_LAYERS order with exact names and order values.
+    """
+    catalog_resp = client.get("/schema/module-catalog-v0.4").json()
+    catalog_layers = catalog_resp["layers"]
+    canonical_ids = [lid for lid, _n, _o in CANONICAL_LAYERS]
+    canonical_names = [n for _l, n, _o in CANONICAL_LAYERS]
+    canonical_orders = [o for _l, _n, o in CANONICAL_LAYERS]
+    
+    # All three must match exactly — no reordering, renaming, or value drift.
+    assert [l["layer_id"] for l in catalog_layers] == canonical_ids
+    assert [l["layer_name"] for l in catalog_layers] == canonical_names
+    assert [l["layer_order"] for l in catalog_layers] == canonical_orders

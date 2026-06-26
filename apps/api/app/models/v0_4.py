@@ -295,17 +295,20 @@ class AuditLogEntryV04(V04BaseModel):
 
 # --- Catalog + validation responses ---------------------------------------
 class EngineRegistryResponseV04(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     engines: List[EngineV04] = Field(default_factory=list)
 
 
 class ModuleCatalogResponseV04(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     layers: List[LayerRefV04] = Field(default_factory=list)
     modules: List[ModuleV04] = Field(default_factory=list)
 
 
 class SlotCatalogResponseV04(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     slots: List[SlotV04] = Field(default_factory=list)
 
