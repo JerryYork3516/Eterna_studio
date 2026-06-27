@@ -148,18 +148,18 @@ function modulesForLayer(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogR
   return moduleCatalog.modules.filter((module) => module.layer_id === layer.layer_id);
 }
 
-function getLayerDisplayMeta(layer: CatalogLayerInput) {
+function getLayerDisplayMeta(layer: CatalogLayerInput, t: (key: string, fallback?: string) => string) {
   const order = catalogLayerOrder(layer);
   const groupLabel =
     order <= 4
-      ? "GROUP A: IDENTITY & CONSTRAINTS"
+      ? t("ui.layerGroup.identityConstraints", "GROUP A: IDENTITY & CONSTRAINTS")
       : order <= 7
-        ? "GROUP B: COGNITION SYSTEM"
+        ? t("ui.layerGroup.cognitionSystem", "GROUP B: COGNITION SYSTEM")
         : order <= 10
-          ? "GROUP C: ACTION & EXECUTION"
+          ? t("ui.layerGroup.actionExecution", "GROUP C: ACTION & EXECUTION")
           : order <= 12
-            ? "GROUP D: SOCIAL & META"
-            : "GROUP E: OUTPUT";
+            ? t("ui.layerGroup.socialMeta", "GROUP D: SOCIAL & META")
+            : t("ui.layerGroup.output", "GROUP E: OUTPUT");
   const moduleTier = order === 5 || order === 9 ? "later" : order === 11 || order === 12 ? "plugin" : "core";
   const lockLevel: WorkflowNode["lock_level"] =
     order === 1 || order === 8 || order === 11
@@ -171,12 +171,12 @@ function getLayerDisplayMeta(layer: CatalogLayerInput) {
           : "review_required";
   const review =
     lockLevel === "editable"
-      ? "Editable"
+      ? t("ui.lock.editable", "Editable")
       : lockLevel === "locked"
-        ? "Locked"
+        ? t("ui.lock.locked", "Locked")
         : lockLevel === "mixed"
-          ? "Mixed"
-          : "Review Required";
+          ? t("ui.lock.mixed", "Mixed")
+          : t("ui.lock.reviewRequired", "Review Required");
 
   return {
     groupLabel,
@@ -186,15 +186,15 @@ function getLayerDisplayMeta(layer: CatalogLayerInput) {
   };
 }
 
-function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
+function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04, t: (key: string, fallback?: string) => string) {
   const modules = modulesForLayer(layer, moduleCatalog);
   const statuses = modules.map((module) => displayText(module.status));
   const versions = modules.map((module) => displayText(module.module_version));
-  const displayMeta = getLayerDisplayMeta(layer);
+  const displayMeta = getLayerDisplayMeta(layer, t);
 
   return {
     groupLabel: displayMeta.groupLabel,
-    status: mixedOrSingle(statuses, "empty"),
+    status: mixedOrSingle(statuses, t("ui.layer.empty", "empty")),
     version: mixedOrSingle(versions, displayText(moduleCatalog.protocol_version)),
     children_count: modules.length,
     review: displayMeta.review,
@@ -213,7 +213,7 @@ function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: M
 
 function catalogLayerToWorkflowNode(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04): WorkflowNode {
   const layerOrder = catalogLayerOrder(layer);
-  const catalogLayerName = layer.layer_name;
+  const catalogLayerName = translate(useCanvasStore.getState().language, `layer.${layer.layer_id}`, layer.layer_name);
   return {
     node_id: layer.layer_id,
     type: "layer_container",
@@ -374,8 +374,8 @@ function moduleCatalogId(module: ModuleCatalogEntryV04) {
   return module.module_id;
 }
 
-function moduleCatalogName(module: ModuleCatalogEntryV04) {
-  return module.module_name;
+function moduleCatalogName(module: ModuleCatalogEntryV04, t: (key: string, fallback?: string) => string) {
+  return t(`module.${module.module_id}`, module.module_name);
 }
 
 function moduleCatalogSlot(module: ModuleCatalogEntryV04) {
@@ -587,7 +587,8 @@ function buildLayerContainerFlowNode({
   frame,
   uiTags,
   uiGroups,
-  uiColors
+  uiColors,
+  t
 }: {
   layer: CatalogLayerInput;
   moduleCatalog: ModuleCatalogResponseV04;
@@ -595,10 +596,11 @@ function buildLayerContainerFlowNode({
   uiTags: Record<string, string[]>;
   uiGroups: Record<string, string>;
   uiColors: Record<string, string>;
+  t: (key: string, fallback?: string) => string;
 }) {
   const layerId = layer.layer_id;
-  const catalogLayerName = layer.layer_name;
-  const displayFields = getLayerCatalogDisplayFields(layer, moduleCatalog);
+  const catalogLayerName = translate(useCanvasStore.getState().language, `layer.${layer.layer_id}`, layer.layer_name);
+  const displayFields = getLayerCatalogDisplayFields(layer, moduleCatalog, t);
   const schemaNode = {
     node_id: layer.layer_id,
     type: "layer_container",
@@ -638,7 +640,8 @@ function buildLayerContainerFlowNode({
       groupLabel: displayFields.groupLabel,
       uiTags: uiTags[layerId] ?? [],
       uiGroup: uiGroups[layerId] ?? "",
-      uiColor: uiColors[layerId] ?? ""
+      uiColor: uiColors[layerId] ?? "",
+      t
     }
   } satisfies Node;
 }
@@ -869,7 +872,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
     onContainerContextMenu,
     onDroppedModuleContextMenu
   } = data;
-  const label = moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "";
+  const label = translate(language, `layer.${layer.layer_id}`, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "");
   const parameterCount = Object.keys(layer).length;
   const visibleModules = modules.slice(0, 6);
   const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
@@ -957,9 +960,9 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
                     event.stopPropagation();
                     onDroppedModuleContextMenu(event, modId);
                   }}
-                  title={`${moduleCatalogName(mod)} · ${slotLabel} · ${translate(language, `module.status.${status}`, status)}`}
+                  title={`${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))} · ${slotLabel} · ${translate(language, `module.status.${status}`, status)}`}
                 >
-                  <span className="submodule-name">{moduleCatalogName(mod)}</span>
+                  <span className="submodule-name">{moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))}</span>
                   <span className="submodule-badge-row">
                     <span className="submodule-group">{mod.layer_id}</span>
                     <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
@@ -1069,7 +1072,7 @@ export function CanvasShell() {
         };
       }
     } catch (e) {
-      console.error("Failed to load module canvas state from localStorage:", e);
+      console.error(t("error.localStorageLoad", "Failed to load module canvas state from localStorage:"), e);
     }
     return null;
   }, [moduleCanvasStateKey]);
@@ -1369,11 +1372,11 @@ export function CanvasShell() {
         console.log("[NODE-F-VALIDATE] moduleCatalog passed 13-layer validation ✓");
         setModuleCatalog(modules);
         setCatalogRevision((revision) => revision + 1);
-        appendLog(`Module catalog loaded and validated: ${modules.modules.length} modules; 13 layers (canonical structure OK)`);
+        appendLog(`${t("status.moduleCatalogLoaded", "Module catalog loaded and validated")}: ${modules.modules.length} ${t("common.modules", "modules")}; 13 ${t("common.layers", "layers")}`);
       })
       .catch((error) => {
         if (active) {
-          appendLog(`Module catalog failed: ${(error as Error).message}`, "error");
+          appendLog(`${t("error.moduleCatalog", "Module catalog failed")}: ${(error as Error).message}`, "error");
         }
       });
 
@@ -1381,12 +1384,12 @@ export function CanvasShell() {
       .fetchSlotCatalog()
       .then((slots) => {
         if (active) {
-          appendLog(`Slot catalog loaded: ${slots.slots.length}`);
+          appendLog(`${t("status.slotCatalogLoaded", "Slot catalog loaded")}: ${slots.slots.length}`);
         }
       })
       .catch((error) => {
         if (active) {
-          appendLog(`Slot catalog failed: ${(error as Error).message}`, "error");
+          appendLog(`${t("error.slotCatalog", "Slot catalog failed")}: ${(error as Error).message}`, "error");
         }
       });
 
@@ -1394,12 +1397,12 @@ export function CanvasShell() {
       .fetchEngineRegistry()
       .then((engines) => {
         if (active) {
-          appendLog(`Engine registry loaded: ${engines.engines.length}`);
+          appendLog(`${t("status.engineRegistryLoaded", "Engine registry loaded")}: ${engines.engines.length}`);
         }
       })
       .catch((error) => {
         if (active) {
-          appendLog(`Engine registry failed: ${(error as Error).message}`, "error");
+          appendLog(`${t("error.engineRegistry", "Engine registry failed")}: ${(error as Error).message}`, "error");
         }
       });
 
@@ -1543,7 +1546,7 @@ export function CanvasShell() {
       try {
         const result = await readCanvasStateFromFile(file);
         if (!result.success || !result.state) {
-          appendLog(`导入失败: ${result.error || "未知错误"}`, "error");
+          appendLog(`${t("error.importFailed", "Import failed")}: ${result.error || t("common.unknownError", "unknown error")}`, "error");
           return;
         }
 
@@ -1575,7 +1578,7 @@ export function CanvasShell() {
         
         appendLog(t("import.success", "Canvas 状态已导入"), "info");
       } catch (error) {
-        appendLog(`导入异常: ${error instanceof Error ? error.message : "未知错误"}`, "error");
+        appendLog(`${t("error.importException", "Import exception")}: ${error instanceof Error ? error.message : t("common.unknownError", "unknown error")}`, "error");
       } finally {
         // 重置文件输入，以便可以再次选择同一文件
         if (fileInputRef.current) {
@@ -1653,7 +1656,7 @@ export function CanvasShell() {
         type: "module",
         category: "container",
         title_key: "",
-          title_fallback: moduleCatalogName(mod),
+          title_fallback: moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)),
         position: { x: 0, y: 0 },
         lock_level: "editable",
 	        data: {
@@ -1828,14 +1831,14 @@ export function CanvasShell() {
       setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
       setActiveModuleTabId(moduleNodeId);
       setActiveDrawer(null);
-      appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod)}`);
+      appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))}`);
     },
     [appendLog, ensureModuleInstance, moduleCatalogById, moduleCatalog, t]
   );
 
   const renameUiNode = useCallback(
     (nodeId: string, currentName: string) => {
-      const nextName = window.prompt("Rename", currentName);
+      const nextName = window.prompt(t("common.renameNode", "Rename node"), currentName);
       if (!nextName?.trim()) {
         return;
       }
@@ -1847,7 +1850,7 @@ export function CanvasShell() {
 
   const renameUiModule = useCallback(
     (nodeId: string, currentName: string) => {
-      const nextName = window.prompt("Module name", currentName);
+      const nextName = window.prompt(t("common.renameModule", "Rename module"), currentName);
       if (!nextName?.trim()) {
         return;
       }
@@ -1857,7 +1860,7 @@ export function CanvasShell() {
     [appendLog, t]
   );
 
-  const editUiTagsForIds = useCallback((nodeIds: string[], title = "Tags") => {
+  const editUiTagsForIds = useCallback((nodeIds: string[], title = t("common.nodeTags", "Node tags")) => {
     const firstId = nodeIds[0];
     if (!firstId) {
       return;
@@ -1881,7 +1884,7 @@ export function CanvasShell() {
     setSaveStatus("dirty");
   }, [uiTags]);
 
-  const editUiGroupForIds = useCallback((nodeIds: string[], title = "Visual group") => {
+  const editUiGroupForIds = useCallback((nodeIds: string[], title = t("common.nodeGroup", "Node group")) => {
     const firstId = nodeIds[0];
     if (!firstId) {
       return;
@@ -1902,7 +1905,7 @@ export function CanvasShell() {
 
   const renameVisualGroup = useCallback((nodeId: string) => {
     const currentGroup = uiGroups[nodeId] ?? "";
-    const nextGroup = window.prompt("Rename group", currentGroup);
+    const nextGroup = window.prompt(t("common.renameGroup", "Rename group"), currentGroup);
     if (nextGroup === null) {
       return;
     }
@@ -1943,24 +1946,24 @@ export function CanvasShell() {
       const group = uiGroups[node.node_id] ?? "";
       const menu = makeContextMenu(event, [
         {
-          label: "放大查看",
+          label: t("common.focusView", "Focus view"),
           onSelect: () => {
             setFocusedModuleId(node.node_id);
             handleChildModulePreview(node);
           }
         },
-        { label: "重命名 Module", onSelect: () => renameUiModule(node.node_id, label) },
-        { label: "修改颜色", onSelect: () => {
+        { label: t("common.renameModule", "Rename module"), onSelect: () => renameUiModule(node.node_id, label) },
+        { label: t("common.color", "Color"), onSelect: () => {
           const nextColor = window.prompt(t("field.color", "Color"), uiColors[node.node_id] ?? "#4f8cff");
           if (nextColor) {
             setUiColors((current) => ({ ...current, [node.node_id]: nextColor.trim() }));
             setSaveStatus("dirty");
           }
         } },
-        { label: "添加 / 编辑标签", onSelect: () => editUiTagsForIds([node.node_id], "Module tags") },
-        { label: "创建分组", onSelect: () => editUiGroupForIds([node.node_id], "Module group") },
-        { label: "重命名分组", onSelect: () => renameVisualGroup(node.node_id), disabled: !group },
-        { label: "解散分组", onSelect: () => dissolveVisualGroup(node.node_id), disabled: !group }
+        { label: t("common.addEditTags", "Add / edit tags"), onSelect: () => editUiTagsForIds([node.node_id], t("common.moduleTags", "Module tags")) },
+        { label: t("common.createGroup", "Create group"), onSelect: () => editUiGroupForIds([node.node_id], t("common.moduleGroup", "Module group")) },
+        { label: t("common.renameGroup", "Rename group"), onSelect: () => renameVisualGroup(node.node_id), disabled: !group },
+        { label: t("common.dissolveGroup", "Dissolve group"), onSelect: () => dissolveVisualGroup(node.node_id), disabled: !group }
       ]);
       if (menu) {
         setMainContextMenu(menu);
@@ -2039,7 +2042,7 @@ export function CanvasShell() {
       return [...byCategory.entries()].map(([category, mods]) => ({
         label: t(`module.category.${category}`, category),
         children: mods.map((mod) => ({
-          label: `${moduleCatalogName(mod)} · ${mod.status}`,
+          label: `${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))} · ${mod.status}`,
           onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
         }))
       }));
@@ -2077,7 +2080,7 @@ export function CanvasShell() {
         onSelect: () => targetModuleIds.forEach((id) => setModuleColor(layer.layer_id, id, color))
       }));
       const menu = makeContextMenu(event, [
-        { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count", "个模块")}` : mod ? moduleCatalogName(mod) : moduleId, disabled: true },
+        { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count", "个模块")}` : mod ? moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)) : moduleId, disabled: true },
         {
           label: t("module.open", "打开模组"),
           onSelect: () => openCatalogModuleCanvas(layer.layer_id, moduleId)
@@ -2158,13 +2161,14 @@ export function CanvasShell() {
       if (!frame) {
         throw new Error(`Missing v0.4 module-catalog layer frame: ${layer.layer_id}`);
       }
-	      return renderLayer({
-	        layer,
+      return renderLayer({
+        layer,
         moduleCatalog,
-	        frame,
-	        uiTags,
-	        uiGroups,
-	        uiColors
+        frame,
+        uiTags,
+        uiGroups,
+        uiColors,
+        t
       });
     });
 
@@ -2558,20 +2562,20 @@ export function CanvasShell() {
               { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(node.id) }
             ]
           : []),
-        { label: "重命名", onSelect: () => renameUiNode(node.id, label) },
-        { label: "修改颜色", onSelect: () => {
+        { label: t("common.rename", "重命名"), onSelect: () => renameUiNode(node.id, label) },
+        { label: t("common.color", "颜色"), onSelect: () => {
           const nextColor = window.prompt(t("field.color", "Color"), uiColors[node.id] ?? "#4f8cff");
           if (nextColor) {
             setUiColors((current) => ({ ...current, [node.id]: nextColor.trim() }));
             setSaveStatus("dirty");
           }
         } },
-        { label: "删除节点", onSelect: () => deleteMainNodeById(node.id), disabled: isLayer, danger: true },
-        { label: "复制节点", onSelect: () => copyMainNodeById(node.id), disabled: isLayer },
-        { label: "添加 / 编辑标签", onSelect: () => editUiTagsForIds([node.id], "Node tags") },
-        { label: "创建分组", onSelect: () => editUiGroupForIds([node.id], "Node group") },
-        { label: "重命名分组", onSelect: () => renameVisualGroup(node.id), disabled: !group },
-        { label: "解散分组", onSelect: () => dissolveVisualGroup(node.id), disabled: !group }
+        { label: t("common.delete", "删除节点"), onSelect: () => deleteMainNodeById(node.id), disabled: isLayer, danger: true },
+        { label: t("common.copy", "复制节点"), onSelect: () => copyMainNodeById(node.id), disabled: isLayer },
+        { label: t("common.tags", "添加 / 编辑标签"), onSelect: () => editUiTagsForIds([node.id], t("common.tags", "Tags")) },
+        { label: t("common.group", "创建分组"), onSelect: () => editUiGroupForIds([node.id], t("common.group", "Group")) },
+        { label: t("common.rename", "重命名分组"), onSelect: () => renameVisualGroup(node.id), disabled: !group },
+        { label: t("common.delete", "解散分组"), onSelect: () => dissolveVisualGroup(node.id), disabled: !group }
       ]);
       if (menu) {
         setMainContextMenu(menu);
@@ -2599,7 +2603,7 @@ export function CanvasShell() {
     (event: ContextMenuEvent, _edge: Edge) => {
       const menu = makeContextMenu(event, [
         {
-          label: "删除连线",
+          label: t("common.deleteEdge", "Delete edge"),
           onSelect: () => appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph editing is disabled."), "warn"),
           danger: true
         }
@@ -2837,7 +2841,7 @@ export function CanvasShell() {
               disabled={templateIsLoading}
               onClick={() => handleTemplateClick(selectedTemplateType)}
             >
-              {templateIsLoading ? t("toolbar.loading", "加载中") : t("toolbar.load")}
+              {templateIsLoading ? t("common.loading", "加载中") : t("toolbar.load")}
             </button>
           </div>
         </div>
@@ -3284,7 +3288,7 @@ function ModuleFocusPanel({
                   className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()}`}
                   style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
                 >
-                  <span className="submodule-name">{moduleCatalogName(mod)}</span>
+                  <span className="submodule-name">{moduleCatalogName(mod, t)}</span>
                   <span className="submodule-badge-row">
                     <span className="submodule-group">{mod.layer_id}</span>
                     <span className={`ai-slot-badge ai-slot-${category === "avatar" ? "ar" : category === "llm" || category === "memory" || category === "tts" || category === "runtime" ? category : "none"}`}>
@@ -3542,7 +3546,7 @@ function LayerNavigator({
   return (
     <div className="layer-navigator">
       {layers.map((layer) => {
-        const label = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
+        const label = moduleCatalog ? translate(useCanvasStore.getState().language, `layer.${layer.layer_id}`, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
         const collapsed = collapsedLayerIds.has(layer.layer_id);
         return (
           <div key={layer.layer_id} className="layer-nav-section">
@@ -4429,7 +4433,7 @@ function ModuleCanvasPanel({
       if (!schemaNode) {
         return;
       }
-      const nextName = window.prompt("Rename node", translate(language, schemaNode.title_key, schemaNode.title_fallback));
+      const nextName = window.prompt(t("common.renameNode", "Rename node"), translate(language, schemaNode.title_key, schemaNode.title_fallback));
       if (!nextName?.trim()) {
         return;
       }
@@ -4443,7 +4447,7 @@ function ModuleCanvasPanel({
       const schemaNode = (moduleNodes.find((node) => node.id === nodeId)?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const currentTags = schemaNode?.data?.ui_tags;
       const currentText = Array.isArray(currentTags) ? currentTags.join(", ") : "";
-      const nextTags = window.prompt("Node tags", currentText);
+      const nextTags = window.prompt(t("common.nodeTags", "Node tags"), currentText);
       if (nextTags === null) {
         return;
       }
@@ -4465,7 +4469,7 @@ function ModuleCanvasPanel({
     (nodeId: string) => {
       const schemaNode = (moduleNodes.find((node) => node.id === nodeId)?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const currentGroup = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
-      const nextGroup = window.prompt("Node group", currentGroup);
+      const nextGroup = window.prompt(t("common.nodeGroup", "Node group"), currentGroup);
       if (nextGroup === null) {
         return;
       }
@@ -4478,7 +4482,7 @@ function ModuleCanvasPanel({
     (nodeId: string) => {
       const schemaNode = (moduleNodes.find((node) => node.id === nodeId)?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const currentGroup = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
-      const nextGroup = window.prompt("Rename group", currentGroup);
+      const nextGroup = window.prompt(t("common.renameGroup", "Rename group"), currentGroup);
       if (nextGroup === null) {
         return;
       }
@@ -4578,12 +4582,12 @@ function ModuleCanvasPanel({
       const group = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
       const menu = makeContextMenu(event, [
         { label: "重命名", onSelect: () => renameModuleCanvasNode(node.id) },
-        { label: "删除节点", onSelect: () => deleteModuleNodeById(node.id), danger: true },
-        { label: "复制节点", onSelect: () => copyModuleNodeById(node.id) },
-        { label: "添加 / 编辑标签", onSelect: () => editModuleNodeTags(node.id) },
-        { label: "创建分组", onSelect: () => editModuleNodeGroup(node.id) },
-        { label: "重命名分组", onSelect: () => renameModuleNodeGroup(node.id), disabled: !group },
-        { label: "解散分组", onSelect: () => dissolveModuleNodeGroup(node.id), disabled: !group }
+        { label: t("common.deleteNode", "Delete node"), onSelect: () => deleteModuleNodeById(node.id), danger: true },
+        { label: t("common.copyNode", "Copy node"), onSelect: () => copyModuleNodeById(node.id) },
+        { label: t("common.addEditTags", "Add / edit tags"), onSelect: () => editModuleNodeTags(node.id) },
+        { label: t("common.createGroup", "Create group"), onSelect: () => editModuleNodeGroup(node.id) },
+        { label: t("common.renameGroup", "Rename group"), onSelect: () => renameModuleNodeGroup(node.id), disabled: !group },
+        { label: t("common.dissolveGroup", "Dissolve group"), onSelect: () => dissolveModuleNodeGroup(node.id), disabled: !group }
       ]);
       if (menu) {
         setContextMenu(menu);
@@ -4602,7 +4606,7 @@ function ModuleCanvasPanel({
 
   const handleModuleEdgeContextMenu = useCallback(
     (event: ContextMenuEvent, edge: Edge) => {
-      const menu = makeContextMenu(event, [{ label: "删除连线", onSelect: () => deleteModuleEdgeById(edge.id), danger: true }]);
+      const menu = makeContextMenu(event, [{ label: t("common.deleteEdge", "Delete edge"), onSelect: () => deleteModuleEdgeById(edge.id), danger: true }]);
       if (menu) {
         setContextMenu(menu);
       }
@@ -4611,7 +4615,7 @@ function ModuleCanvasPanel({
   );
 
   const renameModule = useCallback(() => {
-    const nextName = window.prompt("Module name", title);
+    const nextName = window.prompt(t("common.renameModule", "Rename module"), title);
     if (nextName?.trim()) {
       onRenameModule(moduleNode.node_id, nextName.trim());
     }
@@ -4650,7 +4654,7 @@ function ModuleCanvasPanel({
   const editSelectedTags = useCallback(() => {
     const currentTags = selectedSchema?.data?.ui_tags;
     const currentText = Array.isArray(currentTags) ? currentTags.join(", ") : "";
-    const nextTags = window.prompt("Node tags", currentText);
+    const nextTags = window.prompt(t("common.nodeTags", "Node tags"), currentText);
     if (nextTags === null) {
       return;
     }
@@ -4665,7 +4669,7 @@ function ModuleCanvasPanel({
 
   const editSelectedGroup = useCallback(() => {
     const currentGroup = typeof selectedSchema?.data?.ui_group === "string" ? selectedSchema.data.ui_group : "";
-    const nextGroup = window.prompt("Node group", currentGroup);
+    const nextGroup = window.prompt(t("common.nodeGroup", "Node group"), currentGroup);
     if (nextGroup === null) {
       return;
     }

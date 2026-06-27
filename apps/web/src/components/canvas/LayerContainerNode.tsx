@@ -48,7 +48,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
           <div className="layer-node__eyebrow">{typeLabel}</div>
           <div className="layer-node__title">
             {viewIndex ? <span>L{viewIndex}</span> : null}
-            {label}
+            {translate(language, `layer.${schemaNode.layer_id}`, label)}
           </div>
         </div>
         <div className="layer-node__badges">

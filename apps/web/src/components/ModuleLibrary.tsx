@@ -102,7 +102,7 @@ export function ModuleLibrary({
     return (
       <section className="panel-section module-library is-rail">
         <div className="section-title">
-          <h2>{t("panel.moduleLibrary", "模块库").slice(0, 1)}</h2>
+          <h2>{t("panel.moduleLibrary")}</h2>
           <span>{totalCount}</span>
         </div>
       </section>
@@ -137,7 +137,7 @@ export function ModuleLibrary({
             <section key={layer.layer_id} className={`module-cat ${layerCollapsed ? "is-collapsed" : ""}`}>
               <button type="button" className="module-cat__header" onClick={() => toggleLayer(layer.layer_id)} aria-expanded={!layerCollapsed}>
                 <span className="module-cat__chevron">{layerCollapsed ? "▸" : "▾"}</span>
-                <strong>{layer.layer_name}</strong>
+                <strong>{t(`layer.${layer.layer_id}`, layer.layer_name)}</strong>
                 <span className="module-cat__count">{mods.length}</span>
               </button>
               {!layerCollapsed ? (
@@ -149,18 +149,18 @@ export function ModuleLibrary({
                       tabIndex={0}
                       draggable
                       className={`module-card cat-${mod.category} status-${String(mod.status).toLowerCase()}`}
-                      title={`${moduleName(mod)} · ${slotLabel(mod.slot_type, t)} · ${statusLabel(String(mod.status), t)}`}
+                      title={`${t(`module.${moduleId(mod)}`, moduleName(mod))} · ${slotLabel(mod.slot_type, t)} · ${statusLabel(String(mod.status), t)}`}
                       onDragStart={(event) => {
                         setModuleDragData(event, moduleId(mod));
                         onDragStartModule?.(moduleId(mod));
                       }}
                     >
                       <div className="module-card__top">
-                        <span className="module-card__name">{moduleName(mod)}</span>
+                        <span className="module-card__name">{t(`module.${moduleId(mod)}`, moduleName(mod))}</span>
                         <span className={`module-card__status is-${String(mod.status).toLowerCase()}`}>{statusLabel(String(mod.status), t)}</span>
                       </div>
                       <div className="module-card__meta">
-                        <span className="module-card__layer">{layer.layer_id}</span>
+                        <span className="module-card__layer">{t(`layer.${layer.layer_id}`, layer.layer_id)}</span>
                         <span className="module-card__slot">{slotLabel(mod.slot_type, t)}</span>
                       </div>
                     </div>
