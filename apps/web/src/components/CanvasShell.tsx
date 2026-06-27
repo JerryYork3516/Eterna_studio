@@ -148,25 +148,58 @@ function modulesForLayer(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogR
   return moduleCatalog.modules.filter((module) => module.layer_id === layer.layer_id);
 }
 
-function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
-  const modules = modulesForLayer(layer, moduleCatalog);
-  const categories = uniqueDisplayValues(modules.map((module) => displayText(module.category)));
-  const statuses = modules.map((module) => displayText(module.status));
-  const versions = modules.map((module) => displayText(module.module_version));
-  const hasHumanConfirm = modules.some((module) => Boolean(module.human_confirm_required));
-  const hasAuditRequired = modules.some((module) => Boolean(module.audit_required));
-  const hasRuntimeEnabled = modules.some((module) => Boolean(module.runtime_enabled));
-  const hasSlotBinding = modules.some((module) => Boolean(module.slot_type));
-  const hasLaterModule = modules.some((module) => ["LATER", "PLANNED"].includes(displayText(module.status)));
+function getLayerDisplayMeta(layer: CatalogLayerInput) {
+  const order = catalogLayerOrder(layer);
+  const groupLabel =
+    order <= 4
+      ? "GROUP A: IDENTITY & CONSTRAINTS"
+      : order <= 7
+        ? "GROUP B: COGNITION SYSTEM"
+        : order <= 10
+          ? "GROUP C: ACTION & EXECUTION"
+          : order <= 12
+            ? "GROUP D: SOCIAL & META"
+            : "GROUP E: OUTPUT";
+  const moduleTier = order === 5 || order === 9 ? "later" : order === 11 || order === 12 ? "plugin" : "core";
+  const lockLevel: WorkflowNode["lock_level"] =
+    order === 1 || order === 8 || order === 11
+      ? "editable"
+      : order >= 2 && order <= 4
+        ? "locked"
+        : order === 13
+          ? "mixed"
+          : "review_required";
+  const review =
+    lockLevel === "editable"
+      ? "Editable"
+      : lockLevel === "locked"
+        ? "Locked"
+        : lockLevel === "mixed"
+          ? "Mixed"
+          : "Review Required";
 
   return {
-    groupLabel: categories.length ? categories.join(" / ").toUpperCase() : displayText(layer.layer_id).toUpperCase(),
+    groupLabel,
+    module_tier: moduleTier,
+    lock_level: lockLevel,
+    review
+  };
+}
+
+function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
+  const modules = modulesForLayer(layer, moduleCatalog);
+  const statuses = modules.map((module) => displayText(module.status));
+  const versions = modules.map((module) => displayText(module.module_version));
+  const displayMeta = getLayerDisplayMeta(layer);
+
+  return {
+    groupLabel: displayMeta.groupLabel,
     status: mixedOrSingle(statuses, "empty"),
     version: mixedOrSingle(versions, displayText(moduleCatalog.protocol_version)),
     children_count: modules.length,
-    review: hasHumanConfirm ? "Human Confirm Required" : hasAuditRequired ? "Audit Required" : "No Review Required",
-    module_tier: hasLaterModule ? "later" : hasSlotBinding ? "plugin" : "core",
-    lock_level: hasHumanConfirm || hasAuditRequired ? "review_required" : hasRuntimeEnabled ? "locked" : "editable"
+    review: displayMeta.review,
+    module_tier: displayMeta.module_tier,
+    lock_level: displayMeta.lock_level
   } satisfies {
     groupLabel: string;
     status: string;

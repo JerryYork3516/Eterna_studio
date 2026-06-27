@@ -1,7 +1,6 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { CSSProperties } from "react";
 import { translate } from "@/i18n";
-import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import type { WorkflowNode } from "@/lib/schema-types";
 import { getNodeDefinition } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -31,7 +30,6 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
   const typeLabel = getNodeDefinition(schemaNode.type)?.display_name ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const moduleTier = typeof schemaNode.data?.module_tier === "string" ? schemaNode.data.module_tier : null;
-  const aiSlot = inferAiSlot(schemaNode);
   const reviewStatus =
     schemaNode.validation?.status ??
     (schemaNode.data?.validation && typeof schemaNode.data.validation === "object"
@@ -40,7 +38,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`layer-node lock-${schemaNode.lock_level} ${moduleTier ? `tier-${moduleTier}` : ""} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
+      className={`layer-node lock-${schemaNode.lock_level} ${moduleTier ? `tier-${moduleTier}` : ""} ${selected ? "is-selected" : ""}`}
       style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}
     >
       <Handle type="target" position={Position.Top} id="p_in" className="flow-handle layer-flow-handle-top" />
@@ -54,7 +52,6 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
           </div>
         </div>
         <div className="layer-node__badges">
-          <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
           {moduleTier ? <span className="tier-pill">{moduleTier}</span> : null}
           <span className="lock-pill">{lockLabel}</span>
         </div>

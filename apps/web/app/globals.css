@@ -981,6 +981,18 @@ pre {
   padding: 13px 15px;
 }
 
+.layer-node.tier-core {
+  --node-accent: color-mix(in srgb, var(--core) 78%, transparent);
+}
+
+.layer-node.tier-plugin {
+  --node-accent: color-mix(in srgb, var(--plugin) 78%, transparent);
+}
+
+.layer-node.tier-later {
+  --node-accent: color-mix(in srgb, var(--later) 78%, transparent);
+}
+
 .layer-node.is-selected,
 .workflow-node.is-selected {
   outline: 3px solid var(--node-accent, var(--accent));
