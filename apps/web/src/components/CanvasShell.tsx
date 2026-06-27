@@ -111,6 +111,10 @@ function readNodeDragType(event: ReactDragEvent): ModuleNodeType | null {
 }
 const TRUNK_LAYER_HEIGHT = 216;
 const FOLDER_GROUP_X = 80;
+// Main-canvas folder preview: width is sized to fit FOLDER_PREVIEW_MODULE_LIMIT cards
+// (each 180px + 10px gap) plus rail/section padding. Changing the limit must keep the
+// width in sync so the rail does not clip cards.
+const FOLDER_PREVIEW_MODULE_LIMIT = 6;
 const FOLDER_GROUP_WIDTH = 1180;
 const FOLDER_GROUP_HEIGHT = 216;
 const FOLDER_TO_TRUNK_GAP = 120;
@@ -476,6 +480,12 @@ function computeLayerStackFrames(layers: CatalogLayerInput[], moduleCounts: Map<
   return LayerStackLayoutEngine.computeFrames(layers, moduleCounts);
 }
 
+// Main-canvas layout must be stable regardless of how many modules are attached to a
+// layer. Passing this empty map makes every layer fall back to FOLDER_GROUP_HEIGHT, so
+// container x/y positions are fixed by canonical layer order alone. children_count is
+// shown via getLayerCatalogDisplayFields, independent of this layout.
+const LAYOUT_MODULE_COUNTS: Map<string, number> = new Map();
+
 function nodeLayerKey(node: WorkflowNode, layers: WorkflowNode[]) {
   const explicit =
     dataStringValue(node, "layer_id") ??
@@ -487,15 +497,6 @@ function nodeLayerKey(node: WorkflowNode, layers: WorkflowNode[]) {
   }
   const layerIndex = inferNodeLayerIndex(node, layers);
   return layerIndex === null ? null : `layer_${layerIndex}`;
-}
-
-function computeLayerModuleCounts(layers: CatalogLayerInput[], layerModules: Record<string, string[]>) {
-  return new Map(
-    layers.map((layer) => {
-      const layerId = layer.layer_id;
-      return [layerId, (layerModules[layerId] ?? []).length] as const;
-    })
-  );
 }
 
 function buildFolderFlowNode({
@@ -874,8 +875,8 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   } = data;
   const label = translate(language, `layer.${layer.layer_id}`, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "");
   const parameterCount = Object.keys(layer).length;
-  const visibleModules = modules.slice(0, 6);
-  const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, 6);
+  const visibleModules = modules.slice(0, FOLDER_PREVIEW_MODULE_LIMIT);
+  const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, FOLDER_PREVIEW_MODULE_LIMIT);
   const selectedModuleSet = new Set(selectedModuleKeys);
 
   return (
@@ -917,7 +918,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
             <p>{translate(language, "workspace.breadcrumb", "Workflow / Layer / Folder")}</p>
             <h3>
               L{layer.layer_order} {label}
-              <span className="module-count-badge">{visibleModules.length} {translate(language, "module.count", "个模块")}</span>
+              <span className="module-count-badge">{modules.length} {translate(language, "module.count", "个模块")}</span>
             </h3>
           </div>
         </div>
@@ -1033,7 +1034,7 @@ export function CanvasShell() {
   // uiState: shell navigation, drawers, panels, tabs, and visual editing state.
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
-  const [selectedTemplateType, setSelectedTemplateType] = useState("schema_v04");
+  const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
   const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(false);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
@@ -1599,7 +1600,14 @@ export function CanvasShell() {
   const handleRedo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
   }, [appendLog, t]);
-  const templateOptions = useMemo(() => ["schema_v04"], []);
+  // User-facing template list. `persona_builder` is the only one currently wired
+  // to a canvas (it reuses the v0.4 module-catalog source); the rest are legacy
+  // placeholders. `schema_v04` is the internal data source and is never exposed
+  // as a user template name.
+  const templateOptions = useMemo(
+    () => ["blank", "persona_builder", "agent", "knowledge_pipeline", "review_pipeline"],
+    []
+  );
 
   useEffect(() => {
     if (libraryDefaultsAppliedRef.current || !nodeLibraryCategories.length) {
@@ -1700,10 +1708,16 @@ export function CanvasShell() {
   const activeLayer = activeLayerId ? layerById.get(activeLayerId) ?? null : selectedLayer;
 
 	  useEffect(() => {
-	    if (workflow?.template_type) {
-	      setSelectedTemplateType(workflow.template_type);
+	    const internal = workflow?.template_type;
+	    if (!internal) {
+	      return;
 	    }
-  }, [workflow?.template_type]);
+	    // `schema_v04` is the internal canvas data source — surface it to users as
+	    // `persona_builder`. Never let the internal id (or any non-listed id) leak into
+	    // the user-facing selector, which would otherwise fall back to the first option.
+	    const mapped = internal === "schema_v04" ? "persona_builder" : internal;
+	    setSelectedTemplateType(templateOptions.includes(mapped) ? mapped : "persona_builder");
+  }, [workflow?.template_type, templateOptions]);
 
   useEffect(() => {
     let active = true;
@@ -1754,7 +1768,7 @@ export function CanvasShell() {
     if (!moduleCatalog) {
       return;
     }
-	    const frames = computeLayerStackFrames(catalogLayers, computeLayerModuleCounts(catalogLayers, layerModules));
+	    const frames = computeLayerStackFrames(catalogLayers, LAYOUT_MODULE_COUNTS);
 	    const warnings = checkCanvasStructureConsistency(catalogLayers, nodes, frames, moduleCatalog);
 	    const signature = warnings.join("|");
     if (!signature || signature === consistencyWarningSignatureRef.current) {
@@ -2032,22 +2046,43 @@ export function CanvasShell() {
   }, []);
 
   const buildModuleAddMenu = useCallback(
-    (layerNodeId: string, displayIndex: number): CanvasContextMenuItem[] => {
-      const catalogLayerId = displayIndex >= 1 && displayIndex <= 13 ? `layer_${displayIndex}` : "general";
-      const moduleChoices = [...(modulesByCatalogLayerId.get(catalogLayerId) ?? []), ...(modulesByCatalogLayerId.get("general") ?? [])];
-      const byCategory = new Map<string, ModuleCatalogEntryV04[]>();
-      for (const mod of moduleChoices) {
-        byCategory.set(mod.category, [...(byCategory.get(mod.category) ?? []), mod]);
+    (layerNodeId: string): CanvasContextMenuItem[] => {
+      // Same data source as the left ModuleLibrary (moduleCatalog.modules), filtered by
+      // this layer's real layer_id plus any general/cross-layer modules. Never derived
+      // from the node registry or a hardcoded list, and never keyed off layer_order.
+      const moduleChoices = [
+        ...(modulesByCatalogLayerId.get(layerNodeId) ?? []),
+        ...(modulesByCatalogLayerId.get("general") ?? [])
+      ];
+      if (!moduleChoices.length) {
+        return [{ label: t("module.empty", "暂无模块"), disabled: true }];
       }
-      return [...byCategory.entries()].map(([category, mods]) => ({
-        label: t(`module.category.${category}`, category),
-        children: mods.map((mod) => ({
-          label: `${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))} · ${mod.status}`,
-          onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
-        }))
-      }));
+      // Group by capability lifecycle status: READY / MOCK / PLANNED / LATER ...
+      const STATUS_ORDER = ["CORE", "READY", "MOCK", "PLANNED", "LATER", "DISABLED"];
+      const byStatus = new Map<string, ModuleCatalogEntryV04[]>();
+      for (const mod of moduleChoices) {
+        const status = String(mod.status);
+        byStatus.set(status, [...(byStatus.get(status) ?? []), mod]);
+      }
+      const statusRank = (status: string) => {
+        const index = STATUS_ORDER.indexOf(status);
+        return index === -1 ? STATUS_ORDER.length : index;
+      };
+      return [...byStatus.keys()]
+        .sort((a, b) => statusRank(a) - statusRank(b))
+        .map((status) => {
+          const mods = byStatus.get(status) ?? [];
+          return {
+            label: `${translate(language, `module.status.${status}`, status)} (${mods.length})`,
+            children: mods.map((mod) => ({
+              // Identical label to ModuleLibrary: t(`module.${module_id}`, module_name).
+              label: moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)),
+              onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
+            }))
+          };
+        });
     },
-    [addModuleToLayer, modulesByCatalogLayerId, t]
+    [addModuleToLayer, modulesByCatalogLayerId, language, t]
   );
 
   const openFolderContextMenu = useCallback(
@@ -2055,7 +2090,7 @@ export function CanvasShell() {
       const menu = makeContextMenu(event, [
         {
           label: t("module.add", "添加模块"),
-          children: buildModuleAddMenu(layer.layer_id, layer.layer_order)
+          children: buildModuleAddMenu(layer.layer_id)
         },
         { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(layer.layer_id) },
         { label: t("module.removeAll", "移除全部模块"), onSelect: () => removeAllModulesFromLayer(layer.layer_id), danger: true }
@@ -2108,7 +2143,12 @@ export function CanvasShell() {
       return [];
     }
     const catalogLayersForRender = moduleCatalog.layers.slice().sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b));
-    const stackFrames = computeLayerStackFrames(catalogLayersForRender, computeLayerModuleCounts(catalogLayersForRender, layerModules));
+    // Layout positions/heights are derived ONLY from the canonical layer order, never
+    // from how many modules are attached. The folder container is CSS-clamped to a
+    // fixed height with a fixed 6-card rail, so adding/removing modules must not move
+    // any LayerContainer / FolderGroup node. layerModules still drives card rendering
+    // below (attachedModuleIds), just not the frame geometry.
+    const stackFrames = computeLayerStackFrames(catalogLayersForRender, LAYOUT_MODULE_COUNTS);
     const folderNodes = catalogLayersForRender.map((layer) => {
       const layerId = layer.layer_id;
       const subnodes: WorkflowNode[] = [];
@@ -2268,12 +2308,13 @@ export function CanvasShell() {
       }
       clearRunOutput();
 
-      if (templateType === "schema_v04") {
+      if (templateType === "persona_builder") {
         setLoadingTemplateType(templateType);
         appendLog(`${t("status.templateLoading", "Loading template")}: ${t(`template.${templateType}`, templateType)}`);
         try {
-          // CLEAN V4: re-derive the canvas from the v0.4 module-catalog schema
-          // (no createPersonaBuilder / v0.3 workflow source).
+          // CLEAN V4: persona_builder reuses the v0.4 module-catalog schema as its
+          // canvas data source (the internal `schema_v04` source). No
+          // createPersonaBuilder / v0.3 workflow source.
           const catalog = await api.fetchModuleCatalog();
           setModuleCatalog(catalog);
           setCatalogRevision((revision) => revision + 1);
@@ -2554,11 +2595,10 @@ export function CanvasShell() {
 	      const label = uiNodeNames[node.id] ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
 	      const group = uiGroups[node.id] ?? "";
 	      const isLayer = schemaNode.type === "layer_container";
-	      const layerIndex = isLayer ? getLayerOrder(schemaNode) ?? 0 : 0;
       const menu = makeContextMenu(event, [
         ...(isLayer
           ? [
-              { label: t("module.add", "添加模块"), children: buildModuleAddMenu(node.id, layerIndex) },
+              { label: t("module.add", "添加模块"), children: buildModuleAddMenu(node.id) },
               { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(node.id) }
             ]
           : []),
@@ -3130,7 +3170,7 @@ export function CanvasShell() {
 	          ) : (
 	            <div className="empty-canvas">
 	              <h2>{t("panel.noWorkflow")}</h2>
-	              <button disabled={templateIsLoading} onClick={() => handleTemplateClick("schema_v04")}>
+	              <button disabled={templateIsLoading} onClick={() => handleTemplateClick("persona_builder")}>
 	                {templateIsLoading ? t("toolbar.loading", "加载中") : t("toolbar.load")}
 	              </button>
 	            </div>
@@ -3140,12 +3180,31 @@ export function CanvasShell() {
 
       {focusLayerId ? (
         <ModuleFocusPanel
-          layerLabel={moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === focusLayerId)?.layer_name ?? "" : ""}
+          layerLabel={moduleCatalog ? translate(language, `layer.${focusLayerId}`, moduleCatalog.layers.find((l) => l.layer_id === focusLayerId)?.layer_name ?? "") : ""}
           moduleIds={layerModules[focusLayerId] ?? []}
           moduleCatalogById={moduleCatalogById}
           moduleColors={Object.fromEntries((layerModules[focusLayerId] ?? []).map((id) => [id, moduleUiColors[`${focusLayerId}:${id}`] ?? ""]))}
+          selectedModuleIds={new Set((layerModules[focusLayerId] ?? []).filter((id) => selectedLayerModuleKeys.has(`${focusLayerId}:${id}`)))}
           t={t}
-          onRemove={(moduleId) => removeModuleFromLayer(focusLayerId, moduleId)}
+          onOpen={(moduleId) => {
+            // Opening the module canvas should reveal it: close the focus overlay,
+            // which otherwise sits on top of the module canvas.
+            openCatalogModuleCanvas(focusLayerId, moduleId);
+            setFocusLayerId(null);
+          }}
+          onSelect={(moduleId, multi) => selectLayerModule(focusLayerId, moduleId, multi)}
+          onContextMenu={(event, moduleId) => {
+            const layer = catalogLayers.find((l) => l.layer_id === focusLayerId);
+            if (layer) {
+              openDroppedModuleContextMenu(event, layer, moduleId);
+            }
+          }}
+          onContainerContextMenu={(event) => {
+            const layer = catalogLayers.find((l) => l.layer_id === focusLayerId);
+            if (layer) {
+              openFolderContextMenu(event, layer);
+            }
+          }}
           onClose={() => setFocusLayerId(null)}
         />
       ) : null}
@@ -3248,16 +3307,24 @@ function ModuleFocusPanel({
   moduleIds,
   moduleCatalogById,
   moduleColors,
+  selectedModuleIds,
   t,
-  onRemove,
+  onOpen,
+  onSelect,
+  onContextMenu,
+  onContainerContextMenu,
   onClose
 }: {
   layerLabel: string;
   moduleIds: string[];
   moduleCatalogById: Map<string, ModuleCatalogEntryV04>;
   moduleColors: Record<string, string>;
+  selectedModuleIds: Set<string>;
   t: (key: string, fallback?: string) => string;
-  onRemove: (moduleId: string) => void;
+  onOpen: (moduleId: string) => void;
+  onSelect: (moduleId: string, multi: boolean) => void;
+  onContextMenu: (event: ReactMouseEvent, moduleId: string) => void;
+  onContainerContextMenu: (event: ReactMouseEvent) => void;
   onClose: () => void;
 }) {
   const mods = moduleIds
@@ -3265,7 +3332,14 @@ function ModuleFocusPanel({
     .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
   return (
     <div className="module-focus-backdrop" onClick={onClose}>
-      <section className="module-focus" onClick={(event) => event.stopPropagation()}>
+      <section
+        className="module-focus"
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onContainerContextMenu(event);
+        }}
+      >
         <header className="module-focus__bar">
           <div>
             <p>{t("module.focusMode", "Focus Mode")}</p>
@@ -3276,6 +3350,9 @@ function ModuleFocusPanel({
         </header>
         <div className="module-focus__grid">
           {mods.length ? (
+            // Same card markup as the main-canvas folder rail so the focus view stays
+            // visually consistent: select (click), open (double-click), context menu
+            // (right-click). Remove lives in the context menu, not an inline button.
             mods.map((mod) => {
               const modId = moduleCatalogId(mod);
               const slot = moduleCatalogSlot(mod);
@@ -3283,10 +3360,26 @@ function ModuleFocusPanel({
               const category = String(mod.category || "general");
               const status = String(mod.status);
               return (
-                <div
+                <button
                   key={modId}
-                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()}`}
+                  type="button"
+                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleIds.has(modId) ? "is-selected" : ""}`}
                   style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelect(modId, event.ctrlKey || event.metaKey);
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpen(modId);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onContextMenu(event, modId);
+                  }}
+                  title={`${moduleCatalogName(mod, t)} · ${slotLabel} · ${t(`module.status.${status}`, status)}`}
                 >
                   <span className="submodule-name">{moduleCatalogName(mod, t)}</span>
                   <span className="submodule-badge-row">
@@ -3295,11 +3388,8 @@ function ModuleFocusPanel({
                       {slotLabel}
                     </span>
                     <span className="submodule-tier">{t(`module.status.${status}`, status)}</span>
-                    <button className="module-card__remove" onClick={() => onRemove(modId)}>
-                      {t("module.remove", "移除")}
-                    </button>
                   </span>
-                </div>
+                </button>
               );
             })
           ) : (
@@ -4024,8 +4114,8 @@ function CanvasContextMenu({ menu, onClose }: { menu: CanvasContextMenuState; on
         role="menu"
         onClick={(event) => event.stopPropagation()}
       >
-        {menu.items.map((item) => (
-          <CanvasContextMenuRow key={item.label} item={item} onClose={onClose} />
+        {menu.items.map((item, index) => (
+          <CanvasContextMenuRow key={`${index}-${item.label}`} item={item} onClose={onClose} />
         ))}
       </div>
     </div>
@@ -4047,8 +4137,8 @@ function CanvasContextMenuRow({ item, onClose }: { item: CanvasContextMenuItem; 
         </button>
         {open ? (
           <div className="canvas-context-menu__submenu" role="menu">
-            {item.children.map((child) => (
-              <CanvasContextMenuRow key={child.label} item={child} onClose={onClose} />
+            {item.children.map((child, index) => (
+              <CanvasContextMenuRow key={`${index}-${child.label}`} item={child} onClose={onClose} />
             ))}
           </div>
         ) : null}

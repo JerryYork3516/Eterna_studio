@@ -149,7 +149,7 @@ export function ModuleLibrary({
                       tabIndex={0}
                       draggable
                       className={`module-card cat-${mod.category} status-${String(mod.status).toLowerCase()}`}
-                      title={`${t(`module.${moduleId(mod)}`, moduleName(mod))} · ${slotLabel(mod.slot_type, t)} · ${statusLabel(String(mod.status), t)}`}
+                      title={`${t(`module.${moduleId(mod)}`, moduleName(mod))}${mod.slot_type ? ` · ${t("module.capability", "能力类型")}: ${slotLabel(mod.slot_type, t)}` : ""} · ${statusLabel(String(mod.status), t)}`}
                       onDragStart={(event) => {
                         setModuleDragData(event, moduleId(mod));
                         onDragStartModule?.(moduleId(mod));
@@ -161,7 +161,13 @@ export function ModuleLibrary({
                       </div>
                       <div className="module-card__meta">
                         <span className="module-card__layer">{t(`layer.${layer.layer_id}`, layer.layer_id)}</span>
-                        <span className="module-card__slot">{slotLabel(mod.slot_type, t)}</span>
+                        {mod.slot_type ? (
+                          // Capability tag (not a standalone "slot module"). slot_type is
+                          // kept intact for the Slot Protocol; this is display-only.
+                          <span className="module-card__slot" title={t("module.capability", "能力类型")}>
+                            {slotLabel(mod.slot_type, t)}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   ))}
