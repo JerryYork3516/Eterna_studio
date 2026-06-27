@@ -67,6 +67,18 @@ export type ResidentCompileResponseV03 = components["schemas"]["ResidentCompileR
 export type OutputSchemaField = components["schemas"]["OutputSchemaField"];
 export type NodeStatus = components["schemas"]["NodeStatus"];
 export type ProtocolStatus = "CORE" | "READY" | "MOCK" | "PLANNED" | "LATER" | "DISABLED";
+// Stage 6 Resident v1 mock runtime step response (POST /runtime/resident/step).
+export type ResidentStepResponse = {
+  schema_version?: string;
+  runtime_version?: string;
+  mock?: boolean;
+  resident_id: string;
+  status: string;
+  output_text?: string;
+  memory_snapshot?: Record<string, unknown>;
+  execution_trace?: unknown[];
+  turn_count?: number;
+};
 export type NodeRegistryEntry = {
   type: string;
   category: string;

@@ -4826,13 +4826,31 @@ function ModuleCanvasPanel({
     ]
   );
 
-  // CLEAN V4: the UI must not trigger any execution / resident compile. This is a
-  // disabled stub — execution happens only in backend v0.3 via the adapter.
-  const handleRunWorkflow = useCallback(() => {
+  // Stage 6: the UI only dispatches to the backend Execution Engine (the sole
+  // runtime entry). It never calls a provider / memory / tool directly.
+  const handleRunWorkflow = useCallback(async () => {
+    if (!workflow) {
+      setExecutionResult(null);
+      setExecutionError(t("error.noWorkflow", "No workflow loaded"));
+      setRunStatus("error");
+      return;
+    }
+    if (!runInputText.trim()) {
+      return;
+    }
+    setRunStatus("running");
+    setExecutionError(null);
     setExecutionResult(null);
-    setExecutionError(t("status.executionDisabled", "Execution is backend-only (v0.3 adapter). UI does not run workflows."));
-    setRunStatus("idle");
-  }, [t]);
+    try {
+      const response = await api.executeResidentStep(workflow, runInputText, moduleNode.node_id);
+      setExecutionResult(response);
+      setRunStatus("success");
+      onExecutionResult(response);
+    } catch (error) {
+      setExecutionError((error as Error).message);
+      setRunStatus("error");
+    }
+  }, [workflow, runInputText, moduleNode.node_id, onExecutionResult, t]);
   const runButtonLabel =
     runStatus === "running"
       ? t("run.running", "Running...")

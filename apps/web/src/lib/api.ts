@@ -4,6 +4,7 @@ import type {
   ModuleCatalogResponseV04,
   NodeRegistryEntry,
   ResidentCompileResponse,
+  ResidentStepResponse,
   RunResult,
   SlotCatalogResponseV04,
   TemplateDefinition,
@@ -147,6 +148,14 @@ export const api = {
     return request<ResidentCompileResponse>("/resident/compile", {
       method: "POST",
       body: JSON.stringify({ workflow })
+    });
+  },
+  // Stage 6: run one minimal mock resident step. The UI only dispatches here; the
+  // backend Execution Engine is the sole runtime entry (UI never calls providers).
+  executeResidentStep(workflow: Workflow, inputText: string, residentId?: string) {
+    return request<ResidentStepResponse>("/runtime/resident/step", {
+      method: "POST",
+      body: JSON.stringify({ workflow, input_text: inputText, resident_id: residentId })
     });
   }
 };
