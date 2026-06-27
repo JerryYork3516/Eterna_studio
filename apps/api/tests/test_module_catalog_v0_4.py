@@ -8,7 +8,9 @@ from app.models.v0_4 import CANONICAL_LAYERS, ProtocolStatus
 from app.registry.module_catalog import get_module_catalog, validate_module_catalog
 
 
-EXPECTED_TOTAL = 127
+# 127 fine-grained layer modules + 10 restored protocol baseline anchors
+# (4 CORE backbone modules + 6 future-capability modules).
+EXPECTED_TOTAL = 137
 
 
 def test_module_catalog_coverage_and_counts():
