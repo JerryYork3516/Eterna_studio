@@ -254,6 +254,34 @@ function buildSchemaWorkflow(moduleCatalog: ModuleCatalogResponseV04 | null): Wo
     metadata: {}
   } as unknown as Workflow;
 }
+
+function resetTemplateWorkspaceState(setters: {
+  setSaveStatus: (value: "saved" | "dirty" | "error") => void;
+  setActiveLayerId: (value: string | null) => void;
+  setExpandedLayerIds: (value: Set<string>) => void;
+  setActiveWorkspaceId: (value: string | null) => void;
+  setWorkspaceTabs: (value: string[]) => void;
+  setFloatingLayerIds: (value: string[]) => void;
+  setFloatingNodeIds: (value: string[]) => void;
+  setResidentPreviewOutput: (value: unknown) => void;
+  setDraggedNodeIds: (value: Set<string>) => void;
+  setModuleTabs: (value: string[]) => void;
+  setActiveModuleTabId: (value: string | null) => void;
+  setActiveDrawer: (value: DrawerId | null) => void;
+}) {
+  setters.setSaveStatus("saved");
+  setters.setActiveLayerId(null);
+  setters.setExpandedLayerIds(new Set());
+  setters.setActiveWorkspaceId(null);
+  setters.setWorkspaceTabs([]);
+  setters.setFloatingLayerIds([]);
+  setters.setFloatingNodeIds([]);
+  setters.setResidentPreviewOutput(null);
+  setters.setDraggedNodeIds(new Set());
+  setters.setModuleTabs([]);
+  setters.setActiveModuleTabId(null);
+  setters.setActiveDrawer("layers");
+}
 const MOCK_MODE = false;
 const MODULE_COLOR_SWATCHES = [
   "#7aa2f7",
@@ -1033,8 +1061,10 @@ export function CanvasShell() {
   // uiState: shell navigation, drawers, panels, tabs, and visual editing state.
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
-  const [selectedTemplateType, setSelectedTemplateType] = useState("schema_v04");
+  const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
+  const [templateOptions, setTemplateOptions] = useState<string[]>(["persona_builder"]);
+  const [templateDefinitions, setTemplateDefinitions] = useState<{ template_type: string; template_name?: string }[]>([]);
   const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(false);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [expandedLayerIds, setExpandedLayerIds] = useState<Set<string>>(() => new Set());
@@ -1599,7 +1629,35 @@ export function CanvasShell() {
   const handleRedo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
   }, [appendLog, t]);
-  const templateOptions = useMemo(() => ["schema_v04"], []);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .listTemplates()
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        const nextDefinitions = response.templates
+          .map((template) => ({
+            template_type: String((template as { template_type?: string }).template_type ?? ""),
+            template_name: (template as { template_name?: string }).template_name
+          }))
+          .filter((template) => template.template_type);
+        setTemplateDefinitions(nextDefinitions);
+        const nextOptions = nextDefinitions.map((template) => template.template_type);
+        setTemplateOptions(nextOptions.length ? nextOptions : ["persona_builder"]);
+        appendLog(t("status.templatesLoaded", "模板列表已加载"));
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [appendLog, t]);
 
   useEffect(() => {
     if (libraryDefaultsAppliedRef.current || !nodeLibraryCategories.length) {
@@ -1617,6 +1675,7 @@ export function CanvasShell() {
         .sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b)),
     [moduleCatalog]
   );
+  const templateLabelByType = useMemo(() => new Map(templateDefinitions.map((item) => [item.template_type, item.template_name ?? item.template_type])), [templateDefinitions]);
   const catalogLayerNodes = useMemo(
     () =>
       moduleCatalog ? catalogLayers.map((layer) => catalogLayerToWorkflowNode(layer, moduleCatalog)) : [],
@@ -2268,44 +2327,96 @@ export function CanvasShell() {
       }
       clearRunOutput();
 
-      if (templateType === "schema_v04") {
-        setLoadingTemplateType(templateType);
-        appendLog(`${t("status.templateLoading", "Loading template")}: ${t(`template.${templateType}`, templateType)}`);
-        try {
+      setLoadingTemplateType(templateType);
+      appendLog(`${t("status.templateLoading", "Loading template")}: ${t(`template.${templateType}`, templateType)}`);
+      try {
+        if (templateType === "schema_v04") {
           // CLEAN V4: re-derive the canvas from the v0.4 module-catalog schema
           // (no createPersonaBuilder / v0.3 workflow source).
           const catalog = await api.fetchModuleCatalog();
           setModuleCatalog(catalog);
           setCatalogRevision((revision) => revision + 1);
-          setSaveStatus("saved");
-          setActiveLayerId(null);
-          setExpandedLayerIds(new Set());
-          setActiveWorkspaceId(null);
-          setWorkspaceTabs([]);
-          setFloatingLayerIds([]);
-          setFloatingNodeIds([]);
-          setResidentPreviewOutput(null);
-          setDraggedNodeIds(new Set());
-          setModuleTabs([]);
-          setActiveModuleTabId(null);
-          setActiveDrawer("layers");
+          setSelectedTemplateType("persona_builder");
+          resetTemplateWorkspaceState({
+            setSaveStatus,
+            setActiveLayerId,
+            setExpandedLayerIds,
+            setActiveWorkspaceId,
+            setWorkspaceTabs,
+            setFloatingLayerIds,
+            setFloatingNodeIds,
+            setResidentPreviewOutput,
+            setDraggedNodeIds,
+            setModuleTabs,
+            setActiveModuleTabId,
+            setActiveDrawer,
+          });
           setApiReady(true);
           appendLog(t("status.personaLoaded"));
-        } catch (error) {
-          setApiReady(false);
-          setBottomTab("logs");
-          setActiveDrawer("logs");
-          appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
-        } finally {
-          setLoadingTemplateType(null);
+          return;
         }
-        return;
-      }
 
-      appendLog(
-        `${t("status.templateUnavailable", language === "zh" ? "暂未开放" : "Not available yet")}: ${t(`template.${templateType}`, templateType)}`,
-        "warn"
-      );
+        if (templateType === "blank" || templateType === "agent" || templateType === "knowledge_pipeline" || templateType === "review_pipeline") {
+          const catalog = await api.fetchModuleCatalog();
+          setModuleCatalog(catalog);
+          setCatalogRevision((revision) => revision + 1);
+          setSelectedTemplateType(templateType);
+          resetTemplateWorkspaceState({
+            setSaveStatus,
+            setActiveLayerId,
+            setExpandedLayerIds,
+            setActiveWorkspaceId,
+            setWorkspaceTabs,
+            setFloatingLayerIds,
+            setFloatingNodeIds,
+            setResidentPreviewOutput,
+            setDraggedNodeIds,
+            setModuleTabs,
+            setActiveModuleTabId,
+            setActiveDrawer,
+          });
+          setApiReady(true);
+          appendLog(t("status.blankLoaded"));
+          return;
+        }
+
+        if (templateType === "persona_builder") {
+          const { workflow: personaWorkflow } = await api.createPersonaBuilder(undefined, language);
+          setModuleCatalog(await api.fetchModuleCatalog());
+          setCatalogRevision((revision) => revision + 1);
+          setSelectedTemplateType(templateType);
+          resetTemplateWorkspaceState({
+            setSaveStatus,
+            setActiveLayerId,
+            setExpandedLayerIds,
+            setActiveWorkspaceId,
+            setWorkspaceTabs,
+            setFloatingLayerIds,
+            setFloatingNodeIds,
+            setResidentPreviewOutput,
+            setDraggedNodeIds,
+            setModuleTabs,
+            setActiveModuleTabId,
+            setActiveDrawer,
+          });
+          setApiReady(true);
+          appendLog(`${t("status.templateLoading", "Loading template")}: ${personaWorkflow.name}`);
+          appendLog(t("status.personaLoaded"));
+          return;
+        }
+
+        appendLog(
+          `${t("status.templateUnavailable", language === "zh" ? "暂未开放" : "Not available yet")}: ${t(`template.${templateType}`, templateType)}`,
+          "warn"
+        );
+      } catch (error) {
+        setApiReady(false);
+        setBottomTab("logs");
+        setActiveDrawer("logs");
+        appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
+      } finally {
+        setLoadingTemplateType(null);
+      }
     },
     [appendLog, clearRunOutput, language, loadingTemplateType, setApiReady, t]
   );
@@ -2831,7 +2942,7 @@ export function CanvasShell() {
             >
               {templateOptions.map((templateType) => (
                 <option key={templateType} value={templateType}>
-                  {t(`template.${templateType}`, templateType)}
+                  {templateLabelByType.get(templateType) ?? t(`template.${templateType}`, templateType)}
                 </option>
               ))}
             </select>
