@@ -106,6 +106,16 @@ def test_gate_blocks_critical_module_and_does_not_forward():
     assert resp["result"] == {}
 
 
+def test_placeholder_module_does_not_enter_execution_path():
+    wf4 = _demo_v0_4()
+    wf4["nodes"][0]["module_id"] = "basic_identity"
+    plan = client.post("/protocol/plan", json={"workflow": wf4, "action": "mock_run"}).json()
+    assert plan["blocked"] is True
+    resp = client.post("/protocol/execute", json={"workflow": wf4, "action": "mock_run"}).json()
+    assert resp["executed"] is False
+    assert resp["result"] == {}
+
+
 # --- v0.3 runtime / APIs untouched ----------------------------------------
 def test_v0_3_runtime_and_apis_intact():
     wf3 = _demo_v0_3()

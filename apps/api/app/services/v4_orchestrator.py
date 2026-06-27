@@ -85,6 +85,9 @@ def _gate(workflow: WorkflowV04) -> Tuple[List[PermissionDecisionV04], List[Audi
         module = catalog.get(node.module_id) if node.module_id else None
         if module is None:
             continue
+        if module.is_placeholder:
+            blocked = True
+            continue
         decision, entry = gate_action(module.risk_level, module_id=module.module_id)
         decisions.append(decision)
         if entry is not None:
