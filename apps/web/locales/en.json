@@ -380,6 +380,8 @@
   "node.header.status": "Status",
   "node.header.toggle": "Enabled",
   "node.header.color": "Color",
+  "node.output.text": "Run Output",
+  "node.output.empty": "No output yet",
   "node.sections.core": "Core Params",
   "node.sections.advanced": "Advanced Params",
   "node.sections.inputSchema": "Input Schema",

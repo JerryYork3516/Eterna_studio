@@ -4967,6 +4967,28 @@ function ModuleCanvasPanel({
     ]
   );
 
+  // Resolve the run input: prefer the module canvas's text_input node, then the
+  // top-right run input (fallback), then a default. The UI never executes the LLM
+  // itself — it only forwards the text to the backend Execution Engine.
+  const resolveModuleInputText = useCallback((): string => {
+    for (const node of moduleNodes) {
+      const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
+      if (schemaNode && String(schemaNode.type) === "text_input") {
+        const nodeData = (schemaNode.data ?? {}) as Record<string, unknown>;
+        const candidate = [nodeData.source_text, nodeData.text, nodeData.prompt].find(
+          (value) => typeof value === "string" && value.trim()
+        );
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+    }
+    if (runInputText.trim()) {
+      return runInputText.trim();
+    }
+    return "manual run";
+  }, [moduleNodes, runInputText]);
+
   // Stage 6: the UI only dispatches to the backend Execution Engine (the sole
   // runtime entry). It never calls a provider / memory / tool directly.
   const handleRunWorkflow = useCallback(async () => {
@@ -4976,22 +4998,49 @@ function ModuleCanvasPanel({
       setRunStatus("error");
       return;
     }
-    if (!runInputText.trim()) {
-      return;
-    }
+    const inputText = resolveModuleInputText();
     setRunStatus("running");
     setExecutionError(null);
     setExecutionResult(null);
     try {
-      const response = await api.executeResidentStep(workflow, runInputText, moduleNode.node_id);
+      const response = await api.executeResidentStep(workflow, inputText, moduleNode.node_id);
       setExecutionResult(response);
       setRunStatus("success");
       onExecutionResult(response);
+      // Write the runtime output_text back into the module canvas output node(s).
+      // setModuleNodes triggers the debounced module-graph persistence, so the
+      // result survives refresh.
+      const outputText = typeof response.output_text === "string" ? response.output_text : "";
+      const lastRunId = typeof response.run_id === "string" ? response.run_id : "";
+      const lastStatus = typeof response.status === "string" ? response.status : "";
+      setModuleNodes((current) =>
+        current.map((node) => {
+          const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
+          if (!schemaNode || String(schemaNode.type) !== "output") {
+            return node;
+          }
+          return {
+            ...node,
+            data: {
+              ...(node.data as Record<string, unknown>),
+              schemaNode: {
+                ...schemaNode,
+                data: {
+                  ...((schemaNode.data ?? {}) as Record<string, unknown>),
+                  output_text: outputText,
+                  last_run_id: lastRunId,
+                  last_status: lastStatus
+                }
+              }
+            }
+          };
+        })
+      );
     } catch (error) {
       setExecutionError((error as Error).message);
       setRunStatus("error");
     }
-  }, [workflow, runInputText, moduleNode.node_id, onExecutionResult, t]);
+  }, [workflow, resolveModuleInputText, moduleNode.node_id, onExecutionResult, setModuleNodes, t]);
   const runButtonLabel =
     runStatus === "running"
       ? t("run.running", "Running...")

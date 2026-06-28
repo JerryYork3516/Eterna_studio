@@ -476,6 +476,10 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const statusKey = normalizedStatus.toLowerCase();
   const stateLabel = translate(language, `node.status.${normalizedStatus}`, normalizedStatus);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
+  // Runtime output written back by a module-canvas run (output node only).
+  const isOutputNode = String(effectiveType) === "output";
+  const outputText = isOutputNode && typeof nodeData.output_text === "string" ? nodeData.output_text : "";
+  const lastStatus = typeof nodeData.last_status === "string" ? nodeData.last_status : "";
   const schemaNodeInputSchema = (schemaNode as unknown as { input_schema?: NodeInputField[] }).input_schema;
   const inputSchema: NodeInputField[] = schemaNodeInputSchema ?? nodeDefinition?.input_schema ?? [];
   const outputSchema = (schemaNode as unknown as { output_schema?: unknown[] }).output_schema ?? [];
@@ -557,6 +561,20 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           </label>
         ) : null}
       </header>
+
+      {isOutputNode ? (
+        <div className="workflow-node__output nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
+          <div className="workflow-node__output-head">
+            <span className="workflow-node__output-label">{translate(language, "node.output.text", "Output")}</span>
+            {lastStatus ? <span className="workflow-node__output-status">{lastStatus}</span> : null}
+          </div>
+          {outputText ? (
+            <p className="workflow-node__output-text">{outputText}</p>
+          ) : (
+            <p className="workflow-node__output-empty">{translate(language, "node.output.empty", "No output yet")}</p>
+          )}
+        </div>
+      ) : null}
 
       <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core}>
         <summary>{sectionTitle(language, "node.sections.core", "Core Params")}</summary>

@@ -403,6 +403,8 @@
   "node.header.status": "状态",
   "node.header.toggle": "启用",
   "node.header.color": "颜色",
+  "node.output.text": "运行输出",
+  "node.output.empty": "暂无输出",
   "node.sections.core": "核心参数",
   "node.sections.advanced": "高级参数",
   "node.sections.inputSchema": "输入 Schema",
