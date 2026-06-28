@@ -10,8 +10,10 @@ from __future__ import annotations
 from ....models.v0_4 import SlotType
 from ....registry.engine_registry import engine_registry_map
 from ....registry.module_catalog import module_catalog_map
+from ....registry.provider_registry import resolve_provider_for_engine
 from ....registry.slot_catalog import slot_catalog_map
 from ..dr_v0_2_schema import DigitalResidentV02Gate, ResidentClass
+from .compile_audit_validator import provider_boundary_findings
 from .dr_validation_result import DRValidationResult, finding
 
 _ALLOWED_SKILL_SOURCES = {"official", "verified"}
@@ -48,6 +50,10 @@ def validate_capabilities(model: DigitalResidentV02Gate, result: DRValidationRes
                     result.add(
                         finding("FAIL", "DR_CAP_ENGINE_SLOT_UNSUPPORTED", f"engine {ref.engine_binding} does not support slot_type {ref.slot_type!r}", path)
                     )
+                if resolve_provider_for_engine(ref.engine_binding) is None:
+                    result.add(
+                        finding("FAIL", "DR_CAP_ENGINE_PROVIDER_UNRESOLVED", f"engine {ref.engine_binding} has no registered mock provider", path)
+                    )
 
     declared_tool_ids = set()
     for i, tool in enumerate(cap.tools):
@@ -83,6 +89,8 @@ def validate_capabilities(model: DigitalResidentV02Gate, result: DRValidationRes
             result.add(
                 finding("FAIL", "DR_CAP_SLOT_TYPE_INVALID", f"slot_type {ref.slot_type!r} is not a known SlotType", f"capabilities.slots[{i}].slot_type")
             )
+
+    result.add_all(provider_boundary_findings(model.model_dump(mode="json"), "dr", "DR_CAP_PROVIDER_CONFIG"))
 
 
 def validate_capability_profile(model: DigitalResidentV02Gate, result: DRValidationResult) -> None:

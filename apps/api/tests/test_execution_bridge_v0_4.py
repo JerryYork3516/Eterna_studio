@@ -90,7 +90,7 @@ def test_node_slot_engine_resolution():
     bound = next(b for b in plan["resolved_bindings"] if b["slot_id"] == "slot_llm")
     assert bound["resolved"] is True
     assert bound["engine_id"] == "llm_mock"
-    assert bound["engine_provider"] == "mock"
+    assert bound["engine_provider"] == "provider_llm_mock"
 
 
 # --- Permission/risk gate blocks high/critical ----------------------------

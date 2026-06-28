@@ -1,5 +1,5 @@
 /**
- * Stage 5 P2-E：Engine Registry 获取与 mock-only 展示
+ * Stage 6.5：Engine Registry 获取与 mock-only Provider Registry 展示
  * 
  * 前端从后端 /schema/engine-registry-v0.4 获取 Engine 列表，
  * 用于解析 Slot.engine_binding 并仅展示 mock 引擎信息。
@@ -11,12 +11,25 @@ import type { EngineRegistryEntryV04, EngineRegistryResponseV04 } from "@/lib/sc
 /**
  * 当前阶段允许的 Engine 类型
  */
-export const ALLOWED_ENGINE_TYPES = new Set(["llm"]);
+export const ALLOWED_ENGINE_TYPES = new Set(["llm", "memory", "tool", "tts", "avatar", "speech", "screen"]);
 
 /**
  * 当前阶段允许的 Provider 名称（仅 mock）
  */
-export const ALLOWED_PROVIDERS = new Set(["mock"]);
+export const ALLOWED_PROVIDERS = new Set([
+  "provider_llm_mock",
+  "provider_memory_mock",
+  "provider_tool_mock",
+  "provider_tts_mock",
+  "provider_avatar_mock",
+  "provider_speech_mock",
+  "provider_screen_mock",
+]);
+
+function readEngineProviders(engine: EngineRegistryEntryV04): string[] {
+  const providers = (engine as { providers?: unknown }).providers;
+  return Array.isArray(providers) ? providers.filter((provider): provider is string => typeof provider === "string") : [];
+}
 
 /**
  * 校验 Engine 类型是否有效
@@ -50,6 +63,16 @@ export function validateEngineEntry(engine: EngineRegistryEntryV04): { valid: bo
     errors.push(
       `engine_type 无效："${engine.engine_type}"，当前仅允许：${Array.from(ALLOWED_ENGINE_TYPES).join(", ")}`
     );
+  }
+
+  const providers = readEngineProviders(engine);
+  if (providers.length === 0) {
+    errors.push(`engine "${engine.engine_id}" 未绑定 mock provider registry id`);
+  }
+  for (const provider of providers) {
+    if (!isValidProvider(provider)) {
+      errors.push(`provider 无效："${provider}"，当前仅允许 mock provider registry id`);
+    }
   }
 
   // 禁止检查：真实 provider 名称
@@ -156,7 +179,7 @@ export function getEngineMockDisplay(
     engine_id: engine.engine_id,
     engine_type: engine.engine_type || "unknown",
     status: engine.status || "MOCK",
-    provider: "mock",
+    provider: readEngineProviders(engine)[0] || "mock",
     display_name: `${engine.engine_id} (mock)`,
   };
 }
@@ -221,6 +244,11 @@ export function checkForRealProviders(registry: EngineRegistryResponseV04): {
     for (const pattern of dangerousPatterns) {
       if (lowerCaseId.includes(pattern)) {
         issues.push(`Engine ID 包含真实 provider 模式："${engine.engine_id}" 包含 "${pattern}"`);
+      }
+    }
+    for (const provider of readEngineProviders(engine)) {
+      if (!ALLOWED_PROVIDERS.has(provider)) {
+        issues.push(`Engine provider 未注册为 mock provider id："${provider}"`);
       }
     }
   }

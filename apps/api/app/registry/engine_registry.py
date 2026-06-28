@@ -1,14 +1,14 @@
-"""Engine Registry for Protocol v0.4 — Stage 5 (LLM mock only).
+"""Engine Registry for Protocol v0.4 — Stage 6.5 mock provider registry.
 
 Binding chain (frozen for this stage):
 
     Node.slot_binding  -> which Slot a node invokes
-    Slot.engine_binding -> which Engine/Provider a slot binds
+    Slot.engine_binding -> which Engine a slot binds
     Engine             -> the real capability adapter layer
-    Provider           -> "mock" only this stage
+    Provider           -> Provider Registry mock entry
 
-Stage 5 hard limits: engine_type is restricted to "llm" and provider to "mock".
-No TTS/Image/Video engine, no OpenAI/Claude/Gemini call, no API key read.
+Stage 6.5 hard limit: every engine resolves only to a mock provider registry
+entry. No OpenAI/Claude/Gemini call, no URL, no API key read.
 """
 
 from __future__ import annotations
@@ -16,9 +16,10 @@ from __future__ import annotations
 from typing import Dict, List
 
 from ..models.v0_4 import EngineType, EngineV04, ProtocolStatus, SlotType
+from .provider_registry import PROVIDER_REGISTRY, provider_registry_map
 
-ALLOWED_ENGINE_TYPES = {EngineType.llm}
-ALLOWED_PROVIDERS = {"mock"}
+ALLOWED_ENGINE_TYPES = set(EngineType)
+ALLOWED_PROVIDERS = {provider.provider_id for provider in PROVIDER_REGISTRY}
 
 
 ENGINE_REGISTRY: List[EngineV04] = [
@@ -27,7 +28,55 @@ ENGINE_REGISTRY: List[EngineV04] = [
         engine_type=EngineType.llm,
         engine_name="LLM Mock Engine",
         supported_slot_types=[SlotType.llm],
-        providers=["mock"],
+        providers=["provider_llm_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="memory_mock",
+        engine_type=EngineType.memory,
+        engine_name="Memory Mock Engine",
+        supported_slot_types=[SlotType.memory],
+        providers=["provider_memory_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="tool_mock",
+        engine_type=EngineType.tool,
+        engine_name="Tool Mock Engine",
+        supported_slot_types=[SlotType.tool],
+        providers=["provider_tool_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="tts_mock",
+        engine_type=EngineType.tts,
+        engine_name="TTS Mock Engine",
+        supported_slot_types=[SlotType.tts],
+        providers=["provider_tts_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="avatar_mock",
+        engine_type=EngineType.avatar,
+        engine_name="Avatar Mock Engine",
+        supported_slot_types=[SlotType.avatar],
+        providers=["provider_avatar_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="speech_mock",
+        engine_type=EngineType.speech,
+        engine_name="Speech Mock Engine",
+        supported_slot_types=[SlotType.speech],
+        providers=["provider_speech_mock"],
+        status=ProtocolStatus.mock,
+    ),
+    EngineV04(
+        engine_id="screen_mock",
+        engine_type=EngineType.screen,
+        engine_name="Screen Mock Engine",
+        supported_slot_types=[SlotType.screen, SlotType.ar],
+        providers=["provider_screen_mock"],
         status=ProtocolStatus.mock,
     ),
 ]
@@ -37,6 +86,7 @@ def validate_engine_registry(engines: List[EngineV04]) -> List[str]:
     """Return a list of error strings; empty list means the registry is valid."""
     errors: List[str] = []
     seen: set[str] = set()
+    providers = provider_registry_map()
     for engine in engines:
         if not engine.engine_id:
             errors.append("engine_id is empty")
@@ -48,7 +98,13 @@ def validate_engine_registry(engines: List[EngineV04]) -> List[str]:
             errors.append(f"engine {engine.engine_id} uses disallowed engine_type: {engine.engine_type}")
         for provider in engine.providers:
             if provider not in ALLOWED_PROVIDERS:
-                errors.append(f"engine {engine.engine_id} uses disallowed provider: {provider}")
+                errors.append(f"engine {engine.engine_id} uses unknown provider registry id: {provider}")
+                continue
+            entry = providers.get(provider)
+            if entry is None or not entry.mock:
+                errors.append(f"engine {engine.engine_id} provider {provider} is not mock")
+            elif entry.engine_id != engine.engine_id:
+                errors.append(f"engine {engine.engine_id} provider {provider} belongs to {entry.engine_id}")
     return errors
 
 

@@ -212,6 +212,22 @@ def test_skill_policy_rules():
     assert "DR_SKILL_SOURCE_INVALID" in _codes(validate_dr_v0_2(dr3))
 
 
+def test_provider_boundary_rejects_real_provider_config():
+    dr = _example()
+    dr["memory_policy"]["provider"] = "openai"
+    codes = _codes(validate_dr_v0_2(dr))
+    assert "DR_CAP_PROVIDER_CONFIG" in codes
+    assert "DR_MAUDIT_PROVIDER_CONFIG" in codes
+    assert "DR_CAUDIT_PROVIDER_CONFIG" in codes
+
+
+def test_layer_audit_rejects_provider_config_in_pseudo_dag_meta():
+    dr = _example()
+    dr["skill_policy"]["allowed_skill_sources"] = ["openai"]
+    codes = _codes(validate_dr_v0_2(dr))
+    assert "DR_LAUDIT_PROVIDER_CONFIG" in codes
+
+
 # --- pseudo-DAG / orchestration ---------------------------------------------
 def test_pseudo_dag_serial_shape_and_nodes():
     r = validate_dr_v0_2(_example())

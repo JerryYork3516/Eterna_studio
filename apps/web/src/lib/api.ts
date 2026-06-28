@@ -178,6 +178,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ dr, input_text: inputText })
     });
+  },
+  // Stage 6 preview shortcut: load the already compiled payload without
+  // requiring an export/download/import round trip.
+  loadCompiledDigitalResident(dr: Record<string, unknown>, filename?: string) {
+    return request<DRLoadResult>("/runtime/resident/load-dr", {
+      method: "POST",
+      body: JSON.stringify({ dr, input_text: `Load compiled file: ${filename || "compiled.digital_resident"}` })
+    });
   }
 };
 

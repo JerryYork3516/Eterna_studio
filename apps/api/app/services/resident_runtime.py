@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from ..dr.v2.validator import validate_dr_v0_2
 
 from .memory_snapshotter import take_snapshot
-from .provider_adapters import route_provider
+from .provider_adapters import route_provider_for_engine
 from .runtime_state_manager import RuntimeStateManager, reset_history
 from .runtime_trace_collector import TraceCollector
 
@@ -47,7 +47,11 @@ class ResidentRuntimeState:
     memory_policy: Dict[str, Any] = field(default_factory=dict)
     runtime_status: str = "idle"
     provider_bindings: Dict[str, str] = field(
-        default_factory=lambda: {"llm": "mock", "memory": "mock", "tool": "mock"}
+        default_factory=lambda: {
+            "llm": "llm_mock:provider_llm_mock",
+            "memory": "memory_mock:provider_memory_mock",
+            "tool": "tool_mock:provider_tool_mock",
+        }
     )
 
 
@@ -79,7 +83,11 @@ def create_runtime_state_from_dr(dr: Dict[str, Any]) -> ResidentRuntimeState:
     state.memory_policy = dict(dr.get("memory_policy") or {})
     state.status = "idle"
     state.runtime_status = "idle"
-    state.provider_bindings = {"llm": "mock", "memory": "mock", "tool": "mock"}
+    state.provider_bindings = {
+        "llm": "llm_mock:provider_llm_mock",
+        "memory": "memory_mock:provider_memory_mock",
+        "tool": "tool_mock:provider_tool_mock",
+    }
     return state
 
 
@@ -250,10 +258,16 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
     )
 
     # 2. memory.read
-    read = route_provider("memory", {"op": "read", "resident_id": resident_id})
+    read = route_provider_for_engine("memory_mock", {"op": "read", "resident_id": resident_id})
     collector.record(
         "memory.read",
-        data={"count": read.get("count", 0)},
+        data={
+            "count": read.get("count", 0),
+            "provider_type": read.get("provider_type"),
+            "provider_id": read.get("provider_id"),
+            "engine_id": read.get("engine_id"),
+            "mock": True,
+        },
         input={"op": "read", "resident_id": resident_id},
         output={"count": read.get("count", 0), "entries": list(read.get("entries", []))},
     )
@@ -261,23 +275,37 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
     # 3. reasoning (mock LLM only)
     memory_context = f"{read.get('count', 0)} prior memories"
     prompt = f"{input_text}\n[context: {memory_context}]"
-    reasoning = route_provider("llm", {"prompt": prompt})
+    reasoning = route_provider_for_engine("llm_mock", {"prompt": prompt})
     reasoning_text = reasoning.get("text", "")
     state.last_reasoning = reasoning_text
     collector.record(
         "reasoning",
-        data={"provider": reasoning.get("provider"), "text": reasoning_text},
+        data={
+            "provider": reasoning.get("provider"),
+            "provider_type": reasoning.get("provider_type"),
+            "provider_id": reasoning.get("provider_id"),
+            "engine_id": reasoning.get("engine_id"),
+            "mock": True,
+            "text": reasoning_text,
+        },
         input={"prompt": prompt},
         output=reasoning,
     )
 
     # 4. action / tool routing (deterministic echo)
-    action = route_provider("tool", {"tool": "echo", "args": {"text": input_text}})
+    action = route_provider_for_engine("tool_mock", {"tool": "echo", "args": {"text": input_text}})
     state.last_action = action
     echo_result = action.get("result", "")
     collector.record(
         "action",
-        data={"tool": action.get("tool"), "result": echo_result},
+        data={
+            "tool": action.get("tool"),
+            "result": echo_result,
+            "provider_type": action.get("provider_type"),
+            "provider_id": action.get("provider_id"),
+            "engine_id": action.get("engine_id"),
+            "mock": True,
+        },
         input={"tool": "echo", "args": {"text": input_text}},
         output=action,
     )
@@ -289,10 +317,16 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
 
     # memory.write (record this turn's input/output)
     entry = {"turn": state.turn_count, "input": input_text, "output": output_text}
-    write = route_provider("memory", {"op": "write", "resident_id": resident_id, "entry": entry})
+    write = route_provider_for_engine("memory_mock", {"op": "write", "resident_id": resident_id, "entry": entry})
     collector.record(
         "memory.write",
-        data={"count": write.get("count", 0)},
+        data={
+            "count": write.get("count", 0),
+            "provider_type": write.get("provider_type"),
+            "provider_id": write.get("provider_id"),
+            "engine_id": write.get("engine_id"),
+            "mock": True,
+        },
         input={"op": "write", "resident_id": resident_id, "entry": entry},
         output={"count": write.get("count", 0)},
     )

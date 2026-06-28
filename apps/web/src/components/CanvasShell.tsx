@@ -20,6 +20,7 @@ import {
 import { translate, type Language } from "@/i18n";
 import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import { api } from "@/lib/api";
+import type { DRLoadResult } from "@/lib/api";
 import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, ResidentInstanceV03, Workflow, WorkflowNode } from "@/lib/schema-types";
 import { safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow } from "@/lib/workflow";
@@ -1296,13 +1297,14 @@ export function CanvasShell() {
     appendLog,
     clearRunOutput,
     applyRuntimeResult,
-    runtimeDebug,
     compileDR,
     exportDR,
     canExportDR,
-    drCompileResult,
     loadDRFile,
-    loadedDRResult
+    loadCompiledDRToPreview,
+    loadedDRResult,
+    previewLoadStatus,
+    previewLoadError
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
@@ -1620,6 +1622,10 @@ export function CanvasShell() {
   const handleLoadDRClick = useCallback(() => {
     drLoadInputRef.current?.click();
   }, []);
+
+  const handleLoadCompiledDRToPreview = useCallback(async () => {
+    await loadCompiledDRToPreview();
+  }, [loadCompiledDRToPreview]);
 
   const handleUndo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
@@ -2956,38 +2962,38 @@ export function CanvasShell() {
           </div>
         </div>
         <div className="toolbar-actions">
-	          <div className="run-bar" aria-label="Export validate mock run">
+	          <div className="run-bar" aria-label={t("toolbar.actionsLabel")}>
 	            <button onClick={handleSave}>{t("toolbar.save")}</button>
-	            <button onClick={handleValidate}>{t("toolbar.validate")}</button>
-	            <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
-	            {runtimeDebug ? (
-	              <span
-	                className={`runtime-debug-chip is-${runtimeDebug.status}`}
-	                title={`run_id=${runtimeDebug.runId} · resident=${runtimeDebug.residentId} · steps=${runtimeDebug.stepCount} · memory=${runtimeDebug.memoryCount}`}
-	              >
-	                ● {runtimeDebug.status} · turn {runtimeDebug.turnCount}
-	              </span>
-	            ) : null}
-	            <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
-	            <button className="compile-dr-button" onClick={handleCompileDR}>{t("toolbar.compileDR", "Compile DR")}</button>
-	            {drCompileResult ? (
-	              <span
-	                className={`dr-compile-chip is-${drCompileResult.valid ? "valid" : "invalid"}`}
-	                title={`errors=${drCompileResult.errors.length} · warnings=${drCompileResult.warnings.length} · orchestration=${drCompileResult.orchestration_compatibility}`}
-	              >
-	                ◆ DR v{drCompileResult.dr_version} {drCompileResult.valid ? "valid" : "invalid"} · {drCompileResult.errors.length}E/{drCompileResult.warnings.length}W
-	              </span>
-	            ) : null}
-	            <button className="export-dr-button" onClick={handleExportDR} disabled={!canExportDR} title={canExportDR ? undefined : t("toolbar.exportDRBlocked", "Compile a valid DR first")}>{t("toolbar.exportDR", "Export DR")}</button>
-	            <button className="load-dr-button" onClick={handleLoadDRClick}>{t("toolbar.loadDR", "Load DR")}</button>
-	            {loadedDRResult ? (
-	              <span
-	                className={`dr-compile-chip is-${loadedDRResult.loaded ? "valid" : "invalid"}`}
-	                title={`loaded=${loadedDRResult.loaded} · status=${loadedDRResult.status} · errors=${loadedDRResult.validation_result.errors.length}`}
-	              >
-	                DR load {loadedDRResult.loaded ? "loaded" : "rejected"} · {loadedDRResult.status}
-	              </span>
-	            ) : null}
+	            <details className="toolbar-menu">
+	              <summary>{t("toolbar.run")}</summary>
+	              <div className="toolbar-menu__items" aria-label={t("toolbar.runActionsLabel")}>
+	                <button onClick={handleValidate}>{t("toolbar.validate")}</button>
+	                <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
+	                <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
+	              </div>
+	            </details>
+	            <details className="toolbar-menu">
+	              <summary>{t("toolbar.file")}</summary>
+	              <div className="toolbar-menu__items" aria-label={t("toolbar.fileActionsLabel")}>
+	                <button className="compile-dr-button" onClick={handleCompileDR}>{t("toolbar.compileFile")}</button>
+	                <button
+	                  className="export-dr-button"
+	                  onClick={handleExportDR}
+	                  disabled={!canExportDR}
+	                  title={canExportDR ? undefined : t("toolbar.exportFileBlocked")}
+	                >
+	                  {t("toolbar.exportFile")}
+	                </button>
+	                <button className="load-dr-button" onClick={handleLoadDRClick}>{t("toolbar.loadFile")}</button>
+	              </div>
+	            </details>
+	            <details className="toolbar-menu">
+	              <summary>{t("toolbar.project")}</summary>
+	              <div className="toolbar-menu__items" aria-label={t("toolbar.projectActionsLabel")}>
+	                <button onClick={handleExportCanvasState}>{t("canvas.export")}</button>
+	                <button onClick={handleImportCanvasStateClick}>{t("canvas.import")}</button>
+	              </div>
+	            </details>
 	            <input
 	              ref={drLoadInputRef}
 	              type="file"
@@ -2995,8 +3001,6 @@ export function CanvasShell() {
 	              onChange={handleLoadDRFile}
 	              style={{ display: "none" }}
 	            />
-            <button onClick={handleExportCanvasState}>{t("canvas.export", "导出项目")}</button>
-            <button onClick={handleImportCanvasStateClick}>{t("canvas.import", "导入项目")}</button>
             <input
               ref={fileInputRef}
               type="file"
@@ -3381,7 +3385,15 @@ export function CanvasShell() {
           className="resident-preview-panel"
           onClose={() => setActiveDrawer(null)}
         >
-          <ResidentPreviewPanel resident={residentInstance} t={t} />
+          <ResidentPreviewPanel
+            resident={residentInstance}
+            t={t}
+            canLoadCompiledDR={canExportDR}
+            onLoadCompiledDR={handleLoadCompiledDRToPreview}
+            loadedDRResult={loadedDRResult}
+            previewLoadStatus={previewLoadStatus}
+            previewLoadError={previewLoadError}
+          />
         </FloatingSidePanel>
       ) : null}
 
@@ -5215,26 +5227,108 @@ function JsonPanel({ value, emptyText }: { value: unknown; emptyText: string }) 
   return <pre className="json-panel">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | null; t: (key: string, fallback?: string) => string }) {
+function ResidentPreviewPanel({
+  resident,
+  t,
+  canLoadCompiledDR,
+  onLoadCompiledDR,
+  loadedDRResult,
+  previewLoadStatus,
+  previewLoadError
+}: {
+  resident: ResidentInstance | null;
+  t: (key: string, fallback?: string) => string;
+  canLoadCompiledDR: boolean;
+  onLoadCompiledDR: () => Promise<void>;
+  loadedDRResult: DRLoadResult | null;
+  previewLoadStatus: "idle" | "loading" | "success" | "error";
+  previewLoadError: string | null;
+}) {
   const [activeTab, setActiveTab] = useState<ResidentPreviewTab>("dialogue");
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "resident"; text: string }[]>([]);
   const [voicePlaying, setVoicePlaying] = useState(false);
-
-  if (!resident) {
-    return (
-      <div className="resident-preview resident-preview--empty">
-        <strong>{t("preview.emptyTitle", "No resident preview yet")}</strong>
-        <p>{t("preview.emptyBody", "Run a module ending with compile_resident to preview dialogue, voice, and avatar state.")}</p>
+  const isPreviewLoading = previewLoadStatus === "loading";
+  const memoryCount =
+    loadedDRResult?.memory_snapshot?.count ??
+    loadedDRResult?.memory_snapshot?.entries?.length ??
+    0;
+  const validationErrors = loadedDRResult?.validation_result?.errors ?? [];
+  const runtimeState = (loadedDRResult?.runtime_state ?? {}) as Record<string, unknown>;
+  const runtimeIdentity = (runtimeState.identity ?? {}) as Record<string, unknown>;
+  const runtimeOutput = loadedDRResult?.output_text || "";
+  const primaryLanguage = (runtimeIdentity.primary_language as string | undefined) || t("preview.mockPrimaryLanguage", "mock");
+  const supportedLanguages = Array.isArray(runtimeIdentity.supported_languages)
+    ? runtimeIdentity.supported_languages.join(", ")
+    : t("preview.mockSupportedLanguages", "zh, en");
+  const voiceState = loadedDRResult?.loaded ? t("preview.voiceStateMock", "mock voice ready") : t("preview.voiceStateIdle", "not loaded");
+  const ttsState = loadedDRResult?.loaded ? t("preview.ttsMock", "TTS mock") : t("preview.ttsIdle", "TTS idle");
+  const latticeState = loadedDRResult?.loaded ? t("preview.latticeStateMock", "mock lattice active") : t("preview.latticeStateIdle", "not loaded");
+  const avatarState = loadedDRResult?.loaded ? t("preview.avatarStateMock", "mock avatar ready") : t("preview.avatarStateIdle", "avatar idle");
+  const emotion = loadedDRResult?.loaded ? t("preview.emotionCalm", "calm") : "-";
+  const energy = loadedDRResult?.loaded ? "0.72" : "-";
+  const particleDensity = loadedDRResult?.loaded ? "0.60" : "-";
+  const loadPreviewButton = (
+    <button
+      type="button"
+      className="resident-preview-load-button"
+      onClick={() => {
+        void onLoadCompiledDR();
+      }}
+      disabled={!canLoadCompiledDR || isPreviewLoading}
+      title={canLoadCompiledDR ? undefined : t("preview.loadCompiledBlocked")}
+    >
+      {isPreviewLoading ? t("preview.loading") : t("preview.loadCompiled")}
+    </button>
+  );
+  const loadStatusPanel = (
+      <div className={`resident-preview-load-status is-${previewLoadStatus}`}>
+        <strong>
+          {previewLoadStatus === "loading"
+            ? t("preview.loading")
+            : previewLoadStatus === "success" && loadedDRResult?.loaded
+              ? t("preview.loaded")
+              : previewLoadStatus === "error"
+                ? t("preview.loadFailed")
+                : t("preview.notLoaded")}
+        </strong>
+        {previewLoadStatus === "loading" ? <p>{t("preview.loadingHint", "Loading compiled file into preview…")}</p> : null}
+        {previewLoadStatus === "success" && loadedDRResult?.loaded ? (
+        <dl>
+          <dt>{t("preview.residentId")}</dt>
+          <dd>{loadedDRResult.resident_id}</dd>
+          <dt>{t("preview.drVersion")}</dt>
+          <dd>{loadedDRResult.dr_version ?? loadedDRResult.validation_result?.dr_version ?? "-"}</dd>
+          <dt>{t("preview.status")}</dt>
+          <dd>{loadedDRResult.status}</dd>
+          <dt>{t("preview.memoryCount")}</dt>
+          <dd>{memoryCount}</dd>
+          <dt>{t("preview.outputText")}</dt>
+          <dd>{loadedDRResult.output_text || "-"}</dd>
+        </dl>
+        ) : null}
+        {previewLoadStatus === "error" ? (
+          validationErrors.length ? (
+          <ul>
+            {validationErrors.map((error, index) => (
+              <li key={`${error.code}-${index}`}>
+                {error.code}: {error.message}
+              </li>
+            ))}
+          </ul>
+          ) : (
+            <p>{previewLoadError || t("preview.loadFailedFallback")}</p>
+          )
+        ) : null}
+        {previewLoadStatus === "idle" ? <p>{t("preview.notLoadedHint", "Compile or load a file to fill the preview.")}</p> : null}
       </div>
     );
-  }
 
-  const dialogue: NonNullable<ResidentInstance["dialogue"]> = resident.dialogue ?? { tone: "", formality: "", sample: "" };
-  const voice: NonNullable<ResidentInstance["voice_profile"]> = resident.voice_profile ?? { voice_id: "", pitch: "", speed: 1, timbre: "", mock: true };
-  const avatar: NonNullable<ResidentInstance["avatar"]> = resident.avatar ?? { preset: "", color: "#4f8cff", density: 0.6, motion: "", mock: true };
+  const dialogue: NonNullable<ResidentInstance["dialogue"]> = resident?.dialogue ?? { tone: "", formality: "", sample: "" };
+  const voice: NonNullable<ResidentInstance["voice_profile"]> = resident?.voice_profile ?? { voice_id: "", pitch: "", speed: 1, timbre: "", mock: true };
+  const avatar: NonNullable<ResidentInstance["avatar"]> = resident?.avatar ?? { preset: "", color: "#4f8cff", density: 0.6, motion: "", mock: true };
   const tone = dialogue.tone || t("preview.defaultTone", "calm");
-  const sample = dialogue.sample || t("preview.noDialogueSample", "No dialogue sample is available yet.");
+  const sample = runtimeOutput || dialogue.sample || t("preview.noDialogueSample", "No dialogue sample is available yet.");
   const avatarColor = avatar.color || "#4f8cff";
   const density = Math.max(0.1, Math.min(1, clampPreviewNumber(avatar.density, 0.6)));
   const speed = clampPreviewNumber(voice.speed, 1);
@@ -5254,6 +5348,8 @@ function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | nu
 
   return (
     <div className="resident-preview">
+      <div className="resident-preview-actions">{loadPreviewButton}</div>
+      {loadStatusPanel}
       <div className="resident-preview-tabs">
         {(["dialogue", "voice", "avatar"] as ResidentPreviewTab[]).map((tab) => (
           <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setActiveTab(tab)}>
@@ -5269,6 +5365,8 @@ function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | nu
             <strong>{tone}</strong>
             <span>{t("preview.formality", "Formality")}</span>
             <strong>{dialogue.formality || "-"}</strong>
+            <span>{t("preview.runtimeOutput", "Runtime output")}</span>
+            <strong>{runtimeOutput || "-"}</strong>
           </div>
           <div className="mock-chat">
             <div className="mock-chat-bubble mock-chat-bubble--resident">{sample}</div>
@@ -5314,6 +5412,14 @@ function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | nu
             <strong>{speed}</strong>
             <span>{t("preview.timbre", "Timbre")}</span>
             <strong>{voice.timbre || "-"}</strong>
+            <span>{t("preview.primaryLanguage", "Primary language")}</span>
+            <strong>{primaryLanguage}</strong>
+            <span>{t("preview.supportedLanguages", "Supported languages")}</span>
+            <strong>{supportedLanguages}</strong>
+            <span>{t("preview.voiceState", "Voice state")}</span>
+            <strong>{voiceState}</strong>
+            <span>{t("preview.ttsState", "TTS")}</span>
+            <strong>{ttsState}</strong>
           </div>
         </section>
       ) : null}
@@ -5335,6 +5441,16 @@ function ResidentPreviewPanel({ resident, t }: { resident: ResidentInstance | nu
             <strong>{avatar.motion || "-"}</strong>
             <span>{t("preview.density", "Density")}</span>
             <strong>{density}</strong>
+            <span>{t("preview.latticeState", "Lattice state")}</span>
+            <strong>{latticeState}</strong>
+            <span>{t("preview.avatarState", "Avatar state")}</span>
+            <strong>{avatarState}</strong>
+            <span>{t("preview.emotion", "Emotion")}</span>
+            <strong>{emotion}</strong>
+            <span>{t("preview.energy", "Energy")}</span>
+            <strong>{energy}</strong>
+            <span>{t("preview.particleDensity", "Particle density")}</span>
+            <strong>{particleDensity}</strong>
           </div>
         </section>
       ) : null}

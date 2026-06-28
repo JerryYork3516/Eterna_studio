@@ -73,6 +73,8 @@ class SlotType(str, Enum):
     tts = "tts"
     memory = "memory"
     avatar = "avatar"
+    speech = "speech"
+    screen = "screen"
     ar = "ar"
     tool = "tool"
 
@@ -237,7 +239,13 @@ class PersonaV04(V04BaseModel):
 
 # --- Engine Registry -------------------------------------------------------
 class EngineType(str, Enum):
-    llm = "llm"  # Stage 5: only the LLM engine is allowed.
+    llm = "llm"
+    memory = "memory"
+    tool = "tool"
+    tts = "tts"
+    avatar = "avatar"
+    speech = "speech"
+    screen = "screen"
 
 
 class EngineV04(V04BaseModel):
@@ -252,7 +260,7 @@ class EngineV04(V04BaseModel):
     engine_type: EngineType = EngineType.llm
     engine_name: str
     supported_slot_types: List[SlotType] = Field(default_factory=list)
-    providers: List[str] = Field(default_factory=lambda: ["mock"])
+    providers: List[str] = Field(default_factory=lambda: ["provider_llm_mock"])
     status: ProtocolStatus = ProtocolStatus.mock
 
 

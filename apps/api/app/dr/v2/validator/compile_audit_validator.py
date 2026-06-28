@@ -29,6 +29,69 @@ from .scheduling_policy_validator import scheduling_consistency_findings
 
 _TOOLS_LAYER = "layer_9"
 _SAFETY_LAYER = "layer_3"
+_PROVIDER_CONFIG_KEYS = {
+    "api_key",
+    "apikey",
+    "key",
+    "token",
+    "access_token",
+    "bearer",
+    "secret",
+    "url",
+    "base_url",
+    "endpoint",
+    "provider_id",
+    "provider_config",
+    "credentials",
+}
+_REAL_PROVIDER_NAMES = {
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "deepseek",
+    "qwen",
+    "elevenlabs",
+    "volcano",
+    "groq",
+    "together",
+}
+
+
+def provider_boundary_findings(value: Any, path: str, code: str) -> List[Dict[str, Any]]:
+    """Find forbidden provider runtime config in declarative DR data."""
+    findings: List[Dict[str, Any]] = []
+
+    def walk(node: Any, current_path: str) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                key_l = str(key).lower()
+                child_path = f"{current_path}.{key}" if current_path else str(key)
+                if key_l in _PROVIDER_CONFIG_KEYS:
+                    findings.append(
+                        finding("FAIL", code, f"provider runtime config field {key!r} is forbidden", child_path)
+                    )
+                if key_l == "provider":
+                    allowed_mock_memory = child_path.endswith("memory_policy.provider") and child == "mock"
+                    if child not in (None, "", "mock") and not allowed_mock_memory:
+                        findings.append(
+                            finding("FAIL", code, f"direct provider binding {child!r} is forbidden", child_path)
+                        )
+                walk(child, child_path)
+            return
+        if isinstance(node, list):
+            for index, child in enumerate(node):
+                walk(child, f"{current_path}[{index}]")
+            return
+        if isinstance(node, str):
+            lowered = node.lower().strip()
+            if lowered in _REAL_PROVIDER_NAMES or lowered.startswith("sk-") or lowered.startswith(("http://", "https://")):
+                findings.append(
+                    finding("FAIL", code, f"real provider/config value {node!r} is forbidden", current_path)
+                )
+
+    walk(value, path)
+    return findings
 
 
 def _resolved_tool_modules(model: DigitalResidentV02Gate):
@@ -65,6 +128,9 @@ def module_audit(model: DigitalResidentV02Gate, result: DRValidationResult) -> D
         if "no_external_io" in model.execution_policy.execution_constraints and module.risk_level.value != "none":
             findings.append(finding("WARNING", "DR_MAUDIT_CONSTRAINT_UNSUPPORTED", f"module {module.module_id} (risk={module.risk_level.value}) may violate 'no_external_io'", path))
 
+    findings.extend(
+        provider_boundary_findings(model.model_dump(mode="json"), "dr", "DR_MAUDIT_PROVIDER_CONFIG")
+    )
     result.add_all(findings)
     return {"checked": checked, "findings": findings, "ok": not any(f["status"] == "FAIL" for f in findings)}
 
@@ -105,6 +171,7 @@ def layer_audit(
         if e["from"] in unbound:
             findings.append(finding("FAIL", "DR_LAUDIT_ORDER_INFEASIBLE", f"step {e['to']} depends on unbindable prerequisite {e['from']}", "intent_model.intents"))
 
+    findings.extend(provider_boundary_findings(pseudo_dag, "pseudo_dag", "DR_LAUDIT_PROVIDER_CONFIG"))
     result.add_all(findings)
     present = sorted(lid for lid in referenced if lid in CANONICAL_LAYER_IDS)
     missing = sorted(CANONICAL_LAYER_IDS - referenced)
@@ -156,9 +223,15 @@ def compile_audit(
         eng = binding.get("engine_binding")
         if eng and eng not in engines:
             gate_c.append(finding("FAIL", "DR_CAUDIT_FEAS_NO_ENGINE", f"step {n['id']} binds unknown engine {eng!r}", "intent_model.intents"))
+        if eng and eng in engines:
+            from ....registry.provider_registry import resolve_provider_for_engine
+
+            if resolve_provider_for_engine(eng) is None:
+                gate_c.append(finding("FAIL", "DR_CAUDIT_FEAS_NO_PROVIDER", f"engine {eng!r} has no registered mock provider", "intent_model.intents"))
         tool_id = binding.get("tool_id")
         if tool_id and tool_id not in modules:
             gate_c.append(finding("FAIL", "DR_CAUDIT_FEAS_NO_TOOL", f"step {n['id']} binds unresolved tool {tool_id!r}", "intent_model.intents"))
+    gate_c.extend(provider_boundary_findings(model.model_dump(mode="json"), "dr", "DR_CAUDIT_PROVIDER_CONFIG"))
     # path break: a non-root node unreachable from any root.
     if nodes:
         incoming = {n["id"]: 0 for n in nodes}

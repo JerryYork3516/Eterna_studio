@@ -92,6 +92,8 @@ type CanvasState = {
   canExportDR: boolean;                           // true only when valid
   // Stage 6.4 Runtime Load DR: last /runtime/resident/load-dr response.
   loadedDRResult: DRLoadResult | null;
+  previewLoadStatus: "idle" | "loading" | "success" | "error";
+  previewLoadError: string | null;
 
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
@@ -134,6 +136,9 @@ type CanvasState = {
   exportDR: () => Promise<void>;
   // Stage 6.4 Runtime Load DR: read a .digital_resident file and run mock loop.
   loadDRFile: (file: File) => Promise<void>;
+  // Stage 6 preview flow: load the already compiled .digital_resident payload
+  // into the mock runtime without exporting/importing it first.
+  loadCompiledDRToPreview: () => Promise<void>;
 
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
@@ -180,6 +185,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   drCompileResult: null,
   canExportDR: false,
   loadedDRResult: null,
+  previewLoadStatus: "idle",
+  previewLoadError: null,
 
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
@@ -302,7 +309,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       compiledDR: null,
       drCompileResult: null,
       canExportDR: false,
-      loadedDRResult: null
+      loadedDRResult: null,
+      previewLoadStatus: "idle",
+      previewLoadError: null
     }),
 
   // Stage 6 Runtime Kernel hydration: map the response into the existing panels.
@@ -399,6 +408,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     } catch (error) {
       set({ loadedDRResult: null });
+      appendLog(`DR load failed: ${(error as Error).message}`, "error");
+    }
+  },
+
+  // Stage 6 preview shortcut: compiledDR -> /runtime/resident/load-dr. Export
+  // remains download-only; local Load File remains file-picker-only.
+  loadCompiledDRToPreview: async () => {
+    const appendLog = get().appendLog;
+    const { compiledDR, drCompileResult, canExportDR } = get();
+    if (!compiledDR || !drCompileResult || !canExportDR) {
+      set({
+        previewLoadStatus: "error",
+        previewLoadError: "Compile a valid file first.",
+        loadedDRResult: null
+      });
+      appendLog("Preview load blocked: compile a valid file first.", "warn");
+      return;
+    }
+    set({ loadedDRResult: null, previewLoadStatus: "loading", previewLoadError: null });
+    appendLog(`Load compiled file → /runtime/resident/load-dr (${drCompileResult.filename})`);
+    try {
+      const result: DRLoadResult = await api.loadCompiledDigitalResident(compiledDR, drCompileResult.filename);
+      set({ loadedDRResult: result, previewLoadStatus: result.loaded ? "success" : "error", previewLoadError: null });
+      if (result.loaded) {
+        appendLog(`DR loaded OK — resident=${result.resident_id}, dr_version=${result.dr_version ?? "unknown"}`);
+        get().applyRuntimeResult(result);
+      } else {
+        const validation = result.validation_result;
+        set({ previewLoadError: validation.errors.map((e) => `${e.code}: ${e.message}`).join("\n") || "Load failed." });
+        appendLog(
+          `DR load rejected — dr_version=${result.dr_version ?? validation.dr_version ?? "unknown"} · ${validation.errors.length} error(s)`,
+          "error"
+        );
+        validation.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
+        validation.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
+      }
+    } catch (error) {
+      set({ loadedDRResult: null, previewLoadStatus: "error", previewLoadError: (error as Error).message });
       appendLog(`DR load failed: ${(error as Error).message}`, "error");
     }
   },

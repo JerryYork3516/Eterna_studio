@@ -153,6 +153,7 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
     layers = collection["layers"]
     modules = collection["modules"]
     slots = collection["slots"]
+    from ..dr.v2.validator.compile_audit_validator import provider_boundary_findings
 
     # 1. 13 layers completeness ------------------------------------------------
     present_ids = {layer["layer_id"] for layer in layers if layer.get("present")}
@@ -261,6 +262,11 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
                     f"slots[{index}].engine_binding",
                 )
             )
+
+    for section in ("nodes", "modules", "slots"):
+        findings.extend(
+            provider_boundary_findings(collection.get(section, []), section, "DR_PROVIDER_CONFIG")
+        )
 
     return findings
 

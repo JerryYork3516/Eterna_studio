@@ -51,7 +51,7 @@ SLOT_FIELDS = {
     "execution_mode", "fallback_policy", "status", "engine_binding",
     "enabled", "protocol_version",
 }
-ALLOWED_SLOT_TYPES = {"llm", "tts", "memory", "avatar", "ar", "tool"}
+ALLOWED_SLOT_TYPES = {"llm", "tts", "memory", "avatar", "speech", "screen", "ar", "tool"}
 ALLOWED_STATUS = {"CORE", "READY", "MOCK", "PLANNED", "LATER", "DISABLED"}
 ALLOWED_ON_ERROR = {"mock", "next_provider", "fail"}
 

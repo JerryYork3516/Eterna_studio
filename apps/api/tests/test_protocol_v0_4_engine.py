@@ -19,6 +19,7 @@ from app.registry.engine_registry import (
     validate_protocol_chain,
 )
 from app.registry.module_catalog import get_module_catalog
+from app.registry.provider_registry import resolve_provider_for_engine
 from app.registry.slot_catalog import get_slot_catalog
 from app.services.llm_mock_engine import mock_call, run_mock_llm
 from app.services.permissions_v0_4 import (
@@ -45,16 +46,19 @@ EXPECTED_MOCK_RESULT = {
     "engine": "llm_mock",
     "provider": "mock",
 }
+EXPECTED_ENGINE_TYPES = {"llm", "memory", "tool", "tts", "avatar", "speech", "screen"}
 
 
 # --- I. Engine Registry ----------------------------------------------------
 def test_engine_registry_fields_and_limits():
     engines = get_engine_registry()
     assert engines, "engine registry must not be empty"
+    assert {e.engine_type.value for e in engines} == EXPECTED_ENGINE_TYPES
     for e in engines:
         assert ENGINE_FIELDS <= set(e.model_dump().keys())
-        assert e.engine_type.value == "llm"            # only llm engine_type
-        assert e.providers == ["mock"]                  # only mock provider
+        assert e.engine_type.value in EXPECTED_ENGINE_TYPES
+        assert all(provider.startswith("provider_") for provider in e.providers)
+        assert resolve_provider_for_engine(e.engine_id)["mock"] is True
         assert e.protocol_version == "0.4.0"
     assert validate_engine_registry(engines) == []
 
@@ -62,7 +66,8 @@ def test_engine_registry_fields_and_limits():
 def test_engine_registry_api():
     body = client.get("/schema/engine-registry-v0.4").json()
     assert body["protocol_version"] == "0.4.0"
-    assert all(e["engine_type"] == "llm" and e["providers"] == ["mock"] for e in body["engines"])
+    assert {e["engine_type"] for e in body["engines"]} == EXPECTED_ENGINE_TYPES
+    assert all(all(provider.startswith("provider_") for provider in e["providers"]) for e in body["engines"])
 
 
 def test_engine_slot_module_chain():
@@ -73,9 +78,10 @@ def test_engine_slot_module_chain():
     assert validate_protocol_chain(get_engine_registry(), slots, get_module_catalog()) == []
 
 
-def test_no_non_llm_engine_registered():
+def test_no_real_provider_engine_registered():
     for e in get_engine_registry():
-        assert e.engine_type.value not in {"tts", "image", "video"}
+        assert e.engine_type.value not in {"image", "video"}
+        assert resolve_provider_for_engine(e.engine_id)["mock"] is True
 
 
 # --- II. LLM Mock Engine ---------------------------------------------------

@@ -1,8 +1,8 @@
 """Built-in Slot catalog for Protocol v0.4.
 
 Slots are capability interfaces. They never call a real provider this stage:
-provider/engine_binding stay None, enabled=False, execution_mode=mock. First
-batch of slot_type is restricted to: llm / tts / memory / avatar / ar / tool.
+provider stays None, enabled=False, execution_mode=mock. engine_binding points
+to a mock Engine, which resolves to a mock Provider Registry entry.
 """
 
 from __future__ import annotations
@@ -31,14 +31,16 @@ def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = Non
 
 
 # One mock slot per allowed slot_type. slot_id values are unique.
-# slot_llm binds the LLM mock engine (engine_binding -> Engine -> mock provider).
+# Slots bind Engines only; no Slot binds a real provider directly.
 SLOT_CATALOG: List[SlotV04] = [
     _slot("slot_llm", SlotType.llm, engine_binding="llm_mock"),
-    _slot("slot_tts", SlotType.tts),
-    _slot("slot_memory", SlotType.memory),
-    _slot("slot_avatar", SlotType.avatar),
-    _slot("slot_ar", SlotType.ar),
-    _slot("slot_tool", SlotType.tool),
+    _slot("slot_tts", SlotType.tts, engine_binding="tts_mock"),
+    _slot("slot_memory", SlotType.memory, engine_binding="memory_mock"),
+    _slot("slot_avatar", SlotType.avatar, engine_binding="avatar_mock"),
+    _slot("slot_speech", SlotType.speech, engine_binding="speech_mock"),
+    _slot("slot_screen", SlotType.screen, engine_binding="screen_mock"),
+    _slot("slot_ar", SlotType.ar, engine_binding="screen_mock"),
+    _slot("slot_tool", SlotType.tool, engine_binding="tool_mock"),
 ]
 
 

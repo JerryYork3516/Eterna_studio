@@ -49,7 +49,11 @@ def test_service_loads_valid_dr_and_creates_runtime_state():
     assert body["runtime_state"]["identity"]["name"] == "Aria"
     assert body["runtime_state"]["capability_profile"]["resident_class"] == "industry_expertise"
     assert body["runtime_state"]["memory_policy"]["provider"] == "mock"
-    assert body["runtime_state"]["provider_bindings"] == {"llm": "mock", "memory": "mock", "tool": "mock"}
+    assert body["runtime_state"]["provider_bindings"] == {
+        "llm": "llm_mock:provider_llm_mock",
+        "memory": "memory_mock:provider_memory_mock",
+        "tool": "tool_mock:provider_tool_mock",
+    }
 
 
 def test_api_loads_valid_dr_and_returns_mock_response():
@@ -83,6 +87,12 @@ def test_load_dr_trace_has_all_six_loop_steps():
     body = client.post("/runtime/resident/load-dr", json={"dr": _dr_v0_2()}).json()
 
     assert _steps(body) == ["input", "memory.read", "reasoning", "action", "memory.write", "output"]
+    for step_name in ("memory.read", "reasoning", "action", "memory.write"):
+        step = next(entry for entry in body["execution_trace"] if entry["step"] == step_name)
+        assert step["mock"] is True
+        assert step["provider_type"]
+        assert step["provider_id"].startswith("provider_")
+        assert step["engine_id"].endswith("_mock")
 
 
 def test_load_dr_memory_snapshot_records_input_and_output():

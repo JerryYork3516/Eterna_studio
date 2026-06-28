@@ -83,7 +83,27 @@ def test_reasoning_uses_only_mock_provider():
     body = _step("no real model")
     reasoning = next(e for e in body["execution_trace"] if e["step"] == "reasoning")
     assert reasoning["provider"] == "mock"  # 7
+    assert reasoning["provider_type"] == "llm"
+    assert reasoning["provider_id"] == "provider_llm_mock"
+    assert reasoning["engine_id"] == "llm_mock"
+    assert reasoning["mock"] is True
     assert reasoning["text"] == run_mock_llm()["text"]
+
+
+def test_provider_trace_metadata_present_for_runtime_provider_steps():
+    body = _step("metadata")
+    expected = {
+        "memory.read": ("memory", "provider_memory_mock", "memory_mock"),
+        "reasoning": ("llm", "provider_llm_mock", "llm_mock"),
+        "action": ("tool", "provider_tool_mock", "tool_mock"),
+        "memory.write": ("memory", "provider_memory_mock", "memory_mock"),
+    }
+    for step_name, (provider_type, provider_id, engine_id) in expected.items():
+        step = next(e for e in body["execution_trace"] if e["step"] == step_name)
+        assert step["provider_type"] == provider_type
+        assert step["provider_id"] == provider_id
+        assert step["engine_id"] == engine_id
+        assert step["mock"] is True
 
 
 # --- Regressions: existing endpoints still work ------------------------------

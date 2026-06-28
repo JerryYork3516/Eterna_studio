@@ -1,26 +1,30 @@
-"""Provider Adapter Layer — Stage 6 unified mock provider surface.
+"""Provider Adapter Layer — Stage 6.5 mock provider registry surface.
 
 Execution boundary (do not violate):
   * Node / Module / Slot are protocol descriptors only — they never execute.
   * The Execution Engine (execution_engine.py) is the only runtime entry.
-  * Providers are mock-only. They are reached ONLY through the Execution Engine
-    (via resident_runtime). The UI never calls a provider directly.
+  * Providers are mock-only. Runtime resolves Engine -> Provider Registry ->
+    Adapter. The UI never calls a provider directly.
 
-This module exposes three deterministic mock providers (LLM / Memory / Tool)
-behind one interface, plus a router that dispatches by provider_type. No real
-model, no network, no API key, no database.
+No real model, no network, no API key, no database.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from ..registry.provider_registry import (
+    PROVIDER_REGISTRY,
+    get_provider_entry,
+    resolve_provider_entry_for_engine,
+)
 from .llm_mock_engine import run_mock_llm
 
 
 class ProviderAdapter:
     """Unified provider interface: execute(payload) -> dict."""
 
+    provider_id: str = ""
     provider_type: str = "base"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:  # pragma: no cover - abstract
@@ -31,6 +35,7 @@ class MockLLMProvider(ProviderAdapter):
     """LLM provider. Calls ONLY the deterministic llm_mock_engine — never a real
     model, never an API key."""
 
+    provider_id = "provider_llm_mock"
     provider_type = "llm"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,6 +53,7 @@ class InMemoryProvider(ProviderAdapter):
     Supports read / list / write. Isolated per resident_id. No persistence.
     """
 
+    provider_id = "provider_memory_mock"
     provider_type = "memory"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,6 +91,7 @@ class InMemoryProvider(ProviderAdapter):
 class MockToolProvider(ProviderAdapter):
     """Tool provider with deterministic tools only (echo, status). No network."""
 
+    provider_id = "provider_tool_mock"
     provider_type = "tool"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,23 +104,117 @@ class MockToolProvider(ProviderAdapter):
         return {"status": "error", "mock": True, "tool": tool, "error": f"unknown tool: {tool!r}"}
 
 
-_PROVIDERS: Dict[str, ProviderAdapter] = {
-    "llm": MockLLMProvider(),
-    "memory": InMemoryProvider(),
-    "tool": MockToolProvider(),
+class MockTTSProvider(ProviderAdapter):
+    """TTS placeholder. Deterministic mock only; no audio engine."""
+
+    provider_id = "provider_tts_mock"
+    provider_type = "tts"
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        text = payload.get("text", "") if isinstance(payload, dict) else ""
+        return {"status": "success", "mock": True, "audio_url": "", "text": text, "voice": "mock_voice"}
+
+
+class MockAvatarProvider(ProviderAdapter):
+    """Avatar placeholder. Deterministic mock only; no renderer."""
+
+    provider_id = "provider_avatar_mock"
+    provider_type = "avatar"
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        pose = payload.get("pose", "idle") if isinstance(payload, dict) else "idle"
+        return {"status": "success", "mock": True, "avatar_state": {"pose": pose, "style": "mock_particle"}}
+
+
+class MockSpeechProvider(ProviderAdapter):
+    """Speech placeholder. Deterministic mock only; no ASR or mic access."""
+
+    provider_id = "provider_speech_mock"
+    provider_type = "speech"
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success", "mock": True, "transcript": payload.get("transcript", "") if isinstance(payload, dict) else ""}
+
+
+class MockScreenProvider(ProviderAdapter):
+    """Screen placeholder. Deterministic mock only; no screen capture."""
+
+    provider_id = "provider_screen_mock"
+    provider_type = "screen"
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success", "mock": True, "screen_state": payload.get("state", "mock_screen") if isinstance(payload, dict) else "mock_screen"}
+
+
+_ADAPTERS_BY_PROVIDER_ID: Dict[str, ProviderAdapter] = {
+    "provider_llm_mock": MockLLMProvider(),
+    "provider_memory_mock": InMemoryProvider(),
+    "provider_tool_mock": MockToolProvider(),
+    "provider_tts_mock": MockTTSProvider(),
+    "provider_avatar_mock": MockAvatarProvider(),
+    "provider_speech_mock": MockSpeechProvider(),
+    "provider_screen_mock": MockScreenProvider(),
 }
 
 
+def _with_provider_metadata(
+    result: Dict[str, Any], *, provider_id: str, provider_type: str, engine_id: str
+) -> Dict[str, Any]:
+    enriched = dict(result)
+    enriched["mock"] = True
+    enriched["provider_id"] = provider_id
+    enriched["provider_type"] = provider_type
+    enriched["engine_id"] = engine_id
+    return enriched
+
+
+def route_provider_for_engine(engine_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve Engine -> Provider Registry -> Adapter and execute mock payload."""
+    provider = resolve_provider_entry_for_engine(engine_id)
+    if provider is None:
+        return {
+            "status": "error",
+            "mock": True,
+            "engine_id": engine_id,
+            "error": f"unknown engine_id: {engine_id!r}",
+        }
+    adapter = _ADAPTERS_BY_PROVIDER_ID.get(provider.provider_id)
+    if adapter is None:
+        return {
+            "status": "error",
+            "mock": True,
+            "engine_id": engine_id,
+            "provider_id": provider.provider_id,
+            "provider_type": provider.provider_type,
+            "error": f"no adapter for provider_id: {provider.provider_id!r}",
+        }
+    result = adapter.execute(payload or {})
+    return _with_provider_metadata(
+        result,
+        provider_id=provider.provider_id,
+        provider_type=provider.provider_type,
+        engine_id=engine_id,
+    )
+
+
 def route_provider(provider_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Dispatch to a mock provider by type: "llm" | "memory" | "tool".
+    """Compatibility wrapper: dispatch to the first mock provider by type.
 
     An unknown provider_type returns a structured error dict (never raises an
     unhandled exception).
     """
-    provider = _PROVIDERS.get(provider_type)
+    for provider in PROVIDER_REGISTRY:
+        if provider.provider_type == provider_type:
+            return route_provider_for_engine(provider.engine_id, payload)
+    return {"status": "error", "mock": True, "error": f"unknown provider_type: {provider_type!r}"}
+
+
+def route_provider_by_id(provider_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Self-test seam: resolve a provider id directly without exposing it to UI."""
+    provider = get_provider_entry(provider_id)
     if provider is None:
-        return {"status": "error", "mock": True, "error": f"unknown provider_type: {provider_type!r}"}
-    return provider.execute(payload)
+        return {"status": "error", "mock": True, "provider_id": provider_id, "error": f"unknown provider_id: {provider_id!r}"}
+    return route_provider_for_engine(provider.engine_id, payload)
 
 
 def reset_memory() -> None:
