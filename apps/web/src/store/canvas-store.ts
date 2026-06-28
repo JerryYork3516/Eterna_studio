@@ -3,6 +3,7 @@ import type { Language } from "@/i18n";
 import type {
   Artifact,
   ExportPreview,
+  ResidentStepResponse,
   RunLog,
   TemplateDefinition,
   ValidateResponse,
@@ -10,6 +11,8 @@ import type {
   WorkflowEdge,
   WorkflowNode
 } from "@/lib/schema-types";
+import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hydration";
+import { api } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
@@ -78,7 +81,11 @@ type CanvasState = {
   validation: ValidateResponse | null;
   exportPreview: ExportPreview | null;
   apiReady: boolean;
-  
+
+  // Stage 6 Runtime Kernel: last /runtime/resident/step result + its debug summary.
+  runtimeResult: ResidentStepResponse | null;
+  runtimeDebug: RuntimeDebugSummary | null;
+
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
   activeModuleTabId: string | null;
@@ -110,7 +117,12 @@ type CanvasState = {
   setApiReady: (ready: boolean) => void;
   appendLog: (message: string, level?: LogLevel) => void;
   clearRunOutput: () => void;
-  
+  // Stage 6 Runtime Kernel: hydrate one resident-step response into the panels.
+  applyRuntimeResult: (response: ResidentStepResponse) => void;
+  // Stage 6.2 DR Compiler: compile the given canvas and download the
+  // .digital_resident file. Export-only — never touches the runtime.
+  exportDR: (workflow: Workflow) => Promise<void>;
+
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
   setActiveModuleTabId: (id: string | null) => void;
@@ -150,7 +162,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   validation: null,
   exportPreview: null,
   apiReady: false,
-  
+  runtimeResult: null,
+  runtimeDebug: null,
+
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
   activeModuleTabId: null,
@@ -261,7 +275,49 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...state.logs
       ].slice(0, 80)
     })),
-  clearRunOutput: () => set({ logs: [], artifacts: [], exportPreview: null, validation: null }),
+  clearRunOutput: () =>
+    set({ logs: [], artifacts: [], exportPreview: null, validation: null, runtimeResult: null, runtimeDebug: null }),
+
+  // Stage 6 Runtime Kernel hydration: map the response into the existing panels.
+  // execution_trace -> logs, memory_snapshot -> artifacts, status/run_id -> debug.
+  applyRuntimeResult: (response) => {
+    const hydrated = hydrateRuntimeResult(response);
+    // appendLog prepends (newest-first); append in reverse so the run reads
+    // top-to-bottom as: header, trace #0..#n, output, memory.
+    const appendLog = get().appendLog;
+    [...hydrated.logLines].reverse().forEach((line) => appendLog(line.message, line.level));
+    set({
+      artifacts: hydrated.memoryArtifacts,
+      runtimeResult: response,
+      runtimeDebug: hydrated.debug
+    });
+  },
+
+  // Stage 6.2 DR Compiler export: POST the canvas to /dr/compile and trigger a
+  // browser download of the returned .digital_resident file. No runtime calls.
+  exportDR: async (workflow) => {
+    const appendLog = get().appendLog;
+    appendLog("DR compile → /dr/compile");
+    try {
+      const { blob, filename, auditValid } = await api.compileDR(workflow, workflow.name);
+      if (typeof window !== "undefined") {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+      appendLog(
+        `DR exported: ${filename} (audit valid=${auditValid})`,
+        auditValid ? "info" : "warn"
+      );
+    } catch (error) {
+      appendLog(`DR compile failed: ${(error as Error).message}`, "error");
+    }
+  },
   
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => {

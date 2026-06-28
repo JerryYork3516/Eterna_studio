@@ -4,7 +4,10 @@
       "Bash(python3 -c \"import fastapi, pydantic; print\\('fastapi', fastapi.__version__, 'pydantic', pydantic.__version__\\)\")",
       "Bash(echo \"EXIT $?\")",
       "mcp__Claude_Preview__preview_start",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/test_dr_v0_2_validation_gate.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)"
     ]
   }
 }

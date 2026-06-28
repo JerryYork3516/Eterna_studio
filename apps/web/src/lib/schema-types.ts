@@ -67,16 +67,49 @@ export type ResidentCompileResponseV03 = components["schemas"]["ResidentCompileR
 export type OutputSchemaField = components["schemas"]["OutputSchemaField"];
 export type NodeStatus = components["schemas"]["NodeStatus"];
 export type ProtocolStatus = "CORE" | "READY" | "MOCK" | "PLANNED" | "LATER" | "DISABLED";
+// Stage 6.1 Runtime Kernel trace step (one per loop phase, replayable by index).
+export type RuntimeTraceStep = {
+  index: number;
+  step: string;
+  phase?: string;
+  timestamp?: string;
+  input?: unknown;
+  output?: unknown;
+  [key: string]: unknown;
+};
+
+// Stage 6.1 memory snapshot emitted at the end of each run.
+export type RuntimeMemorySnapshot = {
+  resident_id?: string;
+  run_id?: string;
+  captured_at?: string;
+  entries?: Array<Record<string, unknown>>;
+  count?: number;
+  [key: string]: unknown;
+};
+
+export type RuntimeRunHistoryEntry = {
+  run_id: string;
+  resident_id?: string;
+  status?: string;
+  turn_count?: number;
+  started_at?: string;
+  ended_at?: string | null;
+};
+
 // Stage 6 Resident v1 mock runtime step response (POST /runtime/resident/step).
 export type ResidentStepResponse = {
   schema_version?: string;
   runtime_version?: string;
   mock?: boolean;
   resident_id: string;
+  run_id?: string;
   status: string;
   output_text?: string;
-  memory_snapshot?: Record<string, unknown>;
-  execution_trace?: unknown[];
+  memory_snapshot?: RuntimeMemorySnapshot;
+  execution_trace?: RuntimeTraceStep[];
+  trace?: RuntimeTraceStep[];
+  run_history?: RuntimeRunHistoryEntry[];
   turn_count?: number;
 };
 export type NodeRegistryEntry = {

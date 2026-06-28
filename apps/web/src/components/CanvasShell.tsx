@@ -1294,7 +1294,10 @@ export function CanvasShell() {
     setExportPreview,
     setApiReady,
     appendLog,
-    clearRunOutput
+    clearRunOutput,
+    applyRuntimeResult,
+    runtimeDebug,
+    exportDR
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
@@ -2278,11 +2281,45 @@ export function CanvasShell() {
     }
   }, [appendLog, requireWorkflow, setValidation, t]);
 
-  // CLEAN V4: execution is backend-only (v0.3 via adapter). The UI never triggers
-  // a run. This handler is a disabled stub kept only so existing buttons compile.
-  const handleMockRun = useCallback(() => {
-    appendLog(t("status.executionDisabled", "Execution is backend-only (v0.3 adapter). UI does not run workflows."), "warn");
-  }, [appendLog, t]);
+  // Stage 6 Runtime Kernel: the "运行 / Run" button dispatches one resident step
+  // to the backend Execution Engine (POST /runtime/resident/step) — the sole
+  // runtime entry. The v0.3 workflow adapter is no longer the execution path and
+  // its backend-only warning fallback is gone. The UI never executes a workflow
+  // or calls a provider directly; it only hydrates the response into the panels.
+  const RESIDENT_ID = "resident_v1";
+  const handleMockRun = useCallback(async () => {
+    const currentWorkflow = requireWorkflow();
+    if (!currentWorkflow) {
+      return;
+    }
+    // input: from the current node selection, else the canvas/workflow name.
+    const nodeLabel = selectedNode?.title_fallback || selectedNode?.node_id || "";
+    const inputText =
+      nodeLabel || currentWorkflow.name || currentWorkflow.template_type || "manual run";
+
+    appendLog(`${t("status.runtimeDispatch", "Runtime dispatch")} → /runtime/resident/step (input: ${inputText})`);
+    setBottomTab("logs");
+    setActiveDrawer("logs");
+    try {
+      const response = await api.executeResidentStep(currentWorkflow, inputText, RESIDENT_ID);
+      // Minimal hydration layer maps trace -> logs, memory -> artifacts, etc.
+      applyRuntimeResult(response);
+    } catch (error) {
+      appendLog(`${t("error.api")}: ${(error as Error).message}`, "error");
+    }
+  }, [appendLog, applyRuntimeResult, requireWorkflow, selectedNode, setActiveDrawer, setBottomTab, t]);
+
+  // Stage 6.2: the single "Export DR" action — compile the canvas to a
+  // .digital_resident file via the backend DR compiler and download it.
+  const handleExportDR = useCallback(async () => {
+    const currentWorkflow = requireWorkflow();
+    if (!currentWorkflow) {
+      return;
+    }
+    setBottomTab("logs");
+    setActiveDrawer("logs");
+    await exportDR(currentWorkflow);
+  }, [exportDR, requireWorkflow, setActiveDrawer, setBottomTab]);
 
   const handleExportPreview = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
@@ -2890,7 +2927,16 @@ export function CanvasShell() {
 	            <button onClick={handleSave}>{t("toolbar.save")}</button>
 	            <button onClick={handleValidate}>{t("toolbar.validate")}</button>
 	            <button onClick={handleMockRun}>{t("toolbar.mockRun")}</button>
+	            {runtimeDebug ? (
+	              <span
+	                className={`runtime-debug-chip is-${runtimeDebug.status}`}
+	                title={`run_id=${runtimeDebug.runId} · resident=${runtimeDebug.residentId} · steps=${runtimeDebug.stepCount} · memory=${runtimeDebug.memoryCount}`}
+	              >
+	                ● {runtimeDebug.status} · turn {runtimeDebug.turnCount}
+	              </span>
+	            ) : null}
 	            <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
+	            <button className="export-dr-button" onClick={handleExportDR}>{t("toolbar.exportDR", "Export DR")}</button>
             <button onClick={handleExportCanvasState}>{t("canvas.export", "导出项目")}</button>
             <button onClick={handleImportCanvasStateClick}>{t("canvas.import", "导入项目")}</button>
             <input

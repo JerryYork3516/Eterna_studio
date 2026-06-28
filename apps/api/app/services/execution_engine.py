@@ -39,6 +39,13 @@ def execute_resident_step(
 
     The only entry the API uses for the resident runtime loop. Returns a plain
     dict envelope.
+
+    Stage 6.1 observability: the resident loop now also produces a structured
+    ``execution_trace`` / ``trace`` (one step per phase, replayable in order), a
+    point-in-time ``memory_snapshot``, the run lifecycle (``run_id`` / ``status``
+    running -> completed / ``turn_count``) and ``run_history``. These are
+    additive fields spread through unchanged — the engine's public API and the
+    mock loop are untouched.
     """
     loop = resident_runtime.run_resident_loop(workflow, input_text, resident_id)
     return {
