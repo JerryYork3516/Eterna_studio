@@ -318,6 +318,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // compiled DR + audit result; sets canExportDR only when valid. No runtime calls.
   compileDR: async (workflow) => {
     const appendLog = get().appendLog;
+    // Clear any previously compiled DR first so a stale payload can never be
+    // exported after a recompile (or while the new compile is in flight).
+    set({ compiledDR: null, drCompileResult: null, canExportDR: false });
     appendLog("DR compile → /dr/compile (validate, no download)");
     try {
       const result: DRCompileResult = await api.compileDR(workflow, workflow.name);
@@ -328,10 +331,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
       if (result.valid) {
         appendLog(
-          `DR compiled OK — orchestration_compatible=${result.orchestration_compatibility}, ready to export ${result.filename}`
+          `DR compiled OK — dr_version=${result.dr_version}, orchestration_compatible=${result.orchestration_compatibility}, ready to export ${result.filename}`
         );
       } else {
-        appendLog(`DR compile FAILED — ${result.errors.length} error(s); export disabled`, "error");
+        appendLog(`DR compile FAILED (dr_version=${result.dr_version}) — ${result.errors.length} error(s); export disabled`, "error");
       }
       result.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
       result.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
@@ -362,7 +365,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       anchor.remove();
       URL.revokeObjectURL(url);
     }
-    appendLog(`DR exported: ${filename}`);
+    appendLog(`DR exported: ${filename} (dr_version=${drCompileResult.dr_version})`);
   },
   
   // P1-FIX：Module UI State actions

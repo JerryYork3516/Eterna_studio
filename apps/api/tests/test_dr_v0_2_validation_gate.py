@@ -325,6 +325,25 @@ def test_compile_endpoint_invokes_gate():
     assert body["orchestration_compatibility"] is True
     assert body["module_audit"]["ok"] and body["layer_audit"]["ok"] and body["compile_audit"]["ok"]
     assert any(rec["type"] == "meta" for rec in body["pseudo_dag"])
+    # The validated, downloadable payload is DR v0.2 (not the v0.1 wrapper).
+    assert body["dr_version"] == "0.2"
+    assert body["compiled_dr"]["dr_version"] == "0.2"
+
+
+def test_export_downloads_v0_2_payload():
+    import json as _json
+
+    nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
+    resp = client.post("/dr/export", json={"workflow": {"name": "Aria", "nodes": nodes13}})
+    assert resp.status_code == 200
+    dr = _json.loads(resp.text)
+    assert dr["dr_version"] == "0.2"
+    for seg in (
+        "identity", "intent_model", "scheduling_policy", "execution_policy",
+        "capabilities", "memory_policy", "risk_policy", "stability_constraints",
+        "capability_profile", "security_manifest", "skill_policy",
+    ):
+        assert seg in dr
 
 
 def test_compile_endpoint_invalid_reports_errors():

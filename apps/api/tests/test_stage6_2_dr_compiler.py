@@ -123,8 +123,36 @@ def test_compile_endpoint_returns_json_not_file():
     assert body["valid"] is True
     assert body["dr_version"] == "0.2"
     assert body["compiled_dr"] is not None  # downloadable only when valid
+    # The downloadable payload MUST be the v0.2 candidate, never the v0.1 wrapper.
+    assert body["compiled_dr"]["dr_version"] == "0.2"
+    assert body["dr_payload"]["dr_version"] == "0.2"
     assert body["filename"].endswith(FILE_SUFFIX)
     assert body["pseudo_dag"]
+
+
+V0_2_SEGMENTS = (
+    "identity",
+    "intent_model",
+    "scheduling_policy",
+    "execution_policy",
+    "capabilities",
+    "memory_policy",
+    "risk_policy",
+    "stability_constraints",
+    "capability_profile",
+    "security_manifest",
+    "skill_policy",
+)
+
+
+def test_compiled_dr_is_v0_2_eleven_segment_structure():
+    body = client.post("/dr/compile", json=_canvas_13()).json()
+    compiled = body["compiled_dr"]
+    for seg in V0_2_SEGMENTS:
+        assert seg in compiled  # 11-segment DR v0.2 structure
+    # And it must NOT be the old v0.1 wrapper shape.
+    assert "runtime_requirements" not in compiled
+    assert "layers" not in compiled
 
 
 def test_compile_invalid_canvas_blocks_export():
@@ -145,8 +173,22 @@ def test_export_endpoint_returns_file_when_valid():
     assert resp.headers["content-type"] == "application/x-digital-resident"
     assert resp.headers["content-disposition"].endswith(f'{FILE_SUFFIX}"')
     assert resp.headers["x-dr-filename"].endswith(FILE_SUFFIX)
+    assert resp.headers["x-dr-version"] == "0.2"
     body = json.loads(resp.text)
     assert body["file_type"] == FILE_TYPE
+    # Downloaded file MUST be the DR v0.2 candidate (eleven segments), not v0.1.
+    assert body["dr_version"] == "0.2"
+    for seg in V0_2_SEGMENTS:
+        assert seg in body
+    assert "runtime_requirements" not in body  # no v0.1 wrapper leakage
+
+
+def test_valid_export_never_emits_v0_1_payload():
+    """A valid compile must not export a v0.1 payload (regression guard)."""
+    body = client.post("/dr/compile", json=_canvas_13()).json()
+    assert body["valid"] is True
+    assert body["compiled_dr"]["dr_version"] != "0.1"
+    assert body["compiled_dr"]["dr_version"] == "0.2"
 
 
 def test_export_rejected_when_invalid():

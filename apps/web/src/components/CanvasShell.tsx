@@ -2953,7 +2953,7 @@ export function CanvasShell() {
 	                className={`dr-compile-chip is-${drCompileResult.valid ? "valid" : "invalid"}`}
 	                title={`errors=${drCompileResult.errors.length} · warnings=${drCompileResult.warnings.length} · orchestration=${drCompileResult.orchestration_compatibility}`}
 	              >
-	                ◆ DR {drCompileResult.valid ? "valid" : "invalid"} · {drCompileResult.errors.length}E/{drCompileResult.warnings.length}W
+	                ◆ DR v{drCompileResult.dr_version} {drCompileResult.valid ? "valid" : "invalid"} · {drCompileResult.errors.length}E/{drCompileResult.warnings.length}W
 	              </span>
 	            ) : null}
 	            <button className="export-dr-button" onClick={handleExportDR} disabled={!canExportDR} title={canExportDR ? undefined : t("toolbar.exportDRBlocked", "Compile a valid DR first")}>{t("toolbar.exportDR", "Export DR")}</button>

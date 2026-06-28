@@ -555,15 +555,17 @@ def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = Non
         "compile_audit": gate.get("compile_audit", {}),
         "orchestration_compatibility": gate.get("orchestration_compatibility", False),
         "pseudo_dag": gate.get("pseudo_dag", []),
-        # The downloadable file content — only when valid.
-        "compiled_dr": v01 if valid else None,
-        # The policy-layer candidate the Gate inspected (always returned).
+        # The downloadable file content — the DR v0.2 candidate that PASSED
+        # validate_dr_v0_2 (NOT the v0.1 wrapper). Only present when valid.
+        "compiled_dr": candidate if valid else None,
+        # The policy-layer candidate the Gate inspected (always returned, v0.2).
         "dr_payload": candidate,
         "filename": filename,
         "metadata": {
             "filename": filename,
-            "schema_version": v01.get("schema_version"),
-            "compile_info": v01.get("compile_info"),
+            "schema_version": candidate.get("schema_version"),
+            # v0.1 blueprint kept for reference / canvas-structure audit only.
+            "v01_compile_info": v01.get("compile_info"),
             "v01_audit": v01.get("audit"),
             "v01_valid": bool(_as_dict(v01.get("audit")).get("valid")),
             "gate_valid": bool(gate.get("valid")),
