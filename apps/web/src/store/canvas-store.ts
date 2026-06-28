@@ -12,7 +12,7 @@ import type {
   WorkflowNode
 } from "@/lib/schema-types";
 import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hydration";
-import { api, type DRCompileResult, type DRLoadResult } from "@/lib/api";
+import { api, type DRCompileResult, type DRLoadResult, type LLMConfigInput, type LLMConfigView } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
@@ -95,6 +95,12 @@ type CanvasState = {
   previewLoadStatus: "idle" | "loading" | "success" | "error";
   previewLoadError: string | null;
 
+  // Stage 6.6 real LLM v1: masked brain config view + test-connection state.
+  // The raw api_key is NEVER stored here (backend holds it; masked only).
+  llmConfig: LLMConfigView | null;
+  llmTestStatus: "idle" | "testing" | "success" | "error";
+  llmTestMessage: string | null;
+
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
   activeModuleTabId: string | null;
@@ -139,6 +145,11 @@ type CanvasState = {
   // Stage 6 preview flow: load the already compiled .digital_resident payload
   // into the mock runtime without exporting/importing it first.
   loadCompiledDRToPreview: () => Promise<void>;
+  // Stage 6.6 real LLM v1: brain config actions. The UI only submits config to
+  // the backend Runtime Config; it never calls the external LLM directly.
+  loadLLMConfig: () => Promise<void>;
+  saveLLMConfig: (config: LLMConfigInput) => Promise<void>;
+  testLLMConnection: (config?: LLMConfigInput) => Promise<void>;
 
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
@@ -187,6 +198,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   loadedDRResult: null,
   previewLoadStatus: "idle",
   previewLoadError: null,
+  llmConfig: null,
+  llmTestStatus: "idle",
+  llmTestMessage: null,
 
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
@@ -449,7 +463,51 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       appendLog(`DR load failed: ${(error as Error).message}`, "error");
     }
   },
-  
+
+  // Stage 6.6 — fetch the masked brain config (no raw api_key ever returned).
+  loadLLMConfig: async () => {
+    try {
+      const cfg = await api.getLLMConfig();
+      set({ llmConfig: cfg });
+    } catch {
+      // Non-fatal: leave llmConfig as-is; the form falls back to empty values.
+    }
+  },
+
+  // Stage 6.6 — save brain config to the backend Runtime Config (masked echo).
+  saveLLMConfig: async (config) => {
+    const appendLog = get().appendLog;
+    try {
+      const saved = await api.saveLLMConfig(config);
+      set({ llmConfig: saved });
+      appendLog(
+        `LLM config saved — model=${saved.model || "(none)"}, enabled=${saved.enabled}, key=${saved.has_api_key ? "set" : "unset"}`
+      );
+    } catch (error) {
+      appendLog(`LLM config save failed: ${(error as Error).message}`, "error");
+    }
+  },
+
+  // Stage 6.6 — test the connection via the backend (real call is backend-only).
+  testLLMConnection: async (config) => {
+    const appendLog = get().appendLog;
+    set({ llmTestStatus: "testing", llmTestMessage: null });
+    appendLog("LLM test connection → /runtime/config/llm/test");
+    try {
+      const result = await api.testLLMConnection(config);
+      if (result.ok) {
+        set({ llmTestStatus: "success", llmTestMessage: result.sample ?? "" });
+        appendLog(`LLM connection OK — model=${result.model ?? "?"} · ${(result.sample ?? "").slice(0, 80)}`);
+      } else {
+        set({ llmTestStatus: "error", llmTestMessage: result.error ?? "failed" });
+        appendLog(`LLM connection FAILED — ${result.error ?? "unknown error"}`, "error");
+      }
+    } catch (error) {
+      set({ llmTestStatus: "error", llmTestMessage: (error as Error).message });
+      appendLog(`LLM connection error: ${(error as Error).message}`, "error");
+    }
+  },
+
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => {
     set({ moduleTabs: tabs });

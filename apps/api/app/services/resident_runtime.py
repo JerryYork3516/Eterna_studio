@@ -25,6 +25,7 @@ from ..dr.v2.validator import validate_dr_v0_2
 
 from .memory_snapshotter import take_snapshot
 from .provider_adapters import route_provider_for_engine
+from .runtime_llm_config import get_runtime_llm_config
 from .runtime_state_manager import RuntimeStateManager, reset_history
 from .runtime_trace_collector import TraceCollector
 
@@ -272,10 +273,25 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
         output={"count": read.get("count", 0), "entries": list(read.get("entries", []))},
     )
 
-    # 3. reasoning (mock LLM only)
+    # 3. reasoning — Stage 6.6: real LLM when configured, else mock; fall back to
+    # mock on any real-call failure. The runtime is the ONLY place a real LLM is
+    # reached (via the provider registry). The api_key never enters this code.
     memory_context = f"{read.get('count', 0)} prior memories"
     prompt = f"{input_text}\n[context: {memory_context}]"
-    reasoning = route_provider_for_engine("llm_mock", {"prompt": prompt})
+
+    _llm_cfg = get_runtime_llm_config()
+    fallback_mock = False
+    reasoning_error: Optional[str] = None
+    if _llm_cfg.is_valid():
+        reasoning = route_provider_for_engine("llm_primary", {"prompt": prompt})
+        if reasoning.get("status") == "error":
+            reasoning_error = reasoning.get("error")
+            if _llm_cfg.fallback_to_mock:
+                reasoning = route_provider_for_engine("llm_mock", {"prompt": prompt})
+                fallback_mock = True
+    else:
+        reasoning = route_provider_for_engine("llm_mock", {"prompt": prompt})
+
     reasoning_text = reasoning.get("text", "")
     state.last_reasoning = reasoning_text
     collector.record(
@@ -285,7 +301,10 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
             "provider_type": reasoning.get("provider_type"),
             "provider_id": reasoning.get("provider_id"),
             "engine_id": reasoning.get("engine_id"),
-            "mock": True,
+            "model": _llm_cfg.model if _llm_cfg.is_valid() else None,
+            "mock": bool(reasoning.get("mock", True)),
+            "fallback_mock": fallback_mock,
+            "error": reasoning_error,
             "text": reasoning_text,
         },
         input={"prompt": prompt},

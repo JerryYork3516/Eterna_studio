@@ -316,7 +316,7 @@ function getCollapsedLabel(type: ModuleNodeType, language: Language): string {
 }
 
 type BottomTab = "logs" | "artifacts" | "preview";
-type DrawerId = "layers" | "inspector" | "residentPreview" | BottomTab;
+type DrawerId = "layers" | "residentPreview" | BottomTab;
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 type RunWorkflowStatus = "idle" | "running" | "success" | "error";
 type AlignAction = "left" | "right" | "top" | "bottom" | "center-x" | "center-y";
@@ -590,6 +590,7 @@ function buildLayerContainerFlowNode({
   uiTags,
   uiGroups,
   uiColors,
+  onColor,
   t
 }: {
   layer: CatalogLayerInput;
@@ -598,6 +599,7 @@ function buildLayerContainerFlowNode({
   uiTags: Record<string, string[]>;
   uiGroups: Record<string, string>;
   uiColors: Record<string, string>;
+  onColor?: (layerId: string, color: string) => void;
   t: (key: string, fallback?: string) => string;
 }) {
   const layerId = layer.layer_id;
@@ -619,6 +621,7 @@ function buildLayerContainerFlowNode({
       version: displayFields.version,
       children_count: displayFields.children_count,
       module_tier: displayFields.module_tier,
+      ui_color: uiColors[layerId] ?? "",
       validation: { status: displayFields.review }
     },
     ports: {
@@ -631,7 +634,7 @@ function buildLayerContainerFlowNode({
     id: layerId,
     type: "layerContainer",
     position: LayerStackLayoutEngine.computeTrunkPosition(frame),
-    style: { width: 380, height: TRUNK_LAYER_HEIGHT },
+    style: { width: 692, height: TRUNK_LAYER_HEIGHT },
     draggable: true,
     selectable: true,
     data: {
@@ -643,6 +646,7 @@ function buildLayerContainerFlowNode({
       uiTags: uiTags[layerId] ?? [],
       uiGroup: uiGroups[layerId] ?? "",
       uiColor: uiColors[layerId] ?? "",
+      onColor: onColor ? (color: string) => onColor(layerId, color) : undefined,
       t
     }
   } satisfies Node;
@@ -1262,6 +1266,7 @@ export function CanvasShell() {
   const [mainContextMenu, setMainContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [showMiniMap, setShowMiniMap] = useState(true);
+  const [showDebugTracePanel, setShowDebugTracePanel] = useState(true);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
@@ -1288,6 +1293,7 @@ export function CanvasShell() {
     language,
     validation,
     exportPreview,
+    runtimeResult,
     apiReady,
     setSelectedNode,
     setLanguage,
@@ -1815,7 +1821,6 @@ export function CanvasShell() {
   const handleChildModuleSelect = useCallback(
     (node: WorkflowNode) => {
       setSelectedNode(node.node_id);
-      setActiveDrawer("inspector");
       appendLog(`${t("status.moduleSelected", "Module selected")}: ${t(node.title_key, node.title_fallback)}`);
     },
     [appendLog, setSelectedNode, t]
@@ -2242,6 +2247,10 @@ export function CanvasShell() {
         uiTags,
         uiGroups,
         uiColors,
+        onColor: (layerId: string, color: string) => {
+          setUiColors((current) => ({ ...current, [layerId]: color }));
+          setSaveStatus("dirty");
+        },
         t
       });
     });
@@ -2445,9 +2454,6 @@ export function CanvasShell() {
         setActiveWorkspaceId(layer.layer_id);
         setWorkspaceTabs((tabs) => (tabs.includes(layer.layer_id) ? tabs : [...tabs, layer.layer_id]));
       }
-      if (mode === "right") {
-        setActiveDrawer("inspector");
-      }
       if (mode === "window") {
         setFloatingLayerIds((ids) => (ids.includes(layer.layer_id) ? ids : [...ids, layer.layer_id]));
       }
@@ -2493,12 +2499,10 @@ export function CanvasShell() {
         if (layer) {
           setSelectedNode(layer.layer_id);
           setActiveLayerId(layer.layer_id);
-          setActiveDrawer("inspector");
         }
         return;
       }
       setSelectedNode(node.id);
-      setActiveDrawer("inspector");
       const layer = layerById.get(node.id);
       if (layer) {
         setActiveLayerId(layer.layer_id);
@@ -2661,6 +2665,18 @@ export function CanvasShell() {
     appendLog(t("status.canvasArranged", "Canvas arranged"));
   }, [appendLog, t]);
 
+  const resetMainNodeUiById = useCallback(
+    (nodeId: string) => {
+      setUiColors((current) => ({ ...current, [nodeId]: "" }));
+      setUiNodeNames((current) => ({ ...current, [nodeId]: "" }));
+      setUiTags((current) => ({ ...current, [nodeId]: [] }));
+      setUiGroups((current) => ({ ...current, [nodeId]: "" }));
+      setSaveStatus("dirty");
+      appendLog(`${t("status.nodeReset", "Node reset")}: ${nodeId}`);
+    },
+    [appendLog, t]
+  );
+
   const handleMainNodeContextMenu: NodeMouseHandler = useCallback(
     (event, node) => {
       const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
@@ -2686,6 +2702,7 @@ export function CanvasShell() {
             setSaveStatus("dirty");
           }
         } },
+        { label: t("common.reset", "Reset"), onSelect: () => resetMainNodeUiById(node.id) },
         { label: t("common.delete", "删除节点"), onSelect: () => deleteMainNodeById(node.id), disabled: isLayer, danger: true },
         { label: t("common.copy", "复制节点"), onSelect: () => copyMainNodeById(node.id), disabled: isLayer },
         { label: t("common.tags", "添加 / 编辑标签"), onSelect: () => editUiTagsForIds([node.id], t("common.tags", "Tags")) },
@@ -2707,6 +2724,7 @@ export function CanvasShell() {
       language,
       renameUiNode,
       renameVisualGroup,
+      resetMainNodeUiById,
       setSelectedNode,
       t,
       uiColors,
@@ -2913,7 +2931,6 @@ export function CanvasShell() {
 	    ]
 	  );
 
-  const rightDockLayer = workspaceMode === "right" ? selectedLayer : null;
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
   const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
@@ -3198,7 +3215,43 @@ export function CanvasShell() {
                   >
                     {showGrid ? <Background color="#3a3a3a" gap={24} /> : null}
                     <Controls />
-                    {showMiniMap ? <MiniMap pannable zoomable /> : null}
+                    <CanvasDebugTracePanel
+                      open={showDebugTracePanel}
+                      t={t}
+                      logs={logs}
+                      trace={loadedDRResult?.execution_trace ?? (runtimeResult as { execution_trace?: unknown } | null)?.execution_trace ?? null}
+                      validation={loadedDRResult?.validation_result ?? validation}
+                      jsonPreview={{
+                        runtime_result: runtimeResult,
+                        loaded_file: loadedDRResult,
+                        export_preview: exportPreview
+                      }}
+                      onToggle={() => setShowDebugTracePanel((value) => !value)}
+                    />
+                    {showMiniMap ? (
+                      <>
+                        <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />
+                        <button
+                          type="button"
+                          className="canvas-debug-panel__collapse nodrag nopan"
+                          aria-label={t("debugPanel.collapse")}
+                          title={t("debugPanel.collapse")}
+                          onClick={() => setShowMiniMap(false)}
+                        >
+                          {t("debugPanel.collapseGlyph")}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="canvas-debug-panel__expand nodrag nopan"
+                        aria-label={t("debugPanel.expand")}
+                        title={t("debugPanel.expand")}
+                        onClick={() => setShowMiniMap(true)}
+                      >
+                        {t("debugPanel.expandLabel")}
+                      </button>
+                    )}
                   </ReactFlow>
                   {mainContextMenu ? <CanvasContextMenu menu={mainContextMenu} onClose={() => setMainContextMenu(null)} /> : null}
                 </div>
@@ -3334,47 +3387,6 @@ export function CanvasShell() {
             onOpen={openLayerWorkspace}
             onToggle={toggleLayerCollapsed}
           />
-        </FloatingSidePanel>
-      ) : null}
-
-      {activeDrawer === "inspector" ? (
-        <FloatingSidePanel
-          title={t("panel.parameters")}
-          meta={rightDockLayer ? t("workspace.right", "Right panel") : t("workspace.inspector", "Inspector")}
-          onClose={() => setActiveDrawer(null)}
-        >
-          {rightDockLayer && (!selectedNode || selectedNode.type === "layer_container") ? (
-            <LayerWorkspacePanel
-              layer={rightDockLayer}
-              moduleCatalog={moduleCatalog}
-              edges={edges}
-              t={t}
-              mode="right"
-              moduleNames={moduleNames}
-              onOpen={openLayerWorkspace}
-              onSelectNode={handleChildModuleSelect}
-              onPreviewNode={handleChildModulePreview}
-            />
-          ) : (
-            <ParameterPanel
-              node={selectedNode}
-              displayLabel={selectedNode && moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === selectedNode.node_id)?.layer_name : undefined}
-              workflow={workflow}
-              logs={logs}
-              output={exportPreview}
-              uiColor={selectedNode ? uiColors[selectedNode.node_id] ?? "" : ""}
-              uiTags={selectedNode ? uiTags[selectedNode.node_id] ?? [] : []}
-              uiGroup={selectedNode ? uiGroups[selectedNode.node_id] ?? "" : ""}
-              onColorChange={(color) => {
-                if (!selectedNode) {
-                  return;
-                }
-                setUiColors((current) => ({ ...current, [selectedNode.node_id]: color }));
-                setSaveStatus("dirty");
-              }}
-              t={t}
-            />
-          )}
         </FloatingSidePanel>
       ) : null}
 
@@ -3528,7 +3540,6 @@ function FloatingDock({
 }) {
   const dockItems: { id: DrawerId; label: string }[] = [
     { id: "layers", label: t("panel.layerNavigator", "Layers") },
-    { id: "inspector", label: t("workspace.inspector", "Inspector") },
     { id: "logs", label: t("panel.logs") },
     { id: "artifacts", label: t("panel.artifacts") },
     { id: "residentPreview", label: t("panel.residentPreview", "Resident Preview") },
@@ -3617,14 +3628,6 @@ function DockIcon({ id }: { id: DrawerId }) {
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 6h16M4 12h16M4 18h16" />
         <path d="M7 4v4M12 10v4M17 16v4" />
-      </svg>
-    );
-  }
-  if (id === "inspector") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 5h14v14H5z" />
-        <path d="M9 9h6M9 13h6M9 17h3" />
       </svg>
     );
   }
@@ -4137,7 +4140,7 @@ function ensurePorts(node: WorkflowNode): WorkflowNode {
 }
 
 function nodeWidth(node: Node) {
-  return node.measured?.width ?? node.width ?? 200;
+  return node.measured?.width ?? node.width ?? 364;
 }
 
 function nodeHeight(node: Node) {
@@ -4205,7 +4208,7 @@ function arrangeFlowNodes(nodes: Node[]) {
   return nodes.map((node, index) => ({
     ...node,
     position: {
-      x: 120 + (index % columns) * 260,
+      x: 120 + (index % columns) * 460,
       y: 90 + Math.floor(index / columns) * 170
     }
   }));
@@ -4360,6 +4363,8 @@ function ModuleCanvasPanel({
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunWorkflowStatus>("idle");
 	  const [runInputText, setRunInputText] = useState("");
+  const [showModuleMiniMap, setShowModuleMiniMap] = useState(true);
+  const [showModuleDebugTracePanel, setShowModuleDebugTracePanel] = useState(true);
 	  const addedRef = useRef(0);
 
   const addModuleNode = useCallback((type: ModuleNodeType, position?: { x: number; y: number }) => {
@@ -4633,6 +4638,24 @@ function ModuleCanvasPanel({
     [setModuleEdges, setModuleNodes]
   );
 
+  const resetModuleCanvasNodeById = useCallback(
+    (nodeId: string) => {
+      updateModuleNodeDataById(nodeId, (current) => {
+        const schemaFields = ((current as unknown as { input_schema?: NodeInputField[] }).input_schema ?? getNodeDefinition(String(current.type))?.input_schema ?? []) as NodeInputField[];
+        const resetData = { ...(current.data ?? {}) } as Record<string, unknown>;
+        for (const field of schemaFields) {
+          resetData[field.key] = field.default ?? "";
+        }
+        resetData.ui_name = "";
+        resetData.ui_color = "";
+        resetData.ui_tags = [];
+        resetData.ui_group = "";
+        return { ...current, data: resetData };
+      });
+    },
+    [updateModuleNodeDataById]
+  );
+
   const renameModuleCanvasNode = useCallback(
     (nodeId: string) => {
       const schemaNode = (moduleNodes.find((node) => node.id === nodeId)?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
@@ -4787,7 +4810,8 @@ function ModuleCanvasPanel({
       const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const group = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
       const menu = makeContextMenu(event, [
-        { label: "重命名", onSelect: () => renameModuleCanvasNode(node.id) },
+        { label: t("common.rename", "Rename"), onSelect: () => renameModuleCanvasNode(node.id) },
+        { label: t("common.reset", "Reset"), onSelect: () => resetModuleCanvasNodeById(node.id) },
         { label: t("common.deleteNode", "Delete node"), onSelect: () => deleteModuleNodeById(node.id), danger: true },
         { label: t("common.copyNode", "Copy node"), onSelect: () => copyModuleNodeById(node.id) },
         { label: t("common.addEditTags", "Add / edit tags"), onSelect: () => editModuleNodeTags(node.id) },
@@ -4806,7 +4830,8 @@ function ModuleCanvasPanel({
       editModuleNodeGroup,
       editModuleNodeTags,
       renameModuleCanvasNode,
-      renameModuleNodeGroup
+      renameModuleNodeGroup,
+      resetModuleCanvasNodeById
     ]
   );
 
@@ -5050,145 +5075,49 @@ function ModuleCanvasPanel({
           >
             <Background color="#333" gap={20} />
             <Controls />
-            <MiniMap pannable zoomable />
+            <CanvasDebugTracePanel
+              open={showModuleDebugTracePanel}
+              t={t}
+              logs={executionError ? [{ level: "error", message: executionError }] : []}
+              trace={executionResult}
+              validation={selectedSchema?.validation ?? null}
+              jsonPreview={{
+                selected_node: selectedSchema,
+                node_count: moduleNodes.length,
+                edge_count: moduleEdges.length,
+                run_status: runStatus
+              }}
+              onToggle={() => setShowModuleDebugTracePanel((value) => !value)}
+            />
+            {showModuleMiniMap ? (
+              <>
+                <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />
+                <button
+                  type="button"
+                  className="canvas-debug-panel__collapse nodrag nopan"
+                  aria-label={t("debugPanel.collapse")}
+                  title={t("debugPanel.collapse")}
+                  onClick={() => setShowModuleMiniMap(false)}
+                >
+                  {t("debugPanel.collapseGlyph")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="canvas-debug-panel__expand nodrag nopan"
+                aria-label={t("debugPanel.expand")}
+                title={t("debugPanel.expand")}
+                onClick={() => setShowModuleMiniMap(true)}
+              >
+                {t("debugPanel.expandLabel")}
+              </button>
+            )}
           </ReactFlow>
           {contextMenu ? <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} /> : null}
         </div>
-        <aside className="module-canvas-panel__inspector">
-          <h4>{t("panel.parameters", "Inspector")}</h4>
-          {executionError ? (
-            <section className="module-canvas-panel__result is-error">
-              <h4>{t("result.error", "error")}</h4>
-              <pre>{executionError}</pre>
-            </section>
-          ) : executionResult !== null && executionResult !== undefined ? (
-            <section className="module-canvas-panel__result is-success">
-              <h4>{t("result.persona_result", "persona_result")}</h4>
-              <pre>{safeStringify(executionResult)}</pre>
-            </section>
-          ) : null}
-          {selectedSchema ? (
-            <>
-              <section className="inspector-section">
-                <h4>{t("inspector.basic", "Basic")}</h4>
-              <dl>
-                <dt>{t("field.nodeId", "Node ID")}</dt>
-                <dd>{selectedSchema.node_id}</dd>
-                <dt>{t("field.type", "Type")}</dt>
-                <dd>{selectedSchema.type}</dd>
-                <dt>{t("field.lockLevel", "Lock")}</dt>
-                <dd>{translate(language, `lock.${selectedSchema.lock_level}`, selectedSchema.lock_level)}</dd>
-              </dl>
-              </section>
-              <section className="inspector-section">
-                <h4>{t("inspector.parameters", "Parameters")}</h4>
-                <label className="color-field">
-                  <span>{t("field.color", "Color")}</span>
-                  <input
-                    type="color"
-                    value={typeof selectedSchema.data?.ui_color === "string" && selectedSchema.data.ui_color ? selectedSchema.data.ui_color : "#4f8cff"}
-                    onChange={(event) => updateSelectedNodeData((data) => ({ ...data, ui_color: event.target.value }))}
-                  />
-                </label>
-              <pre>{safeStringify(selectedSchema.data ?? {})}</pre>
-              </section>
-            </>
-          ) : (
-            <div className="module-canvas-panel__empty">{t("panel.emptySelection", "Select a node")}</div>
-          )}
-        </aside>
       </div>
     </section>
-  );
-}
-
-function ParameterPanel({
-  node,
-  displayLabel,
-  workflow,
-  logs,
-  output,
-  uiColor,
-  uiTags,
-  uiGroup,
-  onColorChange,
-  t
-}: {
-  node: WorkflowNode | null;
-  displayLabel?: string;
-  workflow: Workflow | null;
-  logs: { ts?: string; level: string; message: string }[];
-  output: unknown;
-  uiColor: string;
-  uiTags: string[];
-  uiGroup: string;
-  onColorChange: (color: string) => void;
-  t: (key: string, fallback?: string) => string;
-}) {
-  if (!node) {
-    return (
-      <div className="empty-panel">
-        <p>{t("panel.emptySelection")}</p>
-        {workflow ? (
-          <dl>
-            <dt>{t("field.workflow")}</dt>
-            <dd>{workflow.name}</dd>
-            <dt>{t("field.template")}</dt>
-            <dd>{workflow.template_type}</dd>
-            <dt>Schema</dt>
-            <dd>{workflow.schema_version}</dd>
-          </dl>
-        ) : null}
-      </div>
-    );
-  }
-
-  const position = node.position ?? { x: 0, y: 0 };
-
-  return (
-    <div className="parameter-content">
-      <h3>{displayLabel ?? t(node.title_key, node.title_fallback)}</h3>
-      <section className="inspector-section">
-        <h4>{t("inspector.basic", "Basic")}</h4>
-        <dl>
-          <dt>{t("field.nodeId")}</dt>
-          <dd>{node.node_id}</dd>
-          <dt>{t("field.type")}</dt>
-          <dd>{getNodeTypeLabel(node.type, t)}</dd>
-          <dt>{t("field.category")}</dt>
-          <dd>{node.category}</dd>
-          <dt>{t("field.lockLevel")}</dt>
-          <dd>{t(`lock.${node.lock_level}`, node.lock_level)}</dd>
-          <dt>{t("field.position")}</dt>
-          <dd>
-            {Math.round(position.x)}, {Math.round(position.y)}
-          </dd>
-          <dt>{t("field.validation")}</dt>
-          <dd>{node.validation?.status ?? "-"}</dd>
-        </dl>
-      </section>
-      <section className="inspector-section">
-        <h4>{t("inspector.parameters", "Parameters")}</h4>
-        <label className="color-field">
-          <span>{t("field.color", "Color")}</span>
-          <input type="color" value={uiColor || "#4f8cff"} onChange={(event) => onColorChange(event.target.value)} />
-        </label>
-        <pre>{JSON.stringify(node.data ?? {}, null, 2)}</pre>
-      </section>
-      <section className="inspector-section">
-        <h4>{t("inspector.tags", "Tags")}</h4>
-        <p>{uiGroup ? `${t("field.group", "Group")}: ${uiGroup}` : t("inspector.noGroup", "No group")}</p>
-        <p>{uiTags.length ? uiTags.join(", ") : t("inspector.noTags", "No tags")}</p>
-      </section>
-      <section className="inspector-section">
-        <h4>{t("inspector.logs", "Logs")}</h4>
-        <p>{logs[0]?.message ?? t("panel.noLogs")}</p>
-      </section>
-      <section className="inspector-section">
-        <h4>{t("inspector.output", "Output")}</h4>
-        <pre>{output ? safeStringify(output) : t("panel.noPreview")}</pre>
-      </section>
-    </div>
   );
 }
 
@@ -5225,6 +5154,75 @@ function JsonPanel({ value, emptyText }: { value: unknown; emptyText: string }) 
   }
 
   return <pre className="json-panel">{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function CanvasDebugTracePanel({
+  open,
+  t,
+  logs,
+  trace,
+  validation,
+  jsonPreview,
+  onToggle
+}: {
+  open: boolean;
+  t: (key: string, fallback?: string) => string;
+  logs: { ts?: string; level: string; message: string }[];
+  trace: unknown;
+  validation: unknown;
+  jsonPreview: unknown;
+  onToggle: () => void;
+}) {
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="canvas-debug-trace-panel__open nodrag nopan"
+        aria-label={t("debugTrace.expand")}
+        title={t("debugTrace.expand")}
+        onClick={onToggle}
+      >
+        {t("debugTrace.openLabel")}
+      </button>
+    );
+  }
+
+  return (
+    <aside className="canvas-debug-trace-panel nodrag nopan">
+      <header className="canvas-debug-trace-panel__header">
+        <strong>{t("panel.debugTrace")}</strong>
+        <button type="button" aria-label={t("debugTrace.collapse")} title={t("debugTrace.collapse")} onClick={onToggle}>
+          {t("debugPanel.collapseGlyph")}
+        </button>
+      </header>
+      <details>
+        <summary>{t("panel.logs")}</summary>
+        {logs.length ? (
+          <div className="canvas-debug-trace-panel__logs">
+            {logs.slice(0, 6).map((log, index) => (
+              <p key={`${log.ts ?? "log"}-${index}`} className={`log-${log.level}`}>
+                {log.message}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="canvas-debug-trace-panel__empty">{t("panel.noLogs")}</p>
+        )}
+      </details>
+      <details>
+        <summary>{t("inspector.executionTrace")}</summary>
+        <pre>{trace ? safeStringify(trace) : t("inspector.noTrace")}</pre>
+      </details>
+      <details>
+        <summary>{t("inspector.validationResult")}</summary>
+        <pre>{validation ? safeStringify(validation) : t("inspector.noValidation")}</pre>
+      </details>
+      <details>
+        <summary>{t("inspector.jsonPreview")}</summary>
+        <pre>{jsonPreview ? safeStringify(jsonPreview) : t("panel.noPreview")}</pre>
+      </details>
+    </aside>
+  );
 }
 
 function ResidentPreviewPanel({

@@ -186,8 +186,44 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ dr, input_text: `Load compiled file: ${filename || "compiled.digital_resident"}` })
     });
+  },
+  // Stage 6.6 real LLM v1 — the UI submits the brain (LLM) config to the backend
+  // Runtime Config. The UI NEVER calls the external LLM directly; the backend
+  // holds the api_key and performs the real call. Responses are always masked.
+  getLLMConfig() {
+    return request<LLMConfigView>("/runtime/config/llm");
+  },
+  saveLLMConfig(config: LLMConfigInput) {
+    return request<LLMConfigView & { saved: boolean }>("/runtime/config/llm", {
+      method: "POST",
+      body: JSON.stringify(config)
+    });
+  },
+  testLLMConnection(config?: LLMConfigInput) {
+    return request<LLMTestResult>("/runtime/config/llm/test", {
+      method: "POST",
+      body: JSON.stringify(config ?? {})
+    });
   }
 };
+
+// Stage 6.6 — LLM runtime config (masked view: never carries the raw api_key).
+export type LLMConfigView = {
+  base_url: string;
+  model: string;
+  enabled: boolean;
+  fallback_to_mock: boolean;
+  has_api_key: boolean;
+  is_valid: boolean;
+};
+export type LLMConfigInput = {
+  base_url?: string;
+  api_key?: string; // empty/omitted = leave stored key unchanged
+  model?: string;
+  enabled?: boolean;
+  fallback_to_mock?: boolean;
+};
+export type LLMTestResult = { ok: boolean; model?: string; sample?: string; error?: string };
 
 export type DRFinding = { status: string; code: string; message: string; path: string };
 

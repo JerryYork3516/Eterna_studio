@@ -13,6 +13,7 @@ type CanvasNodeData = {
   uiGroup?: string;
   uiTags?: string[];
   uiColor?: string;
+  onColor?: (color: string) => void;
 };
 
 function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
@@ -25,7 +26,7 @@ function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
 
 export function LayerContainerNode({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
-  const { schemaNode, viewLabel, viewIndex, groupLabel, uiGroup, uiTags = [], uiColor } = data as CanvasNodeData;
+  const { schemaNode, viewLabel, viewIndex, groupLabel, uiGroup, uiTags = [], uiColor, onColor } = data as CanvasNodeData;
   const label = viewLabel ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
   const typeLabel = getNodeDefinition(schemaNode.type)?.display_name ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
@@ -55,10 +56,30 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
           {moduleTier ? <span className="tier-pill">{moduleTier}</span> : null}
           <span className="lock-pill">{lockLabel}</span>
         </div>
+        {onColor ? (
+          <label className="layer-node__color-picker nodrag">
+            <span>{translate(language, "node.header.color", "颜色")}</span>
+            <input
+              type="color"
+              value={uiColor || "#4f8cff"}
+              onChange={(event) => onColor(event.target.value)}
+              aria-label={translate(language, "node.header.color", "颜色")}
+            />
+          </label>
+        ) : null}
       </div>
       <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.params", "参数")}</summary>
+        <summary>{translate(language, "node.sections.core", "核心参数")}</summary>
         <div className="layer-node__description">{dataText(schemaNode.data, "description", schemaNode.title_fallback)}</div>
+        <div className="layer-node__grid">
+          <span>{translate(language, "field.status")}</span>
+          <strong>{dataText(schemaNode.data, "status")}</strong>
+          <span>{translate(language, "field.version")}</span>
+          <strong>{dataText(schemaNode.data, "version")}</strong>
+        </div>
+      </details>
+      <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
+        <summary>{translate(language, "node.sections.advanced", "高级参数")}</summary>
         {uiGroup || uiTags.length ? (
           <div className="layer-node__ui-meta">
             {uiGroup ? <span className="layer-node__ui-group">{uiGroup}</span> : null}
@@ -69,11 +90,10 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
             ))}
           </div>
         ) : null}
+      </details>
+      <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
+        <summary>{translate(language, "node.sections.runtime", "运行信息")}</summary>
         <div className="layer-node__grid">
-          <span>{translate(language, "field.status")}</span>
-          <strong>{dataText(schemaNode.data, "status")}</strong>
-          <span>{translate(language, "field.version")}</span>
-          <strong>{dataText(schemaNode.data, "version")}</strong>
           <span>{translate(language, "field.childrenCount")}</span>
           <strong>{dataText(schemaNode.data, "children_count", "0")}</strong>
           <span>{translate(language, "field.review")}</span>

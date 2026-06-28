@@ -15,9 +15,25 @@ EXPECTED_PROVIDER_TYPES = {"llm", "memory", "tool", "tts", "avatar", "speech", "
 
 def test_provider_registry_has_seven_mock_provider_types():
     providers = list_providers()
-    assert {provider["provider_type"] for provider in providers} == EXPECTED_PROVIDER_TYPES
-    assert len(providers) == len(EXPECTED_PROVIDER_TYPES)
-    assert all(provider["mock"] is True for provider in providers)
+    # The seven canonical MOCK provider types are all present and still mock.
+    mock_types = {p["provider_type"] for p in providers if p["mock"] is True}
+    assert EXPECTED_PROVIDER_TYPES <= mock_types
+    mock_ids = {p["provider_id"] for p in providers if p["mock"] is True}
+    for pid in (
+        "provider_llm_mock", "provider_memory_mock", "provider_tool_mock",
+        "provider_tts_mock", "provider_avatar_mock", "provider_speech_mock",
+        "provider_screen_mock",
+    ):
+        assert pid in mock_ids
+
+
+def test_stage6_6_real_llm_mapping_registered():
+    # Stage 6.6 additive: a real (non-mock) llm_primary provider exists alongside
+    # the mocks, plus an llm_fallback mapping that routes to the mock LLM.
+    providers = {p["provider_id"]: p for p in list_providers()}
+    assert providers["provider_llm_real"]["mock"] is False
+    assert resolve_provider_for_engine("llm_primary")["provider_id"] == "provider_llm_real"
+    assert resolve_provider_for_engine("llm_fallback")["provider_id"] == "provider_llm_fallback"
 
 
 def test_existing_mock_providers_are_registered():

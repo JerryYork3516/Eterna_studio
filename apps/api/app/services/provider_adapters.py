@@ -19,6 +19,8 @@ from ..registry.provider_registry import (
     resolve_provider_entry_for_engine,
 )
 from .llm_mock_engine import run_mock_llm
+from .llm_real_adapter import call_openai_compat
+from .runtime_llm_config import get_runtime_llm_config
 
 
 class ProviderAdapter:
@@ -41,6 +43,28 @@ class MockLLMProvider(ProviderAdapter):
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         prompt = payload.get("prompt") if isinstance(payload, dict) else None
         return run_mock_llm(prompt=prompt)
+
+
+class RealLLMProvider(ProviderAdapter):
+    """Stage 6.6 real LLM. Reads the global RuntimeLLMConfig and calls the
+    OpenAI-compatible relay via llm_real_adapter. NEVER receives or echoes the
+    api_key in its payload — it pulls it from the process-local config. Any
+    failure is returned as a structured error so the runtime can fall back."""
+
+    provider_id = "provider_llm_real"
+    provider_type = "llm"
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        cfg = get_runtime_llm_config()
+        prompt = payload.get("prompt") if isinstance(payload, dict) else None
+        if not cfg.is_valid():
+            return {
+                "status": "error",
+                "mock": False,
+                "engine": "llm_primary",
+                "error": "llm config not enabled or incomplete",
+            }
+        return call_openai_compat(cfg.base_url, cfg.api_key, cfg.model, prompt or "")
 
 
 # Process-only memory store, isolated per resident_id. No database.
@@ -146,14 +170,19 @@ class MockScreenProvider(ProviderAdapter):
         return {"status": "success", "mock": True, "screen_state": payload.get("state", "mock_screen") if isinstance(payload, dict) else "mock_screen"}
 
 
+_mock_llm_adapter = MockLLMProvider()
+
 _ADAPTERS_BY_PROVIDER_ID: Dict[str, ProviderAdapter] = {
-    "provider_llm_mock": MockLLMProvider(),
+    "provider_llm_mock": _mock_llm_adapter,
     "provider_memory_mock": InMemoryProvider(),
     "provider_tool_mock": MockToolProvider(),
     "provider_tts_mock": MockTTSProvider(),
     "provider_avatar_mock": MockAvatarProvider(),
     "provider_speech_mock": MockSpeechProvider(),
     "provider_screen_mock": MockScreenProvider(),
+    # Stage 6.6 real LLM v1.
+    "provider_llm_real": RealLLMProvider(),
+    "provider_llm_fallback": _mock_llm_adapter,  # llm_fallback reuses the mock LLM
 }
 
 
@@ -161,7 +190,9 @@ def _with_provider_metadata(
     result: Dict[str, Any], *, provider_id: str, provider_type: str, engine_id: str
 ) -> Dict[str, Any]:
     enriched = dict(result)
-    enriched["mock"] = True
+    # Respect the adapter's own mock flag (defaults True for the mock providers).
+    # The real LLM adapter returns mock=False so the trace can distinguish them.
+    enriched["mock"] = bool(result.get("mock", True))
     enriched["provider_id"] = provider_id
     enriched["provider_type"] = provider_type
     enriched["engine_id"] = engine_id
