@@ -316,6 +316,32 @@ def test_gate_does_not_import_execution_engine():
     assert "PURE_OK" in out.stdout, out.stderr
 
 
+# --- Stage 6.3.3: /dr/compile invokes the Gate (compile-only, no download) ---
+def test_compile_endpoint_invokes_gate():
+    nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
+    body = client.post("/dr/compile", json={"workflow": {"name": "Aria", "nodes": nodes13}}).json()
+    # Gate outputs are surfaced by the compile endpoint.
+    assert body["valid"] is True
+    assert body["orchestration_compatibility"] is True
+    assert body["module_audit"]["ok"] and body["layer_audit"]["ok"] and body["compile_audit"]["ok"]
+    assert any(rec["type"] == "meta" for rec in body["pseudo_dag"])
+
+
+def test_compile_endpoint_invalid_reports_errors():
+    nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
+    canvas = {
+        "workflow": {"name": "Bad", "nodes": nodes13},
+        "modules": [
+            {"module_id": "dup", "module_type": "t", "layer_id": "layer_1"},
+            {"module_id": "dup", "module_type": "t", "layer_id": "layer_2"},
+        ],
+    }
+    body = client.post("/dr/compile", json=canvas).json()
+    assert body["valid"] is False
+    assert body["compiled_dr"] is None
+    assert body["errors"]
+
+
 # --- runtime regression ------------------------------------------------------
 def test_runtime_resident_step_untouched():
     resp = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r_drgate"})

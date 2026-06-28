@@ -162,27 +162,33 @@ export const api = {
       body: JSON.stringify({ workflow, input_text: inputText, resident_id: residentId })
     });
   },
-  // Stage 6.2 DR Compiler — compile the canvas into a downloadable
-  // .digital_resident file. The compile logic is backend-only (dr_compiler); the
-  // UI just posts the canvas and receives the file blob (never bare JSON).
-  async compileDR(workflow: Workflow, residentName?: string): Promise<{ blob: Blob; filename: string; auditValid: boolean }> {
-    let response: Response;
-    try {
-      response = await fetch(`${API_BASE}/dr/compile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflow, resident_name: residentName })
-      });
-    } catch (error) {
-      throw new Error(`Network error: ${(error as Error).message}`);
-    }
-    if (!response.ok) {
-      throw new Error(await formatErrorResponse(response));
-    }
-    const blob = await response.blob();
-    const headerName = response.headers.get("X-DR-Filename");
-    const filename = headerName || `${(residentName || workflow.name || "digital_resident").toLowerCase().replace(/[^a-z0-9]+/g, "_")}.digital_resident`;
-    const auditValid = (response.headers.get("X-DR-Audit-Valid") ?? "true") === "true";
-    return { blob, filename, auditValid };
+  // Stage 6.3.3 DR Compile (validate, NO download). Backend runs dr_compiler +
+  // validate_dr_v0_2 and returns a JSON result. The UI saves the result and only
+  // downloads later via the separate Export action. Compile logic is backend-only.
+  compileDR(workflow: Workflow, residentName?: string) {
+    return request<DRCompileResult>("/dr/compile", {
+      method: "POST",
+      body: JSON.stringify({ workflow, resident_name: residentName })
+    });
   }
+};
+
+export type DRFinding = { status: string; code: string; message: string; path: string };
+
+// Result of POST /dr/compile (Stage 6.3.3 compile-only). `compiled_dr` is the
+// downloadable .digital_resident content, present only when valid.
+export type DRCompileResult = {
+  valid: boolean;
+  dr_version: string;
+  errors: DRFinding[];
+  warnings: DRFinding[];
+  module_audit: Record<string, unknown>;
+  layer_audit: Record<string, unknown>;
+  compile_audit: Record<string, unknown>;
+  orchestration_compatibility: boolean;
+  pseudo_dag: Array<Record<string, unknown>>;
+  compiled_dr: Record<string, unknown> | null;
+  dr_payload: Record<string, unknown>;
+  filename: string;
+  metadata: Record<string, unknown>;
 };

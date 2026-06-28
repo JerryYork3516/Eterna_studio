@@ -108,17 +108,53 @@ def test_missing_canvas_layer_warns_but_stays_valid():
     assert dr["audit"]["valid"] is True  # warning alone does not invalidate
 
 
-# --- API: downloadable .digital_resident file -------------------------------
-def test_compile_endpoint_returns_file_not_json():
+# --- API: Stage 6.3.3 compile (JSON, no download) vs export (download) -------
+def test_compile_endpoint_returns_json_not_file():
     resp = client.post("/dr/compile", json=_canvas_13())
     assert resp.status_code == 200
-    assert "application/json" not in resp.headers["content-type"]  # not bare JSON
+    assert "application/json" in resp.headers["content-type"]  # JSON, not a file
+    assert "content-disposition" not in {k.lower() for k in resp.headers}
+    body = resp.json()
+    for key in (
+        "valid", "errors", "warnings", "module_audit", "layer_audit", "compile_audit",
+        "orchestration_compatibility", "pseudo_dag", "dr_version", "compiled_dr", "filename", "metadata",
+    ):
+        assert key in body
+    assert body["valid"] is True
+    assert body["dr_version"] == "0.2"
+    assert body["compiled_dr"] is not None  # downloadable only when valid
+    assert body["filename"].endswith(FILE_SUFFIX)
+    assert body["pseudo_dag"]
+
+
+def test_compile_invalid_canvas_blocks_export():
+    canvas = _canvas_13()
+    canvas["modules"] = [
+        {"module_id": "dup", "module_type": "t", "layer_id": "layer_1"},
+        {"module_id": "dup", "module_type": "t", "layer_id": "layer_2"},
+    ]
+    body = client.post("/dr/compile", json=canvas).json()
+    assert body["valid"] is False
+    assert body["compiled_dr"] is None  # invalid => nothing downloadable
+    assert any(f["code"] == "DR_MODULE_ID_DUPLICATE" for f in body["errors"])
+
+
+def test_export_endpoint_returns_file_when_valid():
+    resp = client.post("/dr/export", json=_canvas_13())
+    assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/x-digital-resident"
     assert resp.headers["content-disposition"].endswith(f'{FILE_SUFFIX}"')
     assert resp.headers["x-dr-filename"].endswith(FILE_SUFFIX)
     body = json.loads(resp.text)
     assert body["file_type"] == FILE_TYPE
-    assert body["audit"]["valid"] is True
+
+
+def test_export_rejected_when_invalid():
+    canvas = _canvas_13()
+    canvas["slots"] = [{"slot_id": "s_llm", "slot_type": "llm", "provider": "openai"}]
+    canvas["modules"] = []
+    resp = client.post("/dr/export", json=canvas)
+    assert resp.status_code == 422
 
 
 # --- runtime v6.1 mock load --------------------------------------------------

@@ -411,3 +411,161 @@ def mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
         "slot_count": len(dr.get("slots") or []),
         "audit_valid": bool(_as_dict(dr.get("audit")).get("valid")),
     }
+
+
+# --- Stage 6.3.3: compile-only result (compile + validate, NO download) -----
+# The DR v0.2 candidate below is a deterministic, declarative policy view derived
+# from the canvas. It is what `validate_dr_v0_2` (the Gate) inspects. Building it
+# executes nothing — it is pure data assembly.
+def build_dr_v0_2_candidate(canvas: Dict[str, Any], v01_dr: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive a DR v0.2 (policy-layer) candidate from the canvas + v0.1 blueprint.
+
+    Deterministic declarative defaults so a structurally-valid canvas yields a
+    schedulable, DAG-generatable candidate. No execution, scheduling, or I/O.
+    """
+    resident = _as_dict(v01_dr.get("resident"))
+    name = resident.get("name") or "Digital Resident"
+    resident_id = resident.get("resident_id") or _slugify(name)
+    return {
+        "file_type": FILE_TYPE,
+        "dr_version": "0.2",
+        "schema_version": SCHEMA_VERSION_V0_4,
+        "protocol_version": PROTOCOL_VERSION_V0_4,
+        "dr_layer": "policy",
+        "not_executable": True,
+        "identity": {
+            "resident_id": resident_id,
+            "name": name,
+            "role": "digital_resident",
+            "disclosure": "AI-generated digital resident; synthetic persona.",
+            "tags": [],
+        },
+        "intent_model": {
+            "primary_intent": "resident_dialogue",
+            "goals": [],
+            "intents": [
+                {
+                    "step_id": "step_dialogue",
+                    "description": "respond to the user",
+                    "requires_slot_type": "llm",
+                    "depends_on": [],
+                }
+            ],
+            "proactivity": "reactive",
+            "domains": [],
+        },
+        "scheduling_policy": {
+            "mode": "serial",
+            "priority_model": "fifo",
+            "interrupt_policy": "none",
+            "preemption": "disabled",
+            "max_parallel_hint": 1,
+        },
+        "execution_policy": {
+            "execution_mode": "mock",
+            "runtime_version": RUNTIME_VERSION,
+            "min_kernel": MIN_KERNEL,
+            "required_slot_types": ["llm"],
+            "allow_tool_use": False,
+            "fallback_mode": "mock_fallback",
+            "determinism": "deterministic_mock",
+            "execution_constraints": [],
+        },
+        "capabilities": {
+            "slots": [{"slot_id": "slot_llm", "slot_type": "llm", "engine_binding": "llm_mock"}],
+            "tools": [],
+            "tool_preferences": [],
+        },
+        "memory_policy": {
+            "provider": "mock",
+            "store": "in_process",
+            "isolation": "per_resident",
+            "persistence": False,
+        },
+        "risk_policy": {
+            "disclosure_required": True,
+            "audit_required": False,
+            "human_confirm_required": False,
+            "risk_level": "none",
+            "blocked_modules": [],
+            "forbidden_tool_paths": [],
+            "system_locked": False,
+            "system_locked_fields": ["risk_level", "disclosure_required"],
+        },
+        "stability_constraints": {
+            "immutable_layers": ["layer_1", "layer_3"],
+            "forbidden_transitions": [],
+            "invariants": [],
+        },
+        "capability_profile": {
+            "resident_class": "industry_expertise",
+            "primary_type": "industry_expertise",
+            "secondary_type": "human_empathy",
+            "primary_weight": 0.8,
+            "secondary_weight": 0.2,
+        },
+        "security_manifest": {
+            "signature_required": True,
+            "license_required": False,
+            "watermark_required": True,
+            "encryption_required": False,
+            "secure_loader_required": True,
+        },
+        "skill_policy": {
+            "allowed_skill_sources": ["official"],
+            "unsigned_skill_policy": "deny",
+            "sandbox_required": True,
+            "required_skills": [],
+            "skill_permissions": [],
+        },
+    }
+
+
+def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
+    """Compile + validate the canvas WITHOUT downloading. Returns a JSON dict.
+
+    Pipeline: canvas -> compile_dr (v0.1 blueprint + audit) -> derive DR v0.2
+    candidate -> validate_dr_v0_2(candidate). The downloadable `compiled_dr` is
+    only populated when the result is valid (valid=false must NOT yield a
+    downloadable .digital_resident).
+    """
+    # Local import keeps the policy-layer Gate decoupled from the compiler module.
+    from ..dr.v2.validator import validate_dr_v0_2
+
+    v01 = compile_dr(canvas, resident_name=resident_name)
+    candidate = build_dr_v0_2_candidate(canvas, v01)
+    gate = validate_dr_v0_2(candidate)
+
+    v01_findings = _as_dict(v01.get("audit")).get("findings", []) or []
+    v01_errors = [f for f in v01_findings if f.get("status") == "FAIL"]
+    v01_warnings = [f for f in v01_findings if f.get("status") == "WARNING"]
+
+    errors = v01_errors + list(gate.get("errors", []))
+    warnings = v01_warnings + list(gate.get("warnings", []))
+    valid = len(errors) == 0
+
+    filename = dr_filename(v01)
+    return {
+        "valid": valid,
+        "dr_version": gate.get("dr_version", "0.2"),
+        "errors": errors,
+        "warnings": warnings,
+        "module_audit": gate.get("module_audit", {}),
+        "layer_audit": gate.get("layer_audit", {}),
+        "compile_audit": gate.get("compile_audit", {}),
+        "orchestration_compatibility": gate.get("orchestration_compatibility", False),
+        "pseudo_dag": gate.get("pseudo_dag", []),
+        # The downloadable file content — only when valid.
+        "compiled_dr": v01 if valid else None,
+        # The policy-layer candidate the Gate inspected (always returned).
+        "dr_payload": candidate,
+        "filename": filename,
+        "metadata": {
+            "filename": filename,
+            "schema_version": v01.get("schema_version"),
+            "compile_info": v01.get("compile_info"),
+            "v01_audit": v01.get("audit"),
+            "v01_valid": bool(_as_dict(v01.get("audit")).get("valid")),
+            "gate_valid": bool(gate.get("valid")),
+        },
+    }

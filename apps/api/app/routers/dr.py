@@ -1,13 +1,16 @@
-"""DR router — Stage 6.2 DR Compiler v0.1 endpoints.
+"""DR router — Stage 6.3.3 split: Compile (validate, no download) vs Export.
 
-POST /dr/compile  : Canvas (workflow + nodes + edges) -> downloadable
-                    .digital_resident file (NOT a bare JSON response).
-POST /dr/load     : mock-load a DR document the way the Stage 6.1 runtime would
-                    read it (read-only, no execution).
+POST /dr/compile : Canvas -> compile + validate_dr_v0_2 -> JSON result (NO file
+                   download). Carries valid / errors / warnings / module_audit /
+                   layer_audit / compile_audit / orchestration_compatibility /
+                   pseudo_dag / dr_version / compiled_dr / dr_payload / metadata.
+POST /dr/export  : Download the already-validated compiled DR as a
+                   .digital_resident file. Rejected (422) when not valid.
+POST /dr/load    : mock-load a DR document (read-only, no execution).
 
-The compile logic lives entirely in the service layer (dr_compiler). This router
-only forwards canvas data and serializes the result as a file attachment. It
-never executes anything and never touches the Runtime Kernel.
+The compile/validate logic lives entirely in the service layer (dr_compiler +
+the DR v0.2 Validation Gate). This router only forwards canvas data and shapes
+the response. It never executes anything and never touches the Runtime Kernel.
 """
 
 from __future__ import annotations
@@ -15,15 +18,15 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..services.dr_compiler import compile_dr, dr_filename, mock_load_dr
+from ..services.dr_compiler import compile_dr_result, mock_load_dr
 
 router = APIRouter(prefix="/dr", tags=["dr"])
 
-# Custom media type so the response is a downloadable file, never a bare JSON body.
+# Custom media type so the export response is a downloadable file, never JSON.
 DR_MEDIA_TYPE = "application/x-digital-resident"
 
 
@@ -56,10 +59,22 @@ def _build_canvas(req: DRCompileRequest) -> Dict[str, Any]:
 
 
 @router.post("/compile")
-def dr_compile(req: DRCompileRequest) -> Response:
-    """Compile the canvas into a downloadable .digital_resident file."""
-    dr = compile_dr(_build_canvas(req), resident_name=req.resident_name)
-    filename = dr_filename(dr)
+def dr_compile(req: DRCompileRequest) -> Dict[str, Any]:
+    """Compile + validate the canvas and return JSON. Does NOT download a file."""
+    return compile_dr_result(_build_canvas(req), resident_name=req.resident_name)
+
+
+@router.post("/export")
+def dr_export(req: DRCompileRequest) -> Response:
+    """Download the validated compiled DR. Rejected (422) when the DR is invalid."""
+    result = compile_dr_result(_build_canvas(req), resident_name=req.resident_name)
+    if not result["valid"] or result.get("compiled_dr") is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "DR did not pass validation; export is not allowed", "errors": result["errors"]},
+        )
+    dr = result["compiled_dr"]
+    filename = result["filename"]
     body = json.dumps(dr, ensure_ascii=False, indent=2)
     return Response(
         content=body,
@@ -67,8 +82,8 @@ def dr_compile(req: DRCompileRequest) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-DR-Filename": filename,
-            "X-DR-Audit-Valid": str(dr["audit"]["valid"]).lower(),
-            "X-DR-Version": dr["dr_version"],
+            "X-DR-Audit-Valid": "true",
+            "X-DR-Version": str(dr.get("dr_version", "0.1")),
         },
     )
 

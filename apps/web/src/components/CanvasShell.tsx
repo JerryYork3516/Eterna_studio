@@ -1297,7 +1297,10 @@ export function CanvasShell() {
     clearRunOutput,
     applyRuntimeResult,
     runtimeDebug,
-    exportDR
+    compileDR,
+    exportDR,
+    canExportDR,
+    drCompileResult
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
@@ -2309,17 +2312,25 @@ export function CanvasShell() {
     }
   }, [appendLog, applyRuntimeResult, requireWorkflow, selectedNode, setActiveDrawer, setBottomTab, t]);
 
-  // Stage 6.2: the single "Export DR" action — compile the canvas to a
-  // .digital_resident file via the backend DR compiler and download it.
-  const handleExportDR = useCallback(async () => {
+  // Stage 6.3.3 step 1 — Compile DR: validate the canvas (no download). The
+  // result (valid/errors/warnings/audits/pseudo_dag) is saved to the store.
+  const handleCompileDR = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
     if (!currentWorkflow) {
       return;
     }
     setBottomTab("logs");
     setActiveDrawer("logs");
-    await exportDR(currentWorkflow);
-  }, [exportDR, requireWorkflow, setActiveDrawer, setBottomTab]);
+    await compileDR(currentWorkflow);
+  }, [compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
+
+  // Stage 6.3.3 step 2 — Export .digital_resident: download the already-validated
+  // compiled DR. Disabled in the UI unless a valid DR was compiled first.
+  const handleExportDR = useCallback(async () => {
+    setBottomTab("logs");
+    setActiveDrawer("logs");
+    await exportDR();
+  }, [exportDR, setActiveDrawer, setBottomTab]);
 
   const handleExportPreview = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
@@ -2936,7 +2947,16 @@ export function CanvasShell() {
 	              </span>
 	            ) : null}
 	            <button onClick={handleExportPreview}>{t("toolbar.exportPreview")}</button>
-	            <button className="export-dr-button" onClick={handleExportDR}>{t("toolbar.exportDR", "Export DR")}</button>
+	            <button className="compile-dr-button" onClick={handleCompileDR}>{t("toolbar.compileDR", "Compile DR")}</button>
+	            {drCompileResult ? (
+	              <span
+	                className={`dr-compile-chip is-${drCompileResult.valid ? "valid" : "invalid"}`}
+	                title={`errors=${drCompileResult.errors.length} · warnings=${drCompileResult.warnings.length} · orchestration=${drCompileResult.orchestration_compatibility}`}
+	              >
+	                ◆ DR {drCompileResult.valid ? "valid" : "invalid"} · {drCompileResult.errors.length}E/{drCompileResult.warnings.length}W
+	              </span>
+	            ) : null}
+	            <button className="export-dr-button" onClick={handleExportDR} disabled={!canExportDR} title={canExportDR ? undefined : t("toolbar.exportDRBlocked", "Compile a valid DR first")}>{t("toolbar.exportDR", "Export DR")}</button>
             <button onClick={handleExportCanvasState}>{t("canvas.export", "导出项目")}</button>
             <button onClick={handleImportCanvasStateClick}>{t("canvas.import", "导入项目")}</button>
             <input

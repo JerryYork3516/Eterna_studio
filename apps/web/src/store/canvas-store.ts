@@ -12,7 +12,7 @@ import type {
   WorkflowNode
 } from "@/lib/schema-types";
 import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hydration";
-import { api } from "@/lib/api";
+import { api, type DRCompileResult } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
@@ -86,6 +86,11 @@ type CanvasState = {
   runtimeResult: ResidentStepResponse | null;
   runtimeDebug: RuntimeDebugSummary | null;
 
+  // Stage 6.3.3 DR compile/export split: the compiled (validated) DR result.
+  compiledDR: Record<string, unknown> | null;   // downloadable content (valid only)
+  drCompileResult: DRCompileResult | null;        // full compile + audit result
+  canExportDR: boolean;                           // true only when valid
+
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
   activeModuleTabId: string | null;
@@ -119,9 +124,12 @@ type CanvasState = {
   clearRunOutput: () => void;
   // Stage 6 Runtime Kernel: hydrate one resident-step response into the panels.
   applyRuntimeResult: (response: ResidentStepResponse) => void;
-  // Stage 6.2 DR Compiler: compile the given canvas and download the
-  // .digital_resident file. Export-only — never touches the runtime.
-  exportDR: (workflow: Workflow) => Promise<void>;
+  // Stage 6.3.3 DR Compile (validate, no download): POST /dr/compile and store
+  // the result. Never downloads a file, never touches the runtime.
+  compileDR: (workflow: Workflow) => Promise<void>;
+  // Stage 6.3.3 DR Export: download the already-validated compiledDR. Blocked
+  // unless a valid DR was compiled first.
+  exportDR: () => Promise<void>;
 
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
@@ -164,6 +172,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   apiReady: false,
   runtimeResult: null,
   runtimeDebug: null,
+  compiledDR: null,
+  drCompileResult: null,
+  canExportDR: false,
 
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
@@ -276,7 +287,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ].slice(0, 80)
     })),
   clearRunOutput: () =>
-    set({ logs: [], artifacts: [], exportPreview: null, validation: null, runtimeResult: null, runtimeDebug: null }),
+    set({
+      logs: [],
+      artifacts: [],
+      exportPreview: null,
+      validation: null,
+      runtimeResult: null,
+      runtimeDebug: null,
+      compiledDR: null,
+      drCompileResult: null,
+      canExportDR: false
+    }),
 
   // Stage 6 Runtime Kernel hydration: map the response into the existing panels.
   // execution_trace -> logs, memory_snapshot -> artifacts, status/run_id -> debug.
@@ -293,30 +314,55 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
-  // Stage 6.2 DR Compiler export: POST the canvas to /dr/compile and trigger a
-  // browser download of the returned .digital_resident file. No runtime calls.
-  exportDR: async (workflow) => {
+  // Stage 6.3.3 Compile DR: POST /dr/compile (validate, NO download). Saves the
+  // compiled DR + audit result; sets canExportDR only when valid. No runtime calls.
+  compileDR: async (workflow) => {
     const appendLog = get().appendLog;
-    appendLog("DR compile → /dr/compile");
+    appendLog("DR compile → /dr/compile (validate, no download)");
     try {
-      const { blob, filename, auditValid } = await api.compileDR(workflow, workflow.name);
-      if (typeof window !== "undefined") {
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = filename;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
+      const result: DRCompileResult = await api.compileDR(workflow, workflow.name);
+      set({
+        compiledDR: result.compiled_dr ?? null,
+        drCompileResult: result,
+        canExportDR: result.valid && result.compiled_dr != null
+      });
+      if (result.valid) {
+        appendLog(
+          `DR compiled OK — orchestration_compatible=${result.orchestration_compatibility}, ready to export ${result.filename}`
+        );
+      } else {
+        appendLog(`DR compile FAILED — ${result.errors.length} error(s); export disabled`, "error");
       }
-      appendLog(
-        `DR exported: ${filename} (audit valid=${auditValid})`,
-        auditValid ? "info" : "warn"
-      );
+      result.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
+      result.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
     } catch (error) {
+      set({ compiledDR: null, drCompileResult: null, canExportDR: false });
       appendLog(`DR compile failed: ${(error as Error).message}`, "error");
     }
+  },
+
+  // Stage 6.3.3 Export .digital_resident: download the already-validated
+  // compiledDR. Blocked unless a valid DR was compiled first. No backend call.
+  exportDR: async () => {
+    const appendLog = get().appendLog;
+    const { compiledDR, drCompileResult, canExportDR } = get();
+    if (!compiledDR || !drCompileResult || !canExportDR) {
+      appendLog("Export blocked: compile a valid DR first.", "warn");
+      return;
+    }
+    const filename = drCompileResult.filename || "digital_resident.digital_resident";
+    if (typeof window !== "undefined") {
+      const blob = new Blob([JSON.stringify(compiledDR, null, 2)], { type: "application/x-digital-resident" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }
+    appendLog(`DR exported: ${filename}`);
   },
   
   // P1-FIX：Module UI State actions
