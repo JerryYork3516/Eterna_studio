@@ -122,6 +122,9 @@ export type NodeRegistryEntry = {
   status: NodeStatus | ProtocolStatus | string;
   mock_executor?: string | null;
   audit_rules: string[];
+  node_role?: string | null;
+  i18n_keys?: Record<string, string>;
+  collapsed_sections?: string[];
 };
 
 export type ModuleCatalogEntryV04 = {
@@ -133,6 +136,14 @@ export type ModuleCatalogEntryV04 = {
   slot_type?: string | null;
   engine_binding?: string | null;
   description?: string | null;
+  input_schema?: NodeInputField[];
+  output_schema?: OutputSchemaField[];
+  slot_bindings?: Array<Record<string, unknown>>;
+  context_bindings?: Array<Record<string, unknown>>;
+  runtime_mapping?: Record<string, unknown>;
+  dr_mapping?: Record<string, unknown>;
+  ui_config?: Record<string, unknown>;
+  i18n_keys?: Record<string, string>;
   [key: string]: unknown;
 };
 
@@ -156,6 +167,16 @@ export type SlotCatalogEntryV04 = {
   slot_type: string;
   status: ProtocolStatus | string;
   engine_binding?: string | null;
+  slot_role?: string | null;
+  input_schema?: NodeInputField[];
+  output_schema?: OutputSchemaField[];
+  provider_requirement?: Record<string, unknown>;
+  runtime_capability?: Record<string, unknown>;
+  fallback_policy?: Record<string, unknown>;
+  permission_policy?: Record<string, unknown>;
+  trace_schema?: Record<string, unknown>;
+  mock_supported?: boolean;
+  i18n_keys?: Record<string, string>;
   [key: string]: unknown;
 };
 
@@ -236,6 +257,15 @@ export type WorkflowNode = {
    * 当前阶段可为空
    */
   module_id?: string | null;
+  node_role?: string | null;
+  input_schema?: NodeInputField[];
+  output_schema?: OutputSchemaField[];
+  context_requirements?: string[];
+  runtime_mapping?: Record<string, unknown>;
+  dr_mapping?: Record<string, unknown>;
+  ui_color?: string | null;
+  collapsed_sections?: string[];
+  i18n_keys?: Record<string, string>;
 };
 
 export type WorkflowEdge = {
@@ -272,6 +302,12 @@ export type Workflow = {
     layer_id?: string;
     [key: string]: unknown;
   }>;
+  slots?: Array<{
+    slot_id: string;
+    slot_type?: string;
+    [key: string]: unknown;
+  }>;
+  layer_contexts?: Record<string, Record<string, unknown>>;
   /**
    * P2-C：Workflow permissions
    * 工作流级别的权限声明

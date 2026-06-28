@@ -58,7 +58,7 @@ class RiskLevel(str, Enum):
 
 
 class ProtocolStatus(str, Enum):
-    """Status allowed for Module and Slot (capability lifecycle)."""
+    """Legacy status preserved for v0.4 compatibility."""
 
     core = "CORE"
     ready = "READY"
@@ -66,6 +66,31 @@ class ProtocolStatus(str, Enum):
     planned = "PLANNED"
     later = "LATER"
     disabled = "DISABLED"
+    unplanned = "UNPLANNED"
+    error = "ERROR"
+
+
+class ContractStatus(str, Enum):
+    unplanned = "UNPLANNED"
+    mock = "MOCK"
+    ready = "READY"
+    error = "ERROR"
+
+
+class NodeRole(str, Enum):
+    input = "input"
+    config = "config"
+    slot = "slot"
+    output = "output"
+    debug = "debug"
+
+
+class SlotRole(str, Enum):
+    input = "input"
+    config = "config"
+    slot = "slot"
+    output = "output"
+    debug = "debug"
 
 
 class SlotType(str, Enum):
@@ -98,6 +123,7 @@ class LayerRefV04(V04BaseModel):
     layer_order: int
     module_ids: List[str] = Field(default_factory=list)
     node_ids: List[str] = Field(default_factory=list)
+    layer_context: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -111,10 +137,18 @@ class NodeV04(V04BaseModel):
 
     node_id: str
     node_type: str
+    node_role: Optional[NodeRole] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
     input_schema: List[NodeInputField] = Field(default_factory=list)
     output_schema: List[OutputSchemaField] = Field(default_factory=list)
     execution_status: NodeStatus = NodeStatus.mock
     slot_binding: Optional[str] = None  # which Slot this node invokes
+    context_requirements: List[str] = Field(default_factory=list)
+    runtime_mapping: Dict[str, Any] = Field(default_factory=dict)
+    dr_mapping: Dict[str, Any] = Field(default_factory=dict)
+    ui_color: str = ""
+    collapsed_sections: List[str] = Field(default_factory=list)
+    i18n_keys: Dict[str, str] = Field(default_factory=dict)
     layer_id: Optional[str] = None
     module_id: Optional[str] = None
     # Data fidelity (not part of the locked protocol surface, kept for export):
@@ -147,6 +181,15 @@ class ModuleV04(V04BaseModel):
     module_name: str
     module_version: str = "0.1.0"
     layer_id: str  # must be one of CANONICAL_LAYER_IDS
+    module_graph: Dict[str, Any] = Field(default_factory=dict)
+    input_schema: List[NodeInputField] = Field(default_factory=list)
+    output_schema: List[OutputSchemaField] = Field(default_factory=list)
+    slot_bindings: List[Dict[str, Any]] = Field(default_factory=list)
+    context_bindings: List[Dict[str, Any]] = Field(default_factory=list)
+    runtime_mapping: Dict[str, Any] = Field(default_factory=dict)
+    dr_mapping: Dict[str, Any] = Field(default_factory=dict)
+    ui_config: Dict[str, Any] = Field(default_factory=dict)
+    i18n_keys: Dict[str, str] = Field(default_factory=dict)
     inputs: Dict[str, Any] = Field(default_factory=dict)
     outputs: Dict[str, Any] = Field(default_factory=dict)
     config: Dict[str, Any] = Field(default_factory=dict)
@@ -171,6 +214,18 @@ class FallbackPolicy(V04BaseModel):
     fallback_provider: Optional[str] = None
 
 
+class PermissionPolicy(V04BaseModel):
+    allowed: bool = True
+    human_confirm_required: bool = False
+    scopes: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceSchema(V04BaseModel):
+    fields: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class SlotV04(V04BaseModel):
     """Capability interface. A Slot is not a workflow and never calls a real API.
 
@@ -181,13 +236,20 @@ class SlotV04(V04BaseModel):
     protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
     slot_id: str
     slot_type: SlotType
+    slot_role: Optional[SlotRole] = None
     input_schema: List[NodeInputField] = Field(default_factory=list)
     output_schema: List[OutputSchemaField] = Field(default_factory=list)
     provider: Optional[str] = None
+    provider_requirement: Dict[str, Any] = Field(default_factory=dict)
+    runtime_capability: Dict[str, Any] = Field(default_factory=dict)
     execution_mode: ExecutionMode = ExecutionMode.mock
     fallback_policy: FallbackPolicy = Field(default_factory=FallbackPolicy)
-    status: ProtocolStatus = ProtocolStatus.mock
+    permission_policy: PermissionPolicy = Field(default_factory=PermissionPolicy)
+    trace_schema: TraceSchema = Field(default_factory=TraceSchema)
+    status: ContractStatus = ContractStatus.mock
     engine_binding: Optional[str] = None  # which Engine / Provider this Slot binds
+    mock_supported: bool = True
+    i18n_keys: Dict[str, str] = Field(default_factory=dict)
     enabled: bool = False
 
 
@@ -210,6 +272,7 @@ class WorkflowV04(V04BaseModel):
     risk_level: RiskLevel = RiskLevel.none
     audit_log: List[Dict[str, Any]] = Field(default_factory=list)
     extensions: Dict[str, Any] = Field(default_factory=dict)
+    layer_contexts: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -356,6 +419,7 @@ class V4ResolvedBinding(V04BaseModel):
     engine_provider: Optional[str] = None
     execution_mode: Optional[ExecutionMode] = None
     module_id: Optional[str] = None
+    layer_context: Dict[str, Any] = Field(default_factory=dict)
     resolved: bool = False
     note: str = ""
 
@@ -371,6 +435,7 @@ class V4ExecutionPlan(V04BaseModel):
     audit_log: List[AuditLogEntryV04] = Field(default_factory=list)
     blocked: bool = False
     v0_3_workflow: Dict[str, Any] = Field(default_factory=dict)
+    layer_contexts: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     notes: List[str] = Field(default_factory=list)
 
 

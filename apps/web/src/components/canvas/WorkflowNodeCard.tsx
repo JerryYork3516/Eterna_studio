@@ -14,7 +14,22 @@ type CanvasNodeData = {
   onInput?: (key: string, value: unknown) => void;
 };
 
-const HIDDEN_PARAM_KEYS = new Set(["parent_module", "parent_layer"]);
+const HIDDEN_PARAM_KEYS = new Set([
+  "parent_module",
+  "parent_layer",
+  "slot_binding",
+  "node_role",
+  "layer_id",
+  "module_id",
+  "context_requirements",
+  "runtime_mapping",
+  "dr_mapping",
+  "input_schema",
+  "output_schema",
+  "i18n_keys",
+  "collapsed_sections",
+  "ui_color"
+]);
 const LLM_CONFIG_NODE_TYPES = new Set([
   "model_adapter",
   "llm_provider_router",
@@ -34,6 +49,23 @@ function optionLabel(option: { value: string; label: string }, language: Languag
 
 function inputPlaceholder(field: NodeInputField, language: Language, fallback = "") {
   return translate(language, `input.placeholder.${field.key}`, field.placeholder ?? fallback);
+}
+
+function sectionTitle(language: Language, key: string, fallback: string) {
+  return translate(language, key, fallback);
+}
+
+function prettyValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function parseJsonInput(value: string) {
@@ -435,6 +467,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const uiTags = Array.isArray(nodeData.ui_tags) ? (nodeData.ui_tags as unknown[]).map(String).filter(Boolean) : [];
   const uiGroup = typeof nodeData.ui_group === "string" ? nodeData.ui_group : "";
   const uiColor = typeof nodeData.ui_color === "string" ? nodeData.ui_color : "";
+  const nodeColor = typeof schemaNode.ui_color === "string" && schemaNode.ui_color ? schemaNode.ui_color : uiColor;
   const aiSlot = inferAiSlot(schemaNode);
   const showLLMConfig = isLLMConfigNode(schemaNode);
   const llmEnabled = llmConfig ? llmConfig.enabled : typeof nodeData.enabled === "boolean" ? nodeData.enabled : undefined;
@@ -445,16 +478,38 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const schemaNodeInputSchema = (schemaNode as unknown as { input_schema?: NodeInputField[] }).input_schema;
   const inputSchema: NodeInputField[] = schemaNodeInputSchema ?? nodeDefinition?.input_schema ?? [];
+  const outputSchema = (schemaNode as unknown as { output_schema?: unknown[] }).output_schema ?? [];
+  const slotBinding = typeof schemaNode.slot_binding === "string" ? schemaNode.slot_binding : typeof nodeData.slot_binding === "string" ? nodeData.slot_binding : "";
+  const contextRequirements = Array.isArray(schemaNode.context_requirements)
+    ? schemaNode.context_requirements.map(String).filter(Boolean)
+    : Array.isArray(nodeData.context_requirements)
+      ? nodeData.context_requirements.map(String).filter(Boolean)
+      : [];
+  const collapsedSections = new Set(
+    Array.isArray(schemaNode.collapsed_sections)
+      ? schemaNode.collapsed_sections.map(String)
+      : Array.isArray(nodeData.collapsed_sections)
+        ? nodeData.collapsed_sections.map(String)
+        : ["core", "advanced", "input_schema", "output_schema", "slot_binding", "runtime"]
+  );
   const inputKeys = new Set(inputSchema.map((field) => field.key));
   const paramEntries = Object.entries(nodeData).filter(
     ([key]) => !key.startsWith("ui_") && !HIDDEN_PARAM_KEYS.has(key) && !inputKeys.has(key)
   );
   const isEnabled = typeof nodeData.enabled === "boolean" ? nodeData.enabled : true;
+  const sections = {
+    core: collapsedSections.has("core"),
+    advanced: collapsedSections.has("advanced"),
+    input_schema: collapsedSections.has("input_schema"),
+    output_schema: collapsedSections.has("output_schema"),
+    slot_binding: collapsedSections.has("slot_binding"),
+    runtime: collapsedSections.has("runtime")
+  };
 
   return (
     <div
       className={`workflow-node lock-${schemaNode.lock_level} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
-      style={uiColor ? ({ "--node-accent": uiColor } as CSSProperties) : undefined}
+      style={nodeColor ? ({ "--node-accent": nodeColor, backgroundColor: nodeColor } as CSSProperties) : undefined}
     >
       {hasInput ? <Handle type="target" position={Position.Left} id="p_in" className="flow-handle flow-handle-left" /> : null}
       <header className="workflow-node__header">
@@ -503,8 +558,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         ) : null}
       </header>
 
-      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.core", "Core Params")}</summary>
+      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core}>
+        <summary>{sectionTitle(language, "node.sections.core", "Core Params")}</summary>
         <div className="workflow-node__params-body">
           {onInput ? (
             <NodeInputRenderer fields={inputSchema} data={nodeData} language={language} onInput={onInput} />
@@ -515,8 +570,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         </div>
       </details>
 
-      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.advanced", "Advanced Params")}</summary>
+      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.advanced}>
+        <summary>{sectionTitle(language, "node.sections.advanced", "Advanced Params")}</summary>
         <div className="workflow-node__params-body">
           {uiGroup ? <div className="workflow-node__group">{uiGroup}</div> : null}
           {uiTags.length ? (
@@ -531,7 +586,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
               paramEntries.map(([key, value]) => (
                 <div key={key} className="workflow-node__param-pair">
                   <dt>{key}</dt>
-                  <dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
+                  <dd>{prettyValue(value)}</dd>
                 </div>
               ))
             ) : (
@@ -544,8 +599,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         </div>
       </details>
 
-      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.runtime", "Runtime Info")}</summary>
+      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.runtime}>
+        <summary>{sectionTitle(language, "node.sections.runtime", "Runtime Info")}</summary>
         <div className="workflow-node__params-body">
           <dl>
             <dt>{translate(language, "field.nodeId", "Node ID")}</dt>
@@ -556,6 +611,14 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
             <dd>{lockLabel}</dd>
             <dt>{translate(language, "field.validation", "Validation")}</dt>
             <dd>{schemaNode.validation?.status ?? translate(language, "node.status.UNPLANNED", "UNPLANNED")}</dd>
+            <dt>{translate(language, "node.sections.slotBinding", "Slot Binding")}</dt>
+            <dd>{slotBinding || translate(language, "node.slotBinding.none", "None")}</dd>
+            <dt>{translate(language, "node.sections.inputSchema", "Input Schema")}</dt>
+            <dd>{inputSchema.length ? inputSchema.map((field) => field.key).join(", ") : translate(language, "node.inputs.empty", "No schema inputs")}</dd>
+            <dt>{translate(language, "node.sections.outputSchema", "Output Schema")}</dt>
+            <dd>{outputSchema.length ? outputSchema.length.toString() : translate(language, "node.inputs.empty", "No schema inputs")}</dd>
+            <dt>{translate(language, "node.sections.context", "Context")}</dt>
+            <dd>{contextRequirements.length ? contextRequirements.join(", ") : translate(language, "node.context.empty", "None")}</dd>
           </dl>
         </div>
       </details>

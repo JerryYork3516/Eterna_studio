@@ -72,6 +72,37 @@ def _slugify(text: str) -> str:
     return cleaned.strip("_") or "digital_resident"
 
 
+def _collect_layer_contexts(workflow: Dict[str, Any], layers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    contexts: Dict[str, Dict[str, Any]] = {}
+    workflow_contexts = workflow.get("layer_contexts") if isinstance(workflow.get("layer_contexts"), dict) else {}
+    for layer in layers:
+        layer_id = layer.get("layer_id", "")
+        raw_context = workflow_contexts.get(layer_id)
+        context = _as_dict(raw_context)
+        if not context:
+            context = _as_dict(layer.get("layer_context"))
+        contexts[layer_id] = {
+            "layer_context": context,
+            "context_bindings": context.get("context_bindings", []) if isinstance(context.get("context_bindings"), list) else [],
+        }
+    return contexts
+
+
+def _node_layer(nodes: List[Dict[str, Any]], node_id: Any) -> str | None:
+    if not node_id:
+        return None
+    for node in nodes:
+        candidate_id = node.get("node_id") or node.get("id")
+        if candidate_id == node_id:
+            layer_id = node.get("layer_id")
+            if isinstance(layer_id, str) and layer_id:
+                return layer_id
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            if isinstance(data.get("layer_id"), str) and data.get("layer_id"):
+                return data.get("layer_id")
+    return None
+
+
 # --- 1. collect ------------------------------------------------------------
 def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
     """Collect the 13 layers, modules and slots from the canvas + catalog.
@@ -130,6 +161,8 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
+    layer_contexts = _collect_layer_contexts(workflow, layers)
+
     return {
         "workflow": workflow,
         "nodes": [_as_dict(n) for n in nodes],
@@ -137,6 +170,7 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
         "layers": layers,
         "modules": modules,
         "slots": slots,
+        "layer_contexts": layer_contexts,
     }
 
 
@@ -230,7 +264,7 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
         elif slot_type not in available_slot_types:
             findings.append(
                 _finding(
-                    "FAIL",
+                    "WARNING",
                     "DR_SLOT_TYPE_UNMATCHED",
                     f"module {module.get('module_id')} needs slot_type {slot_type!r} but no slot provides it",
                     f"modules[{index}].slot_type",
@@ -268,6 +302,23 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
             provider_boundary_findings(collection.get(section, []), section, "DR_PROVIDER_CONFIG")
         )
 
+    # Cross-layer edges are advisory at this stage: warn only if both endpoints
+    # appear to live on different canonical layers.
+    for index, edge in enumerate(collection.get("edges", [])):
+        source = edge.get("source_node_id") or edge.get("source")
+        target = edge.get("target_node_id") or edge.get("target")
+        source_layer = _node_layer(collection.get("nodes", []), source)
+        target_layer = _node_layer(collection.get("nodes", []), target)
+        if source_layer and target_layer and source_layer != target_layer:
+            findings.append(
+                _finding(
+                    "WARNING",
+                    "DR_CROSS_LAYER_EDGE",
+                    f"edge {edge.get('id') or edge.get('edge_id') or index} spans {source_layer} -> {target_layer}",
+                    f"edges[{index}]",
+                )
+            )
+
     return findings
 
 
@@ -278,6 +329,7 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
     modules = collection["modules"]
     slots = collection["slots"]
     layers = collection["layers"]
+    layer_contexts = collection.get("layer_contexts", {})
 
     name = resident_name or workflow.get("name") or "Digital Resident"
     resident_id = _slugify(name)
@@ -313,6 +365,7 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
         "layers": layers,
         "modules": modules,
         "slots": slots,
+        "layer_contexts": layer_contexts,
         "runtime_requirements": {
             "runtime_version": RUNTIME_VERSION,
             "min_kernel": MIN_KERNEL,

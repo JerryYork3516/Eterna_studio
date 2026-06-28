@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from ..models.v0_4 import (
+    ContractStatus,
     FallbackPolicy,
     OnError,
     ProtocolStatus,
@@ -25,7 +26,7 @@ def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = Non
         provider=None,
         engine_binding=engine_binding,  # binds an Engine, never a real provider this stage
         enabled=False,
-        status=ProtocolStatus.mock,
+        status=ContractStatus.mock,
         fallback_policy=FallbackPolicy(on_error=OnError.mock, retry=0, fallback_provider=None),
     )
 

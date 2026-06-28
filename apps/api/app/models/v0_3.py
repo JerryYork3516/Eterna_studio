@@ -19,8 +19,10 @@ class V03BaseModel(BaseModel):
 
 
 class NodeStatus(str, Enum):
+    unplanned = "UNPLANNED"
     ready = "READY"
     mock = "MOCK"
+    error = "ERROR"
     disabled = "DISABLED"
 
 

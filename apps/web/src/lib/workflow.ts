@@ -348,7 +348,21 @@ function sanitizeNode(value: unknown, index: number, nodeIds: Set<string>): Work
     locale: typeof node.locale === "string" ? node.locale : null,
     data: sanitizeNodeData(node.data, `nodes[${index}].data`),
     ports: sanitizePorts(node.ports, `nodes[${index}].ports`),
-    validation: node.validation === undefined ? undefined : isRecord(node.validation) ? node.validation : null
+    validation: node.validation === undefined ? undefined : isRecord(node.validation) ? node.validation : null,
+    slot_binding: typeof node.slot_binding === "string" ? node.slot_binding : null,
+    layer_id: typeof node.layer_id === "string" ? node.layer_id : null,
+    module_id: typeof node.module_id === "string" ? node.module_id : null,
+    node_role: typeof node.node_role === "string" ? node.node_role : null,
+    input_schema: Array.isArray(node.input_schema) ? node.input_schema.filter(isRecord) : [],
+    output_schema: Array.isArray(node.output_schema) ? node.output_schema.filter(isRecord) : [],
+    context_requirements: Array.isArray(node.context_requirements) ? node.context_requirements.map(String) : [],
+    runtime_mapping: isRecord(node.runtime_mapping) ? node.runtime_mapping : {},
+    dr_mapping: isRecord(node.dr_mapping) ? node.dr_mapping : {},
+    ui_color: typeof node.ui_color === "string" ? node.ui_color : null,
+    collapsed_sections: Array.isArray(node.collapsed_sections) ? node.collapsed_sections.map(String) : [],
+    i18n_keys: isRecord(node.i18n_keys)
+      ? Object.fromEntries(Object.entries(node.i18n_keys).map(([key, value]) => [key, String(value)]))
+      : {}
   } as WorkflowNode;
 }
 
@@ -432,6 +446,21 @@ function sanitizeNodeData(value: unknown, path: string) {
   const moduleTier = data.module_tier;
   if (moduleTier !== undefined && moduleTier !== null && !MODULE_TIERS.has(String(moduleTier))) {
     throw new Error(`Invalid workflow: ${path}.module_tier "${String(moduleTier)}" is not supported`);
+  }
+  if (data.context_requirements === undefined) {
+    data.context_requirements = [];
+  }
+  if (data.collapsed_sections === undefined) {
+    data.collapsed_sections = [];
+  }
+  if (data.i18n_keys === undefined) {
+    data.i18n_keys = {};
+  }
+  if (data.runtime_mapping === undefined) {
+    data.runtime_mapping = {};
+  }
+  if (data.dr_mapping === undefined) {
+    data.dr_mapping = {};
   }
   return data;
 }
