@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from ..services.execution_engine import execute_resident_step
+from ..services.execution_engine import execute_load_digital_resident_from_bytes, execute_resident_step
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 
@@ -35,3 +35,10 @@ class RuntimeResidentStepRequest(BaseModel):
 @router.post("/resident/step")
 def resident_step(req: RuntimeResidentStepRequest) -> Dict[str, Any]:
     return execute_resident_step(req.workflow, req.input_text, req.resident_id or "resident_v1")
+
+
+@router.post("/resident/load-dr")
+async def resident_load_dr(request: Request) -> Dict[str, Any]:
+    """Load a .digital_resident JSON document and run one mock resident step."""
+    raw = await request.body()
+    return execute_load_digital_resident_from_bytes(raw)

@@ -1300,7 +1300,9 @@ export function CanvasShell() {
     compileDR,
     exportDR,
     canExportDR,
-    drCompileResult
+    drCompileResult,
+    loadDRFile,
+    loadedDRResult
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
@@ -1543,6 +1545,7 @@ export function CanvasShell() {
 
   // 导入 Canvas 状态
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const drLoadInputRef = useRef<HTMLInputElement>(null);
   const handleImportCanvasState = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -1599,6 +1602,25 @@ export function CanvasShell() {
   const handleImportCanvasStateClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const handleLoadDRFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+      setBottomTab("logs");
+      setActiveDrawer("logs");
+      await loadDRFile(file);
+      event.target.value = "";
+    },
+    [loadDRFile, setActiveDrawer, setBottomTab]
+  );
+
+  const handleLoadDRClick = useCallback(() => {
+    drLoadInputRef.current?.click();
+  }, []);
+
   const handleUndo = useCallback(() => {
     appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
   }, [appendLog, t]);
@@ -2957,6 +2979,22 @@ export function CanvasShell() {
 	              </span>
 	            ) : null}
 	            <button className="export-dr-button" onClick={handleExportDR} disabled={!canExportDR} title={canExportDR ? undefined : t("toolbar.exportDRBlocked", "Compile a valid DR first")}>{t("toolbar.exportDR", "Export DR")}</button>
+	            <button className="load-dr-button" onClick={handleLoadDRClick}>{t("toolbar.loadDR", "Load DR")}</button>
+	            {loadedDRResult ? (
+	              <span
+	                className={`dr-compile-chip is-${loadedDRResult.loaded ? "valid" : "invalid"}`}
+	                title={`loaded=${loadedDRResult.loaded} · status=${loadedDRResult.status} · errors=${loadedDRResult.validation_result.errors.length}`}
+	              >
+	                DR load {loadedDRResult.loaded ? "loaded" : "rejected"} · {loadedDRResult.status}
+	              </span>
+	            ) : null}
+	            <input
+	              ref={drLoadInputRef}
+	              type="file"
+	              accept=".digital_resident,application/json,.json"
+	              onChange={handleLoadDRFile}
+	              style={{ display: "none" }}
+	            />
             <button onClick={handleExportCanvasState}>{t("canvas.export", "导出项目")}</button>
             <button onClick={handleImportCanvasStateClick}>{t("canvas.import", "导入项目")}</button>
             <input

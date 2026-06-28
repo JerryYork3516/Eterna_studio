@@ -12,7 +12,7 @@ import type {
   WorkflowNode
 } from "@/lib/schema-types";
 import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hydration";
-import { api, type DRCompileResult } from "@/lib/api";
+import { api, type DRCompileResult, type DRLoadResult } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
@@ -90,6 +90,8 @@ type CanvasState = {
   compiledDR: Record<string, unknown> | null;   // downloadable content (valid only)
   drCompileResult: DRCompileResult | null;        // full compile + audit result
   canExportDR: boolean;                           // true only when valid
+  // Stage 6.4 Runtime Load DR: last /runtime/resident/load-dr response.
+  loadedDRResult: DRLoadResult | null;
 
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
@@ -130,6 +132,8 @@ type CanvasState = {
   // Stage 6.3.3 DR Export: download the already-validated compiledDR. Blocked
   // unless a valid DR was compiled first.
   exportDR: () => Promise<void>;
+  // Stage 6.4 Runtime Load DR: read a .digital_resident file and run mock loop.
+  loadDRFile: (file: File) => Promise<void>;
 
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
@@ -175,6 +179,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   compiledDR: null,
   drCompileResult: null,
   canExportDR: false,
+  loadedDRResult: null,
 
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
@@ -296,7 +301,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       runtimeDebug: null,
       compiledDR: null,
       drCompileResult: null,
-      canExportDR: false
+      canExportDR: false,
+      loadedDRResult: null
     }),
 
   // Stage 6 Runtime Kernel hydration: map the response into the existing panels.
@@ -366,6 +372,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       URL.revokeObjectURL(url);
     }
     appendLog(`DR exported: ${filename} (dr_version=${drCompileResult.dr_version})`);
+  },
+
+  // Stage 6.4 Load .digital_resident: the browser reads the JSON file, then the
+  // backend validates and runs the existing mock runtime loop. No multipart or
+  // real provider is introduced here.
+  loadDRFile: async (file) => {
+    const appendLog = get().appendLog;
+    set({ loadedDRResult: null });
+    appendLog(`Load DR → /runtime/resident/load-dr (${file.name})`);
+    try {
+      const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
+      const result: DRLoadResult = await api.loadDigitalResident(parsed, `Load DR: ${file.name}`);
+      set({ loadedDRResult: result });
+      if (result.loaded) {
+        appendLog(`DR loaded OK — resident=${result.resident_id}, dr_version=${result.dr_version ?? "unknown"}`);
+        get().applyRuntimeResult(result);
+      } else {
+        const validation = result.validation_result;
+        appendLog(
+          `DR load rejected — dr_version=${result.dr_version ?? validation.dr_version ?? "unknown"} · ${validation.errors.length} error(s)`,
+          "error"
+        );
+        validation.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
+        validation.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
+      }
+    } catch (error) {
+      set({ loadedDRResult: null });
+      appendLog(`DR load failed: ${(error as Error).message}`, "error");
+    }
   },
   
   // P1-FIX：Module UI State actions

@@ -17,8 +17,11 @@ memory_snapshotter emits a memory snapshot at the end of each run.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from ..dr.v2.validator import validate_dr_v0_2
 
 from .memory_snapshotter import take_snapshot
 from .provider_adapters import route_provider
@@ -38,6 +41,14 @@ class ResidentRuntimeState:
     last_action: Dict[str, Any] = field(default_factory=dict)
     last_output: str = ""
     turn_count: int = 0
+    dr_version: str = ""
+    identity: Dict[str, Any] = field(default_factory=dict)
+    capability_profile: Dict[str, Any] = field(default_factory=dict)
+    memory_policy: Dict[str, Any] = field(default_factory=dict)
+    runtime_status: str = "idle"
+    provider_bindings: Dict[str, str] = field(
+        default_factory=lambda: {"llm": "mock", "memory": "mock", "tool": "mock"}
+    )
 
 
 _STATES: Dict[str, ResidentRuntimeState] = {}
@@ -51,6 +62,161 @@ def get_or_create_state(resident_id: str) -> ResidentRuntimeState:
         state = ResidentRuntimeState(resident_id=resident_id)
         _STATES[resident_id] = state
     return state
+
+
+def create_runtime_state_from_dr(dr: Dict[str, Any]) -> ResidentRuntimeState:
+    """Create or refresh the process-local runtime state from a valid DR v0.2.
+
+    This only binds the existing deterministic mock providers. It does not create
+    real provider clients, schedulers, secure loaders, or orchestration runners.
+    """
+    identity = dict(dr.get("identity") or {})
+    resident_id = identity.get("resident_id") or "resident_v1"
+    state = get_or_create_state(resident_id)
+    state.dr_version = str(dr.get("dr_version") or "")
+    state.identity = identity
+    state.capability_profile = dict(dr.get("capability_profile") or {})
+    state.memory_policy = dict(dr.get("memory_policy") or {})
+    state.status = "idle"
+    state.runtime_status = "idle"
+    state.provider_bindings = {"llm": "mock", "memory": "mock", "tool": "mock"}
+    return state
+
+
+def _empty_memory_snapshot(resident_id: Optional[str]) -> Dict[str, Any]:
+    return {"resident_id": resident_id, "entries": [], "count": 0}
+
+
+def _empty_validation_result(
+    *,
+    dr_version: Optional[str] = None,
+    errors: Optional[List[Dict[str, Any]]] = None,
+    warnings: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    return {
+        "valid": False,
+        "dr_version": dr_version,
+        "errors": errors or [],
+        "warnings": warnings or [],
+        "module_audit": {},
+        "layer_audit": {},
+        "compile_audit": {},
+        "orchestration_compatibility": False,
+        "pseudo_dag": [],
+    }
+
+
+def _rejected_load(
+    *,
+    resident_id: Optional[str],
+    dr_version: Optional[str],
+    validation_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "loaded": False,
+        "mock": True,
+        "resident_id": resident_id,
+        "dr_version": dr_version,
+        "validation_result": validation_result,
+        "status": "rejected",
+        "memory_snapshot": _empty_memory_snapshot(resident_id),
+        "execution_trace": [],
+        "trace": [],
+        "output_text": "",
+        "turn_count": 0,
+    }
+
+
+def _normalize_dr_payload(file_or_dict: Any) -> Dict[str, Any]:
+    if isinstance(file_or_dict, dict) and isinstance(file_or_dict.get("dr"), dict):
+        return dict(file_or_dict["dr"])
+    if isinstance(file_or_dict, dict):
+        return dict(file_or_dict)
+    if isinstance(file_or_dict, (bytes, bytearray)):
+        text = bytes(file_or_dict).decode("utf-8")
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return _normalize_dr_payload(parsed)
+    if isinstance(file_or_dict, str):
+        parsed = json.loads(file_or_dict)
+        if isinstance(parsed, dict):
+            return _normalize_dr_payload(parsed)
+    if hasattr(file_or_dict, "read"):
+        raw = file_or_dict.read()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+        return _normalize_dr_payload(raw)
+    raise ValueError("DR payload must be a JSON object or bytes containing a JSON object")
+
+
+def load_digital_resident(file_or_dict: Any, input_text: str = "load digital resident") -> Dict[str, Any]:
+    """Load a .digital_resident v0.2 into the mock runtime and run one step."""
+    try:
+        dr = _normalize_dr_payload(file_or_dict)
+    except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        validation_result = _empty_validation_result(
+            errors=[
+                {
+                    "status": "FAIL",
+                    "code": "DR_LOAD_PARSE_ERROR",
+                    "message": str(exc),
+                    "path": "(root)",
+                }
+            ]
+        )
+        return _rejected_load(resident_id=None, dr_version=None, validation_result=validation_result)
+
+    identity = dr.get("identity") if isinstance(dr.get("identity"), dict) else {}
+    resident_id = identity.get("resident_id")
+    dr_version = dr.get("dr_version")
+    validation_result = validate_dr_v0_2(dr)
+    if not validation_result.get("valid"):
+        return _rejected_load(
+            resident_id=resident_id,
+            dr_version=dr_version,
+            validation_result=validation_result,
+        )
+
+    state = create_runtime_state_from_dr(dr)
+    loop = run_resident_loop({"digital_resident": dr}, input_text, state.resident_id)
+    return {
+        "loaded": True,
+        "dr_version": state.dr_version,
+        "validation_result": validation_result,
+        "runtime_state": {
+            "resident_id": state.resident_id,
+            "dr_version": state.dr_version,
+            "identity": state.identity,
+            "capability_profile": state.capability_profile,
+            "memory_policy": state.memory_policy,
+            "runtime_status": state.runtime_status,
+            "turn_count": state.turn_count,
+            "provider_bindings": state.provider_bindings,
+        },
+        **loop,
+    }
+
+
+def load_digital_resident_from_bytes(raw: bytes, input_text: Optional[str] = None) -> Dict[str, Any]:
+    """Parse bytes from a .digital_resident JSON file or JSON API body."""
+    selected_input = input_text or "load digital resident"
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+        if isinstance(parsed, dict) and isinstance(parsed.get("input_text"), str) and input_text is None:
+            selected_input = parsed["input_text"]
+        return load_digital_resident(parsed, input_text=selected_input)
+    except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        validation_result = _empty_validation_result(
+            errors=[
+                {
+                    "status": "FAIL",
+                    "code": "DR_LOAD_PARSE_ERROR",
+                    "message": str(exc),
+                    "path": "(root)",
+                }
+            ]
+        )
+        return _rejected_load(resident_id=None, dr_version=None, validation_result=validation_result)
 
 
 def reset_states() -> None:
@@ -72,6 +238,7 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
     run = _state_manager.start_run(resident_id, turn_count=state.turn_count + 1)
     collector = TraceCollector(run_id=run.run_id, resident_id=resident_id)
     state.status = run.status  # "running"
+    state.runtime_status = run.status  # "running"
 
     # 1. input
     state.last_input = input_text
@@ -143,6 +310,7 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str) -> Dict[
     )
     _state_manager.complete_run(run, turn_count=state.turn_count)
     state.status = run.status  # "completed"
+    state.runtime_status = run.status  # "completed"
 
     return {
         "resident_id": resident_id,

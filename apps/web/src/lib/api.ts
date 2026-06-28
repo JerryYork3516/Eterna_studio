@@ -170,6 +170,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ workflow, resident_name: residentName })
     });
+  },
+  // Stage 6.4 Runtime Load DR: upload/read a validated .digital_resident JSON
+  // payload and let the backend runtime run one mock resident step from it.
+  loadDigitalResident(dr: Record<string, unknown>, inputText?: string) {
+    return request<DRLoadResult>("/runtime/resident/load-dr", {
+      method: "POST",
+      body: JSON.stringify({ dr, input_text: inputText })
+    });
   }
 };
 
@@ -191,4 +199,23 @@ export type DRCompileResult = {
   dr_payload: Record<string, unknown>;
   filename: string;
   metadata: Record<string, unknown>;
+};
+
+export type DRValidationResult = {
+  valid: boolean;
+  dr_version: string | null;
+  errors: DRFinding[];
+  warnings: DRFinding[];
+  module_audit: Record<string, unknown>;
+  layer_audit: Record<string, unknown>;
+  compile_audit: Record<string, unknown>;
+  orchestration_compatibility: boolean;
+  pseudo_dag: Array<Record<string, unknown>>;
+};
+
+export type DRLoadResult = ResidentStepResponse & {
+  loaded: boolean;
+  dr_version?: string | null;
+  validation_result: DRValidationResult;
+  runtime_state?: Record<string, unknown>;
 };
