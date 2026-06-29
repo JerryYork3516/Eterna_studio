@@ -63,35 +63,38 @@ def test_no_config_uses_mock():
 # --- 2. configured + success -> real -----------------------------------------
 def test_configured_uses_real_llm(monkeypatch):
     monkeypatch.setattr(provider_adapters, "call_openai_compat", _real_ok)
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
     body = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r2"}).json()
     rs = _reasoning(body)
     assert rs["mock"] is False
     assert rs["fallback_mock"] is False
     assert rs["engine_id"] == "llm_primary"
     assert rs["model"] == "gpt-x"
+    assert rs["profile_id"] == "default"
     assert rs["text"] == "REAL reply"
 
 
 # --- 3. configured + failure -> fallback mock (no crash) ---------------------
 def test_real_failure_falls_back_to_mock(monkeypatch):
     monkeypatch.setattr(provider_adapters, "call_openai_compat", _real_err)
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
     body = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r3"}).json()
     rs = _reasoning(body)
     assert rs["mock"] is True
     assert rs["fallback_mock"] is True
     assert rs["engine_id"] == "llm_mock"
+    assert rs["profile_id"] == "default"
     assert rs["error"] == "llm http 401"
     assert rs["text"] == "This is a mock LLM response."
 
 
 def test_real_failure_no_fallback_keeps_error(monkeypatch):
     monkeypatch.setattr(provider_adapters, "call_openai_compat", _real_err)
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True, fallback_to_mock=False)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True, fallback_to_mock=False)
     body = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r4"}).json()
     rs = _reasoning(body)
     assert rs["fallback_mock"] is False
+    assert rs["profile_id"] == "default"
     assert rs["error"] == "llm http 401"
     # Loop must not crash; response is still a normal envelope.
     assert body["status"] == "completed"
@@ -100,43 +103,46 @@ def test_real_failure_no_fallback_keeps_error(monkeypatch):
 # --- 4. trace fields present -------------------------------------------------
 def test_reasoning_trace_fields(monkeypatch):
     monkeypatch.setattr(provider_adapters, "call_openai_compat", _real_ok)
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
     body = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r5"}).json()
     rs = _reasoning(body)
-    for key in ("provider_type", "provider_id", "engine_id", "model", "mock", "fallback_mock", "error"):
+    for key in ("profile_id", "provider", "model", "mock", "fallback_mock"):
         assert key in rs
-    assert rs["provider_type"] == "llm"
+    assert rs["provider"] == "openai_compatible"
 
 
 # --- 5. api_key never leaks --------------------------------------------------
 def test_api_key_never_leaks_in_response(monkeypatch):
     monkeypatch.setattr(provider_adapters, "call_openai_compat", _real_ok)
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-super-secret", model="gpt-x", enabled=True)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-super-secret", model="gpt-x", enabled=True)
     body = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r6"}).json()
     assert "sk-super-secret" not in json.dumps(body)
+    assert "api_key" not in json.dumps(body)
 
 
 # --- 6. config endpoints (masked; no key echo) -------------------------------
 def test_config_save_and_get_are_masked():
     saved = client.post(
         "/runtime/config/llm",
-        json={"base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x", "enabled": True},
+        json={"profile_id": "default", "base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x", "enabled": True},
     ).json()
     assert saved["saved"] is True
     assert saved["has_api_key"] is True
+    assert saved["profile_id"] == "default"
     assert "api_key" not in saved
     assert "sk-secret" not in json.dumps(saved)
 
     got = client.get("/runtime/config/llm").json()
     assert got["has_api_key"] is True
     assert got["base_url"] == "https://relay/v1"
+    assert got["profiles"]["default"]["has_api_key"] is True
     assert "api_key" not in got
 
 
 def test_config_empty_api_key_keeps_existing():
-    set_runtime_llm_config(base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
+    set_runtime_llm_config(profile_id="default", provider="openai_compatible", base_url="https://relay/v1", api_key="sk-secret", model="gpt-x", enabled=True)
     # Resubmit without api_key (UI never resends the stored key).
-    client.post("/runtime/config/llm", json={"model": "gpt-y", "api_key": ""})
+    client.post("/runtime/config/llm", json={"profile_id": "default", "model": "gpt-y", "api_key": ""})
     cfg = get_runtime_llm_config()
     assert cfg.api_key == "sk-secret"  # unchanged
     assert cfg.model == "gpt-y"
@@ -148,15 +154,16 @@ def test_test_connection_endpoint(monkeypatch):
     monkeypatch.setattr(rc, "call_openai_compat", _real_ok)
     r = client.post(
         "/runtime/config/llm/test",
-        json={"base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x"},
+        json={"profile_id": "default", "base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x"},
     ).json()
     assert r["ok"] is True
     assert r["model"] == "gpt-x"
+    assert r["provider"] == "openai_compatible"
     assert "sk-secret" not in json.dumps(r)
 
 
 def test_test_connection_incomplete_config():
-    r = client.post("/runtime/config/llm/test", json={"base_url": "", "model": ""}).json()
+    r = client.post("/runtime/config/llm/test", json={"profile_id": "custom", "base_url": "", "model": ""}).json()
     assert r["ok"] is False
 
 

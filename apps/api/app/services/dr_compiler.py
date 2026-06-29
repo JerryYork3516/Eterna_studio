@@ -373,11 +373,48 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
             "required_slot_types": required_slot_types,
             "engines": engines,
         },
+        # Stage 6.7 memory fields (DR v0.3 reserved; declarative only).
         "memory_config": {
-            "provider": "mock",
-            "store": "in_process",
+            "provider": "memory_mock",
+            "store": "sqlite",
+            "fallback": ["json", "mock"],
             "isolation": "per_resident",
-            "persistence": False,
+            "persistence": True,
+            "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+        },
+        "memory_namespace": "default",
+        "memory_policy": {
+            "retention": "persistent",
+            "isolation": "per_resident",
+            "max_entries": 200,
+        },
+        "memory_storage_requirement": {
+            "preferred": "sqlite",
+            "fallback": ["json", "mock"],
+            "cloud": False,
+            "vector": False,
+        },
+        "lattice_config": {
+            "resident_id": resident_id,
+            "grid_size": {"x": 8, "y": 8, "z": 4},
+            "multi_resident_enabled": False,
+            "focus_mode": "single",
+            "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"],
+        },
+        "lattice_state_schema": {
+            "resident_id": resident_id,
+            "emotion": "neutral",
+            "energy": 0.5,
+            "attention": "self",
+            "motion": "idle_breathing",
+            "voice_state": "idle",
+            "particle_density": 0.5,
+            "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"],
+            "focus_target": "none",
+        },
+        "multi_resident_lattice_state": {
+            "resident_ids": [resident_id],
+            "states": [],
         },
         "safety_policy": {
             "disclosure_required": True,
@@ -614,6 +651,9 @@ def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = Non
         "compile_audit": gate.get("compile_audit", {}),
         "orchestration_compatibility": gate.get("orchestration_compatibility", False),
         "pseudo_dag": gate.get("pseudo_dag", []),
+        "lattice_config": v01.get("lattice_config"),
+        "lattice_state_schema": v01.get("lattice_state_schema"),
+        "multi_resident_lattice_state": v01.get("multi_resident_lattice_state"),
         # The downloadable file content — the DR v0.2 candidate that PASSED
         # validate_dr_v0_2 (NOT the v0.1 wrapper). Only present when valid.
         "compiled_dr": candidate if valid else None,

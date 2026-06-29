@@ -42,6 +42,9 @@ SLOT_CATALOG: List[SlotV04] = [
     _slot("slot_screen", SlotType.screen, engine_binding="screen_mock"),
     _slot("slot_ar", SlotType.ar, engine_binding="screen_mock"),
     _slot("slot_tool", SlotType.tool, engine_binding="tool_mock"),
+    _slot("slot_lattice_update", SlotType.lattice, engine_binding="lattice_mock"),
+    _slot("slot_lattice_read", SlotType.lattice, engine_binding="lattice_mock"),
+    _slot("slot_lattice_preview", SlotType.lattice, engine_binding="lattice_mock"),
 ]
 
 

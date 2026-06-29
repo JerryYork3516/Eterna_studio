@@ -20,7 +20,7 @@ import {
 import { translate, type Language } from "@/i18n";
 import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import { api } from "@/lib/api";
-import type { DRLoadResult } from "@/lib/api";
+import type { DRLoadResult, LLMProfileInput } from "@/lib/api";
 import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, ResidentInstanceV03, Workflow, WorkflowNode } from "@/lib/schema-types";
 import { safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow } from "@/lib/workflow";
@@ -316,7 +316,7 @@ function getCollapsedLabel(type: ModuleNodeType, language: Language): string {
 }
 
 type BottomTab = "logs" | "artifacts" | "preview";
-type DrawerId = "layers" | "residentPreview" | BottomTab;
+type DrawerId = "layers" | "residentPreview" | "settings" | BottomTab;
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 type RunWorkflowStatus = "idle" | "running" | "success" | "error";
 type AlignAction = "left" | "right" | "top" | "bottom" | "center-x" | "center-y";
@@ -1267,6 +1267,7 @@ export function CanvasShell() {
   const [showGrid, setShowGrid] = useState(true);
   const [showMiniMap, setShowMiniMap] = useState(true);
   const [showDebugTracePanel, setShowDebugTracePanel] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
@@ -1294,6 +1295,8 @@ export function CanvasShell() {
     validation,
     exportPreview,
     runtimeResult,
+    memoryView,
+    memoryClearResult,
     apiReady,
     setSelectedNode,
     setLanguage,
@@ -1420,6 +1423,22 @@ export function CanvasShell() {
       .catch((error) => {
         if (active) {
           appendLog(`${t("error.engineRegistry", "Engine registry failed")}: ${(error as Error).message}`, "error");
+        }
+      });
+
+    useCanvasStore
+      .getState()
+      .loadLLMConfig()
+      .then(() => {
+        if (!active) {
+          return;
+        }
+        const profiles = useCanvasStore.getState().llmProfiles;
+        appendLog(`${t("status.llmProfilesLoaded", "LLM profiles loaded")}: ${Object.keys(profiles?.profiles ?? {}).length}`);
+      })
+      .catch((error) => {
+        if (active) {
+          appendLog(`${t("error.llmProfiles", "LLM profiles failed")}: ${(error as Error).message}`, "error");
         }
       });
 
@@ -3018,6 +3037,9 @@ export function CanvasShell() {
 	              onChange={handleLoadDRFile}
 	              style={{ display: "none" }}
 	            />
+            <button type="button" className="toolbar-settings-button" onClick={() => setSettingsOpen((value) => !value)}>
+              {t("toolbar.settings", "Settings")}
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -3224,8 +3246,12 @@ export function CanvasShell() {
                       jsonPreview={{
                         runtime_result: runtimeResult,
                         loaded_file: loadedDRResult,
-                        export_preview: exportPreview
+                        export_preview: exportPreview,
+                        memory_view: memoryView,
+                        memory_clear_result: memoryClearResult
                       }}
+                      memoryView={memoryView ?? null}
+                      memoryClearResult={memoryClearResult ?? null}
                       onToggle={() => setShowDebugTracePanel((value) => !value)}
                     />
                     {showMiniMap ? (
@@ -3407,6 +3433,13 @@ export function CanvasShell() {
             previewLoadError={previewLoadError}
           />
         </FloatingSidePanel>
+      ) : null}
+
+      {settingsOpen ? (
+        <RuntimeLLMProfilesPanel
+          t={t}
+          onClose={() => setSettingsOpen(false)}
+        />
       ) : null}
 
       {outputDrawer ? (
@@ -3728,6 +3761,152 @@ function FloatingBottomPanel({
         <div className="bottom-drawer-body">{children}</div>
       </section>
     </FloatingPortal>
+  );
+}
+
+function RuntimeLLMProfilesPanel({
+  t,
+  onClose
+}: {
+  t: (key: string, fallback?: string) => string;
+  onClose: () => void;
+}) {
+  const llmProfiles = useCanvasStore((state) => state.llmProfiles);
+  const saveLLMConfig = useCanvasStore((state) => state.saveLLMConfig);
+  const testLLMConnection = useCanvasStore((state) => state.testLLMConnection);
+  const [profileId, setProfileId] = useState(llmProfiles?.default_profile_id ?? "default");
+  const [provider, setProvider] = useState("openai_compatible");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [fallbackToMock, setFallbackToMock] = useState(true);
+
+  const profileIds = llmProfiles?.profile_ids?.length ? llmProfiles.profile_ids : ["default", "deepseek", "mimo", "custom"];
+  const current = llmProfiles?.profiles?.[profileId] ?? llmProfiles?.profiles?.[llmProfiles?.default_profile_id ?? "default"];
+
+  useEffect(() => {
+    const nextId = llmProfiles?.default_profile_id ?? "default";
+    setProfileId((currentId) => (llmProfiles?.profiles?.[currentId] ? currentId : nextId));
+  }, [llmProfiles]);
+
+  useEffect(() => {
+    const profile = llmProfiles?.profiles?.[profileId];
+    if (!profile) {
+      return;
+    }
+    setProvider(profile.provider || "openai_compatible");
+    setBaseUrl(profile.base_url || "");
+    setModel(profile.model || "");
+    setEnabled(Boolean(profile.enabled));
+    setFallbackToMock(Boolean(profile.fallback_to_mock));
+    setApiKey("");
+  }, [llmProfiles, profileId]);
+
+  const saveProfile = (patch: Partial<LLMProfileInput> = {}) => {
+    void saveLLMConfig({
+      profile_id: profileId,
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey || undefined,
+      model,
+      enabled,
+      fallback_to_mock: fallbackToMock,
+      ...patch
+    });
+    setApiKey("");
+  };
+
+  const testProfile = () => {
+    void testLLMConnection({
+      profile_id: profileId,
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey || undefined,
+      model,
+      enabled,
+      fallback_to_mock: fallbackToMock
+    });
+  };
+
+  return (
+    <FloatingSidePanel
+      title={t("panel.runtimeLLMProfiles", "Runtime LLM Profiles")}
+      meta={current?.has_api_key ? t("field.apiKeySet", "Configured") : t("field.apiKeyUnset", "Not configured")}
+      onClose={onClose}
+    >
+      <section className="runtime-llm-profiles">
+        <label className="runtime-llm-profiles__row">
+          <span>{t("field.profile", "Profile")}</span>
+          <select value={profileId} onChange={(event) => setProfileId(event.target.value)}>
+            {profileIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="runtime-llm-profiles__row">
+          <span>{t("field.provider", "Provider")}</span>
+          <input value={provider} onChange={(event) => setProvider(event.target.value)} onBlur={() => saveProfile({ provider })} />
+        </label>
+        <label className="runtime-llm-profiles__row">
+          <span>{t("field.apiUrl", "API URL")}</span>
+          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} onBlur={() => saveProfile({ base_url: baseUrl })} />
+        </label>
+        <label className="runtime-llm-profiles__row">
+          <span>{t("field.apiKey", "API Key")}</span>
+          <input
+            type="password"
+            value={apiKey}
+            placeholder={current?.has_api_key ? t("field.apiKeySet", "Configured (leave blank to keep)") : t("field.apiKeyUnset", "Not configured")}
+            onChange={(event) => setApiKey(event.target.value)}
+            onBlur={() => {
+              if (apiKey) {
+                saveProfile({ api_key: apiKey });
+              }
+            }}
+          />
+        </label>
+        <label className="runtime-llm-profiles__row">
+          <span>{t("field.modelName", "Model")}</span>
+          <input value={model} onChange={(event) => setModel(event.target.value)} onBlur={() => saveProfile({ model })} />
+        </label>
+        <label className="runtime-llm-profiles__row runtime-llm-profiles__row--toggle">
+          <span>{t("field.enabled", "Enabled")}</span>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setEnabled(checked);
+              saveProfile({ enabled: checked });
+            }}
+          />
+        </label>
+        <label className="runtime-llm-profiles__row runtime-llm-profiles__row--toggle">
+          <span>{t("field.fallbackToMock", "Fallback to mock")}</span>
+          <input
+            type="checkbox"
+            checked={fallbackToMock}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setFallbackToMock(checked);
+              saveProfile({ fallback_to_mock: checked });
+            }}
+          />
+        </label>
+        <div className="runtime-llm-profiles__actions">
+          <button type="button" onClick={() => saveProfile()}>
+            {t("common.save", "Save")}
+          </button>
+          <button type="button" onClick={testProfile} disabled={llmProfiles === null}>
+            {t("button.testConnection", "Test Connection")}
+          </button>
+        </div>
+        <p className="runtime-llm-profiles__hint">{t("llm.profileHint", "Profiles are masked in GET responses; api_key never enters the store.")}</p>
+      </section>
+    </FloatingSidePanel>
   );
 }
 
@@ -5212,6 +5391,8 @@ function CanvasDebugTracePanel({
   trace,
   validation,
   jsonPreview,
+  memoryView,
+  memoryClearResult,
   onToggle
 }: {
   open: boolean;
@@ -5220,6 +5401,8 @@ function CanvasDebugTracePanel({
   trace: unknown;
   validation: unknown;
   jsonPreview: unknown;
+  memoryView?: unknown;
+  memoryClearResult?: unknown;
   onToggle: () => void;
 }) {
   if (!open) {
@@ -5270,6 +5453,14 @@ function CanvasDebugTracePanel({
         <summary>{t("inspector.jsonPreview")}</summary>
         <pre>{jsonPreview ? safeStringify(jsonPreview) : t("panel.noPreview")}</pre>
       </details>
+      <details>
+        <summary>{t("memory.debug.view", "Memory View")}</summary>
+        <pre>{memoryView ? safeStringify(memoryView) : t("memory.debug.emptyView", "No memory view result")}</pre>
+      </details>
+      <details>
+        <summary>{t("memory.debug.clear", "Memory Clear")}</summary>
+        <pre>{memoryClearResult ? safeStringify(memoryClearResult) : t("memory.debug.emptyClear", "No memory clear result")}</pre>
+      </details>
     </aside>
   );
 }
@@ -5304,17 +5495,18 @@ function ResidentPreviewPanel({
   const runtimeState = (loadedDRResult?.runtime_state ?? {}) as Record<string, unknown>;
   const runtimeIdentity = (runtimeState.identity ?? {}) as Record<string, unknown>;
   const runtimeOutput = loadedDRResult?.output_text || "";
+  const latticeData = (loadedDRResult?.lattice_state ?? null) as Record<string, unknown> | null;
   const primaryLanguage = (runtimeIdentity.primary_language as string | undefined) || t("preview.mockPrimaryLanguage", "mock");
   const supportedLanguages = Array.isArray(runtimeIdentity.supported_languages)
     ? runtimeIdentity.supported_languages.join(", ")
     : t("preview.mockSupportedLanguages", "zh, en");
-  const voiceState = loadedDRResult?.loaded ? t("preview.voiceStateMock", "mock voice ready") : t("preview.voiceStateIdle", "not loaded");
+  const voiceState = latticeData?.voice_state ? String(latticeData.voice_state) : loadedDRResult?.loaded ? t("preview.voiceStateMock", "mock voice ready") : t("preview.voiceStateIdle", "not loaded");
   const ttsState = loadedDRResult?.loaded ? t("preview.ttsMock", "TTS mock") : t("preview.ttsIdle", "TTS idle");
-  const latticeState = loadedDRResult?.loaded ? t("preview.latticeStateMock", "mock lattice active") : t("preview.latticeStateIdle", "not loaded");
+  const latticeState = latticeData ? t("preview.latticeStateLoaded", "lattice state loaded") : loadedDRResult?.loaded ? t("preview.latticeStateMock", "mock lattice active") : t("preview.latticeStateIdle", "not loaded");
   const avatarState = loadedDRResult?.loaded ? t("preview.avatarStateMock", "mock avatar ready") : t("preview.avatarStateIdle", "avatar idle");
-  const emotion = loadedDRResult?.loaded ? t("preview.emotionCalm", "calm") : "-";
-  const energy = loadedDRResult?.loaded ? "0.72" : "-";
-  const particleDensity = loadedDRResult?.loaded ? "0.60" : "-";
+  const emotion = latticeData?.emotion ? String(latticeData.emotion) : loadedDRResult?.loaded ? t("preview.emotionCalm", "calm") : "-";
+  const energy = typeof latticeData?.energy === "number" ? String(latticeData.energy) : loadedDRResult?.loaded ? "0.72" : "-";
+  const particleDensity = typeof latticeData?.particle_density === "number" ? String(latticeData.particle_density) : loadedDRResult?.loaded ? "0.60" : "-";
   const loadPreviewButton = (
     <button
       type="button"
@@ -5352,6 +5544,10 @@ function ResidentPreviewPanel({
           <dd>{memoryCount}</dd>
           <dt>{t("preview.outputText")}</dt>
           <dd>{loadedDRResult.output_text || "-"}</dd>
+          <dt>{t("preview.latticeState")}</dt>
+          <dd>{latticeState || "-"}</dd>
+          <dt>{t("preview.focusTarget")}</dt>
+          <dd>{latticeData?.focus_target ? String(latticeData.focus_target) : "-"}</dd>
         </dl>
         ) : null}
         {previewLoadStatus === "error" ? (
@@ -5465,6 +5661,8 @@ function ResidentPreviewPanel({
             <strong>{supportedLanguages}</strong>
             <span>{t("preview.voiceState", "Voice state")}</span>
             <strong>{voiceState}</strong>
+            <span>{t("preview.motion", "Motion")}</span>
+            <strong>{latticeData?.motion ? String(latticeData.motion) : "-"}</strong>
             <span>{t("preview.ttsState", "TTS")}</span>
             <strong>{ttsState}</strong>
           </div>
@@ -5490,6 +5688,8 @@ function ResidentPreviewPanel({
             <strong>{density}</strong>
             <span>{t("preview.latticeState", "Lattice state")}</span>
             <strong>{latticeState}</strong>
+            <span>{t("preview.focusTarget")}</span>
+            <strong>{latticeData?.focus_target ? String(latticeData.focus_target) : "-"}</strong>
             <span>{t("preview.avatarState", "Avatar state")}</span>
             <strong>{avatarState}</strong>
             <span>{t("preview.emotion", "Emotion")}</span>

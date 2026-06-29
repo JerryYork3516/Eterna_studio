@@ -1,73 +1,75 @@
-"""Runtime Config Service — Stage 6.6.x Runtime Config Persistence v1.
-
-A single, unified place for the backend's real runtime configuration across the
-6.6–6.10 capabilities. Sections: llm / memory / lattice / tts / screen.
+"""Runtime Config Service — Stage 6.6.x Runtime Config Persistence v2.
 
 Persistence & privacy boundary (do not violate):
   * Real config (including secrets) is stored ONLY in a local, git-ignored file:
         apps/api/.runtime/runtime_config.local.json
   * Secret fields (api_key / token / secret) are persisted to that local file but
-    are NEVER returned by any GET — `masked_section()` replaces each secret with a
-    `has_<field>` boolean.
+    are NEVER returned by any GET — `masked_section()` replaces each secret with
+    a `has_<field>` boolean.
   * runtime_config is NEVER written into a Node / Module / Slot / DR / trace.
   * Load priority at startup: local JSON  >  environment  >  mock/disabled default.
 
-Compatibility: the `llm` section delegates to the existing Stage 6.6
-`runtime_llm_config` (the canonical store the reasoning loop reads). This service
-adds persistence around it without changing the runtime loop.
-
-This module is intentionally NOT one of the files scanned by the
-`forbidden_import` test (which only scans llm_mock_engine.py and
-engine_registry.py), so reading/writing secrets to a local file here is allowed.
+Compatibility:
+  * The `llm` section now stores a map of runtime profiles, but the old flat
+    shape (base_url / api_key / model / enabled / fallback_to_mock) is still
+    accepted for backward compatibility and mapped to the `default` profile.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
-from .runtime_llm_config import get_runtime_llm_config, set_runtime_llm_config
+from .runtime_llm_config import (
+    DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_IDS,
+    get_runtime_llm_profile,
+    get_runtime_llm_profiles,
+    reset_runtime_llm_config,
+    set_runtime_llm_profile,
+    set_runtime_llm_profiles,
+)
 
 SECTIONS = ("llm", "memory", "lattice", "tts", "screen")
 SECRET_KEYS = ("api_key", "token", "secret")
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
-# apps/api/.runtime/runtime_config.local.json  (parents: services -> app -> apps/api)
 _RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".runtime"
 _LOCAL_PATH = _RUNTIME_DIR / "runtime_config.local.json"
-
-_LLM_KEYS = ("base_url", "api_key", "model", "enabled", "fallback_to_mock")
 
 # Process-local store for the non-llm sections (llm lives in runtime_llm_config).
 _STORE: Dict[str, Dict[str, Any]] = {}
 
 
 def _default_section(section: str) -> Dict[str, Any]:
-    """Mock/disabled default for a not-yet-connected section."""
     return {"enabled": False}
 
 
 def _llm_raw() -> Dict[str, Any]:
-    cfg = get_runtime_llm_config()
+    profiles = {profile_id: profile.raw() for profile_id, profile in get_runtime_llm_profiles().items()}
+    return {"default_profile_id": DEFAULT_PROFILE_ID, "profiles": profiles}
+
+
+def _llm_masked() -> Dict[str, Any]:
+    profiles = {profile_id: profile.masked() for profile_id, profile in get_runtime_llm_profiles().items()}
+    default_profile = profiles.get(DEFAULT_PROFILE_ID) or get_runtime_llm_profile(DEFAULT_PROFILE_ID).masked()
     return {
-        "base_url": cfg.base_url,
-        "api_key": cfg.api_key,
-        "model": cfg.model,
-        "enabled": cfg.enabled,
-        "fallback_to_mock": cfg.fallback_to_mock,
+        "default_profile_id": DEFAULT_PROFILE_ID,
+        "profile_ids": list(get_runtime_llm_profiles().keys()),
+        "profiles": profiles,
+        **default_profile,
+        "has_api_key": bool(default_profile.get("has_api_key")),
     }
 
 
 def get_section_raw(section: str) -> Dict[str, Any]:
-    """Raw config for a section, INCLUDING secrets. Internal / persistence only."""
     if section == "llm":
         return _llm_raw()
     return dict(_STORE.get(section, _default_section(section)))
 
 
 def mask_section(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Replace each secret field with a `has_<field>` boolean."""
     masked: Dict[str, Any] = {}
     for key, value in data.items():
         if key in SECRET_KEYS:
@@ -78,10 +80,8 @@ def mask_section(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_section_masked(section: str) -> Dict[str, Any]:
-    """Outward-safe view for a section. NEVER contains a raw secret."""
     if section == "llm":
-        # Keep the exact Stage 6.6 masked shape (base_url/model/enabled/.../has_api_key/is_valid).
-        return get_runtime_llm_config().masked()
+        return _llm_masked()
     return mask_section(get_section_raw(section))
 
 
@@ -89,23 +89,37 @@ def get_all_masked() -> Dict[str, Any]:
     return {section: get_section_masked(section) for section in SECTIONS}
 
 
-def set_section(section: str, patch: Dict[str, Any] | None) -> Dict[str, Any]:
-    """Merge `patch` into a section and persist to the local JSON. Returns masked.
+def _apply_llm_patch(section_patch: Mapping[str, Any]) -> None:
+    if "profiles" in section_patch and isinstance(section_patch["profiles"], Mapping):
+        set_runtime_llm_profiles(section_patch["profiles"])  # type: ignore[arg-type]
+        return
 
-    For any secret field, an empty/None value means "leave the stored value
-    unchanged" (so the UI can save without resubmitting a stored secret).
-    """
+    profile_id = str(section_patch.get("profile_id") or DEFAULT_PROFILE_ID)
+    set_runtime_llm_profile(
+        profile_id,
+        {
+            "profile_id": profile_id,
+            "provider": section_patch.get("provider"),
+            "base_url": section_patch.get("base_url"),
+            "api_key": section_patch.get("api_key"),
+            "model": section_patch.get("model"),
+            "enabled": section_patch.get("enabled"),
+            "fallback_to_mock": section_patch.get("fallback_to_mock"),
+        },
+    )
+
+
+def set_section(section: str, patch: Dict[str, Any] | None) -> Dict[str, Any]:
     if section not in SECTIONS:
         raise KeyError(section)
     patch = patch or {}
     if section == "llm":
-        kwargs = {key: patch[key] for key in _LLM_KEYS if key in patch}
-        set_runtime_llm_config(**kwargs)
+        _apply_llm_patch(patch)
     else:
         current = _STORE.setdefault(section, _default_section(section))
         for key, value in patch.items():
             if key in SECRET_KEYS and (value is None or value == ""):
-                continue  # keep existing secret
+                continue
             if value is None:
                 continue
             current[key] = value
@@ -114,7 +128,6 @@ def set_section(section: str, patch: Dict[str, Any] | None) -> Dict[str, Any]:
 
 
 def set_sections(patch: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """Apply a {section: patch} map (saves once per section). Returns all masked."""
     for section, section_patch in (patch or {}).items():
         if section in SECTIONS and isinstance(section_patch, dict):
             set_section(section, section_patch)
@@ -122,7 +135,6 @@ def set_sections(patch: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _save_local() -> None:
-    """Write the full raw config (with secrets) to the local git-ignored file."""
     data = {
         "version": CONFIG_VERSION,
         "sections": {section: get_section_raw(section) for section in SECTIONS},
@@ -133,13 +145,15 @@ def _save_local() -> None:
     tmp.replace(_LOCAL_PATH)
 
 
-def load() -> None:
-    """Load config with priority: local JSON > env > mock/disabled default.
+def _load_llm_section(raw_llm: Any) -> None:
+    if isinstance(raw_llm, dict) and isinstance(raw_llm.get("profiles"), dict):
+        set_runtime_llm_profiles(raw_llm.get("profiles"))
+        return
+    if isinstance(raw_llm, dict):
+        set_runtime_llm_profile(DEFAULT_PROFILE_ID, raw_llm)
 
-    The env layer for `llm` is already applied by runtime_llm_config at import;
-    this only overlays the local JSON on top (local wins). Non-llm sections start
-    from their disabled default and are overlaid by the local JSON when present.
-    """
+
+def load() -> None:
     for section in SECTIONS:
         if section != "llm":
             _STORE[section] = _default_section(section)
@@ -152,23 +166,20 @@ def load() -> None:
             data = None
 
     if not (isinstance(data, dict) and isinstance(data.get("sections"), dict)):
-        return  # no local file -> env (llm) / defaults (others) already in place
+        return
 
     sections = data["sections"]
-    llm = sections.get("llm")
-    if isinstance(llm, dict):
-        set_runtime_llm_config(**{key: llm[key] for key in _LLM_KEYS if key in llm})
+    _load_llm_section(sections.get("llm"))
     for section in SECTIONS:
         if section != "llm" and isinstance(sections.get(section), dict):
             _STORE[section] = dict(sections[section])
 
 
 def reset() -> None:
-    """Test seam: clear the non-llm in-process sections to defaults."""
     for section in SECTIONS:
         if section != "llm":
             _STORE[section] = _default_section(section)
+    reset_runtime_llm_config()
 
 
-# Startup load (local JSON > env > default). Read-only; never writes.
 load()

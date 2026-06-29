@@ -12,7 +12,7 @@ import type {
   WorkflowNode
 } from "@/lib/schema-types";
 import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hydration";
-import { api, type DRCompileResult, type DRLoadResult, type LLMConfigInput, type LLMConfigView } from "@/lib/api";
+import { api, type DRCompileResult, type DRLoadResult, type LLMProfileInput, type LLMProfilesView, type MemoryClearResult, type MemoryViewResult } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
@@ -95,11 +95,15 @@ type CanvasState = {
   previewLoadStatus: "idle" | "loading" | "success" | "error";
   previewLoadError: string | null;
 
-  // Stage 6.6 real LLM v1: masked brain config view + test-connection state.
-  // The raw api_key is NEVER stored here (backend holds it; masked only).
-  llmConfig: LLMConfigView | null;
+  // Stage 6.6 real LLM v2: masked runtime profiles view + test state.
+  llmProfiles: LLMProfilesView | null;
   llmTestStatus: "idle" | "testing" | "success" | "error";
   llmTestMessage: string | null;
+
+  // Stage 6.7 Memory Module v1: last memory view + clear result + load status.
+  memoryView: MemoryViewResult | null;
+  memoryClearResult: MemoryClearResult | null;
+  memoryStatus: "idle" | "loading" | "success" | "error";
 
   // P1-FIX：Module UI State（从 localStorage 提升到 store）
   moduleTabs: string[];
@@ -145,11 +149,13 @@ type CanvasState = {
   // Stage 6 preview flow: load the already compiled .digital_resident payload
   // into the mock runtime without exporting/importing it first.
   loadCompiledDRToPreview: () => Promise<void>;
-  // Stage 6.6 real LLM v1: brain config actions. The UI only submits config to
-  // the backend Runtime Config; it never calls the external LLM directly.
+  // Stage 6.6 real LLM v2: runtime profile actions.
   loadLLMConfig: () => Promise<void>;
-  saveLLMConfig: (config: LLMConfigInput) => Promise<void>;
-  testLLMConnection: (config?: LLMConfigInput) => Promise<void>;
+  saveLLMConfig: (config: LLMProfileInput) => Promise<void>;
+  testLLMConnection: (config?: LLMProfileInput) => Promise<void>;
+  // Stage 6.7 memory viewer / clear.
+  viewMemory: (residentId: string, namespace?: string, memoryType?: string, limit?: number) => Promise<MemoryViewResult | null>;
+  clearMemory: (residentId: string, namespace?: string, memoryType?: string) => Promise<MemoryClearResult | null>;
 
   // P1-FIX：Module UI State actions
   setModuleTabs: (tabs: string[]) => void;
@@ -198,9 +204,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   loadedDRResult: null,
   previewLoadStatus: "idle",
   previewLoadError: null,
-  llmConfig: null,
+  llmProfiles: null,
   llmTestStatus: "idle",
   llmTestMessage: null,
+  memoryView: null,
+  memoryClearResult: null,
+  memoryStatus: "idle",
 
   // P1-FIX：初始化 Module UI State
   moduleTabs: [],
@@ -325,7 +334,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       canExportDR: false,
       loadedDRResult: null,
       previewLoadStatus: "idle",
-      previewLoadError: null
+      previewLoadError: null,
+      memoryView: null,
+      memoryClearResult: null
     }),
 
   // Stage 6 Runtime Kernel hydration: map the response into the existing panels.
@@ -464,31 +475,32 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  // Stage 6.6 — fetch the masked brain config (no raw api_key ever returned).
+  // Stage 6.6 — fetch the masked runtime profiles (no raw api_key ever returned).
   loadLLMConfig: async () => {
     try {
       const cfg = await api.getLLMConfig();
-      set({ llmConfig: cfg });
+      set({ llmProfiles: cfg });
     } catch {
-      // Non-fatal: leave llmConfig as-is; the form falls back to empty values.
+      // Non-fatal: leave llmProfiles as-is; the form falls back to empty values.
     }
   },
 
-  // Stage 6.6 — save brain config to the backend Runtime Config (masked echo).
+  // Stage 6.6 — save one runtime profile to the backend Runtime Config.
   saveLLMConfig: async (config) => {
     const appendLog = get().appendLog;
     try {
       const saved = await api.saveLLMConfig(config);
-      set({ llmConfig: saved });
+      set({ llmProfiles: saved });
+      const profile = saved.profiles?.[config.profile_id];
       appendLog(
-        `LLM config saved — model=${saved.model || "(none)"}, enabled=${saved.enabled}, key=${saved.has_api_key ? "set" : "unset"}`
+        `LLM profile saved — profile=${config.profile_id}, provider=${profile?.provider || config.provider || "(none)"}, model=${profile?.model || config.model || "(none)"}, enabled=${profile?.enabled ?? config.enabled ?? false}`
       );
     } catch (error) {
-      appendLog(`LLM config save failed: ${(error as Error).message}`, "error");
+      appendLog(`LLM profile save failed: ${(error as Error).message}`, "error");
     }
   },
 
-  // Stage 6.6 — test the connection via the backend (real call is backend-only).
+  // Stage 6.6 — test a runtime profile via the backend (real call is backend-only).
   testLLMConnection: async (config) => {
     const appendLog = get().appendLog;
     set({ llmTestStatus: "testing", llmTestMessage: null });
@@ -497,7 +509,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const result = await api.testLLMConnection(config);
       if (result.ok) {
         set({ llmTestStatus: "success", llmTestMessage: result.sample ?? "" });
-        appendLog(`LLM connection OK — model=${result.model ?? "?"} · ${(result.sample ?? "").slice(0, 80)}`);
+        appendLog(`LLM connection OK — provider=${result.provider ?? "?"}, model=${result.model ?? "?"} · ${(result.sample ?? "").slice(0, 80)}`);
       } else {
         set({ llmTestStatus: "error", llmTestMessage: result.error ?? "failed" });
         appendLog(`LLM connection FAILED — ${result.error ?? "unknown error"}`, "error");
@@ -505,6 +517,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     } catch (error) {
       set({ llmTestStatus: "error", llmTestMessage: (error as Error).message });
       appendLog(`LLM connection error: ${(error as Error).message}`, "error");
+    }
+  },
+
+  // Stage 6.7 — view a resident's memory (read-only) via the backend.
+  viewMemory: async (residentId, namespace = "default", memoryType = "interaction_log", limit = 20) => {
+    const appendLog = get().appendLog;
+    set({ memoryStatus: "loading" });
+    try {
+      const result = await api.memoryView(residentId, namespace, memoryType, limit);
+      const entries = result.entries ?? result.items ?? [];
+      const normalized = { ...result, entries, items: result.items ?? entries };
+      set({ memoryView: normalized, memoryStatus: "success" });
+      appendLog(`Memory view → ${normalized.count} record(s) [${normalized.storage_backend}]`);
+      return normalized;
+    } catch (error) {
+      set({ memoryStatus: "error" });
+      appendLog(`Memory view error: ${(error as Error).message}`, "error");
+      return null;
+    }
+  },
+
+  // Stage 6.7 — clear a resident's memory, then refresh the view.
+  clearMemory: async (residentId, namespace = "default", memoryType = "interaction_log") => {
+    const appendLog = get().appendLog;
+    set({ memoryStatus: "loading" });
+    try {
+      const result = await api.memoryClear(residentId, namespace, memoryType);
+      set({ memoryClearResult: result });
+      appendLog(`Memory clear → deleted ${result.deleted_count} record(s)`);
+      const view = await api.memoryView(residentId, namespace, memoryType, 20);
+      const entries = view.entries ?? view.items ?? [];
+      const normalized = { ...view, entries, items: view.items ?? entries };
+      set({ memoryView: normalized, memoryStatus: "success" });
+      return result;
+    } catch (error) {
+      set({ memoryStatus: "error" });
+      appendLog(`Memory clear error: ${(error as Error).message}`, "error");
+      return null;
     }
   },
 

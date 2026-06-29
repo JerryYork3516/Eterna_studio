@@ -238,6 +238,9 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("module_social", "social", "Social", "layer_11", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.medium, category="relationship", is_placeholder=False, audit_required=True),
     _module("module_ar", "ar", "AR Presence", "layer_10", status=ProtocolStatus.planned, slot_type=SlotType.ar, risk_level=RiskLevel.medium, category="multimodal", is_placeholder=False),
     _module("module_emergency_contact", "emergency_contact", "Emergency Contact", "layer_4", status=ProtocolStatus.later, risk_level=RiskLevel.high, category="governance", is_placeholder=False, audit_required=True, human_confirm_required=True),
+    _module("module_lattice_update", "lattice_update", "Lattice Update", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.lattice, category="multimodal", is_placeholder=False, color_status="amber"),
+    _module("module_lattice_read", "lattice_read", "Lattice Read", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.lattice, category="multimodal", is_placeholder=False, color_status="amber"),
+    _module("module_lattice_preview", "lattice_preview", "Lattice Preview", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.lattice, category="multimodal", is_placeholder=False, color_status="amber"),
 ]
 
 

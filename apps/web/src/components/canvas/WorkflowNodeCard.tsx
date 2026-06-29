@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { translate, type Language } from "@/i18n";
 import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
-import type { LLMConfigInput } from "@/lib/api";
+import type { LLMProfileInput } from "@/lib/api";
 import type { WorkflowNode } from "@/lib/schema-types";
 import { getNodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -28,7 +28,10 @@ const HIDDEN_PARAM_KEYS = new Set([
   "output_schema",
   "i18n_keys",
   "collapsed_sections",
-  "ui_color"
+  "ui_color",
+  "memory_entries",
+  "memory_view_result",
+  "memory_clear_result"
 ]);
 const LLM_CONFIG_NODE_TYPES = new Set([
   "model_adapter",
@@ -320,121 +323,117 @@ function resolveLLMNodeStatus({
   return "MOCK";
 }
 
-function BrainConfigSection({ language }: { language: Language }) {
-  const llmConfig = useCanvasStore((state) => state.llmConfig);
+export function BrainConfigSection({
+  language,
+  nodeData,
+  onInput
+}: {
+  language: Language;
+  nodeData: Record<string, unknown>;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const llmProfiles = useCanvasStore((state) => state.llmProfiles);
   const llmTestStatus = useCanvasStore((state) => state.llmTestStatus);
   const llmTestMessage = useCanvasStore((state) => state.llmTestMessage);
   const loadLLMConfig = useCanvasStore((state) => state.loadLLMConfig);
-  const saveLLMConfig = useCanvasStore((state) => state.saveLLMConfig);
-  const testLLMConnection = useCanvasStore((state) => state.testLLMConnection);
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("");
-  const [enabled, setEnabled] = useState(false);
-  const [fallbackToMock, setFallbackToMock] = useState(true);
+  const profileIds = llmProfiles?.profile_ids?.length ? llmProfiles.profile_ids : ["default", "deepseek", "mimo", "custom"];
+  const [profileId, setProfileId] = useState(typeof nodeData.llm_profile_id === "string" && nodeData.llm_profile_id ? nodeData.llm_profile_id : "default");
+  const [systemPrompt, setSystemPrompt] = useState(typeof nodeData.system_prompt === "string" ? nodeData.system_prompt : "");
+  const [temperature, setTemperature] = useState(typeof nodeData.temperature === "number" ? String(nodeData.temperature) : "0.7");
+  const [maxTokens, setMaxTokens] = useState(typeof nodeData.max_tokens === "number" ? String(nodeData.max_tokens) : "1024");
+  const [modelOverride, setModelOverride] = useState(typeof nodeData.model_override === "string" ? nodeData.model_override : "");
 
   useEffect(() => {
     loadLLMConfig();
   }, [loadLLMConfig]);
 
   useEffect(() => {
-    if (!llmConfig) {
-      return;
-    }
-    setBaseUrl(llmConfig.base_url || "");
-    setModel(llmConfig.model || "");
-    setEnabled(Boolean(llmConfig.enabled));
-    setFallbackToMock(Boolean(llmConfig.fallback_to_mock));
-  }, [llmConfig]);
+    setProfileId(typeof nodeData.llm_profile_id === "string" && nodeData.llm_profile_id ? nodeData.llm_profile_id : "default");
+    setSystemPrompt(typeof nodeData.system_prompt === "string" ? nodeData.system_prompt : "");
+    setTemperature(typeof nodeData.temperature === "number" ? String(nodeData.temperature) : "0.7");
+    setMaxTokens(typeof nodeData.max_tokens === "number" ? String(nodeData.max_tokens) : "1024");
+    setModelOverride(typeof nodeData.model_override === "string" ? nodeData.model_override : "");
+  }, [nodeData]);
 
-  const saveConfig = (patch: LLMConfigInput = {}) => {
-    saveLLMConfig({
-      base_url: baseUrl,
-      api_key: apiKey || undefined,
-      model,
-      enabled,
-      fallback_to_mock: fallbackToMock,
-      ...patch
-    });
-    if (patch.api_key !== undefined) {
-      setApiKey("");
+  const commit = (patch: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(patch)) {
+      onInput?.(key, value);
     }
-  };
-
-  const testConfig = () => {
-    testLLMConnection({
-      base_url: baseUrl,
-      api_key: apiKey || undefined,
-      model,
-      enabled,
-      fallback_to_mock: fallbackToMock
-    });
   };
 
   return (
     <section className="node-llm-config">
       <label className="node-inputs__row node-inputs__row--block">
-        <span>{translate(language, "field.apiUrl", "API URL")}</span>
-        <input
+        <span>{translate(language, "field.profile", "Profile")}</span>
+        <select
           className="nodrag"
-          value={baseUrl}
-          placeholder={translate(language, "llm.placeholder.apiUrl", "https://relay.example/v1")}
-          onChange={(event) => setBaseUrl(event.target.value)}
-          onBlur={() => saveConfig({ base_url: baseUrl })}
-        />
+          value={profileId}
+          onChange={(event) => {
+            const next = event.target.value;
+            setProfileId(next);
+            commit({ llm_profile_id: next });
+          }}
+        >
+          {profileIds.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="node-inputs__row node-inputs__row--block">
-        <span>{translate(language, "field.apiKey", "API Key")}</span>
-        <input
+        <span>{translate(language, "field.systemPrompt", "System Prompt")}</span>
+        <textarea
           className="nodrag"
-          type="password"
-          value={apiKey}
-          placeholder={
-            llmConfig?.has_api_key
-              ? translate(language, "field.apiKeySet", "Configured (leave blank to keep)")
-              : translate(language, "field.apiKeyUnset", "Not configured")
-          }
-          onChange={(event) => setApiKey(event.target.value)}
-          onBlur={() => {
-            if (apiKey) {
-              saveConfig({ api_key: apiKey });
-            }
+          value={systemPrompt}
+          rows={3}
+          onChange={(event) => {
+            const next = event.target.value;
+            setSystemPrompt(next);
+            commit({ system_prompt: next });
           }}
         />
       </label>
       <label className="node-inputs__row node-inputs__row--block">
-        <span>{translate(language, "field.modelName", "Model")}</span>
+        <span>{translate(language, "field.temperature", "Temperature")}</span>
         <input
           className="nodrag"
-          value={model}
-          placeholder={translate(language, "llm.placeholder.model", "gpt-4o-mini")}
-          onChange={(event) => setModel(event.target.value)}
-          onBlur={() => saveConfig({ model })}
-        />
-      </label>
-      <label className="node-inputs__row node-inputs__row--toggle">
-        <span>{translate(language, "field.enabled", "Enable real LLM")}</span>
-        <input
-          className="nodrag"
-          type="checkbox"
-          checked={enabled}
+          type="number"
+          min={0}
+          max={2}
+          step={0.1}
+          value={temperature}
           onChange={(event) => {
-            const checked = event.target.checked;
-            setEnabled(checked);
-            saveConfig({ enabled: checked });
+            const next = event.target.value;
+            setTemperature(next);
+            commit({ temperature: Number(next) });
           }}
         />
       </label>
-      <label className="node-inputs__row node-inputs__row--toggle">
-        <span>{translate(language, "field.fallbackToMock", "Fallback to mock")}</span>
+      <label className="node-inputs__row node-inputs__row--block">
+        <span>{translate(language, "field.maxTokens", "Max Tokens")}</span>
         <input
           className="nodrag"
-          type="checkbox"
-          checked={fallbackToMock}
+          type="number"
+          min={1}
+          step={1}
+          value={maxTokens}
           onChange={(event) => {
-            const checked = event.target.checked;
-            setFallbackToMock(checked);
-            saveConfig({ fallback_to_mock: checked });
+            const next = event.target.value;
+            setMaxTokens(next);
+            commit({ max_tokens: Number(next) });
+          }}
+        />
+      </label>
+      <label className="node-inputs__row node-inputs__row--block">
+        <span>{translate(language, "field.modelOverride", "Model Override")}</span>
+        <input
+          className="nodrag"
+          value={modelOverride}
+          onChange={(event) => {
+            const next = event.target.value;
+            setModelOverride(next);
+            commit({ model_override: next });
           }}
         />
       </label>
@@ -443,16 +442,109 @@ function BrainConfigSection({ language }: { language: Language }) {
         <strong>{translate(language, `llm.testStatus.${llmTestStatus}`, llmTestStatus)}</strong>
       </div>
       {llmTestMessage ? <p className={`node-llm-config__message is-${llmTestStatus}`}>{llmTestMessage}</p> : null}
-      <button type="button" className="node-llm-config__test nodrag" onClick={testConfig} disabled={llmTestStatus === "testing"}>
-        {llmTestStatus === "testing" ? translate(language, "status.testingConnection", "Testing...") : translate(language, "button.testConnection", "Test Connection")}
-      </button>
+      <p className="node-llm-config__hint">{translate(language, "llm.nodeHint", "Credentials are managed in Runtime LLM Profiles.")}</p>
     </section>
+  );
+}
+
+// Stage 6.7 — Memory Viewer / Clear section embedded in the Node card.
+// All config (resident_id / namespace / memory_type) is read from the node's own
+// fields; the section only views/clears via the backend (never the store).
+function MemorySection({
+  mode,
+  nodeData,
+  language,
+  onInput
+}: {
+  mode: "viewer" | "clear";
+  nodeData: Record<string, unknown>;
+  language: Language;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const runtimeResult = useCanvasStore((state) => state.runtimeResult);
+  const memoryClearResult = useCanvasStore((state) => state.memoryClearResult);
+  const memoryStatus = useCanvasStore((state) => state.memoryStatus);
+  const viewMemory = useCanvasStore((state) => state.viewMemory);
+  const clearMemory = useCanvasStore((state) => state.clearMemory);
+  const residentId = typeof runtimeResult?.resident_id === "string" ? runtimeResult.resident_id : "";
+  const namespace = typeof nodeData.namespace === "string" && nodeData.namespace ? nodeData.namespace : "default";
+  const memoryType = typeof nodeData.memory_type === "string" && nodeData.memory_type ? nodeData.memory_type : "interaction_log";
+  const localEntries = Array.isArray(nodeData.memory_entries) ? nodeData.memory_entries : [];
+  const memoryViewResult = (nodeData.memory_view_result as Record<string, unknown> | undefined) ?? null;
+  const entries = localEntries;
+  const clearResult = memoryClearResult && memoryClearResult.resident_id === residentId ? memoryClearResult : null;
+  const t = (key: string, fallback: string) => translate(language, key, fallback);
+  const actionError = memoryStatus === "error" ? t("memory.error", "记忆操作失败") : "";
+
+  const handleView = async () => {
+    const latest = await viewMemory(residentId, namespace, memoryType, 20);
+    if (!latest) {
+      return;
+    }
+    const nextEntries = latest.entries ?? latest.items ?? [];
+    onInput?.("memory_entries", nextEntries);
+    onInput?.("memory_view_result", latest);
+  };
+
+  const handleClear = async () => {
+    const result = await clearMemory(residentId, namespace, memoryType);
+    if (!result) {
+      return;
+    }
+    onInput?.("memory_entries", []);
+    onInput?.("memory_clear_result", result);
+  };
+
+  return (
+    <div className="node-memory nodrag" onPointerDown={(event) => event.stopPropagation()}>
+      <div className="node-memory__actions">
+        <button type="button" onClick={() => void handleView()}>
+          {t("memory.action.view", "查看记忆")}
+        </button>
+        {mode === "clear" ? (
+          <button type="button" className="node-memory__danger" onClick={() => void handleClear()}>
+            {t("memory.action.clear", "清空记忆")}
+          </button>
+        ) : null}
+      </div>
+      <div className="node-memory__meta-row">
+        <span>{t("input.resident_id", "Resident ID")}: {residentId}</span>
+        <span>{t("input.namespace", "Namespace")}: {namespace}</span>
+        <span>{t("input.memory_type", "Memory Type")}: {translate(language, `memory.type.${memoryType}`, memoryType)}</span>
+      </div>
+      {actionError ? <p className="node-memory__error">{actionError}</p> : null}
+      {clearResult ? (
+        <p className="node-memory__meta">
+          {t("memory.cleared", "已清空")}: {String(clearResult.cleared)} · {t("memory.deletedCount", "删除条数")}: {clearResult.deleted_count}
+        </p>
+      ) : null}
+      <div className="node-memory__list">
+        {memoryStatus === "loading" ? <p className="node-memory__hint">{t("memory.loading", "加载中…")}</p> : null}
+        {entries && entries.length ? (
+          <>
+            <p className="node-memory__meta">
+              {t("memory.count", "记录数")}: {entries.length} · {String((memoryViewResult?.storage_backend ?? localEntries?.[0]?.storage_backend) ?? t("common.empty", "空"))}
+            </p>
+            <ul>
+              {entries.slice(0, 20).map((item, index) => (
+                <li key={`${item.created_at ?? "entry"}-${index}`}>
+                  <strong>{translate(language, `memory.type.${item.memory_type}`, item.memory_type ?? memoryType)}</strong>{" "}
+                  {JSON.stringify(item.content ?? item)}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : memoryStatus === "success" ? (
+          <p className="node-memory__hint">{t("memory.empty", "暂无记忆")}</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
 export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
-  const llmConfig = useCanvasStore((state) => state.llmConfig);
+  const llmProfiles = useCanvasStore((state) => state.llmProfiles);
   const llmTestStatus = useCanvasStore((state) => state.llmTestStatus);
   const { schemaNode, onRename, onColor, onInput } = data as CanvasNodeData;
   const nodeData = (schemaNode.data ?? {}) as Record<string, unknown>;
@@ -470,7 +562,9 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const nodeColor = typeof schemaNode.ui_color === "string" && schemaNode.ui_color ? schemaNode.ui_color : uiColor;
   const aiSlot = inferAiSlot(schemaNode);
   const showLLMConfig = isLLMConfigNode(schemaNode);
-  const llmEnabled = llmConfig ? llmConfig.enabled : typeof nodeData.enabled === "boolean" ? nodeData.enabled : undefined;
+  const memoryMode: "viewer" | "clear" | null =
+    String(effectiveType) === "memory_viewer" ? "viewer" : String(effectiveType) === "memory_clear" ? "clear" : null;
+  const llmEnabled = llmProfiles ? llmProfiles.profiles?.[llmProfiles.default_profile_id ?? "default"]?.enabled : typeof nodeData.enabled === "boolean" ? nodeData.enabled : undefined;
   const llmStatus = showLLMConfig ? resolveLLMNodeStatus({ enabled: llmEnabled, testStatus: llmTestStatus }) : undefined;
   const normalizedStatus = normalizeNodeStatus(nodeDefinition?.status, aiSlot !== "none", llmStatus);
   const statusKey = normalizedStatus.toLowerCase();
@@ -584,7 +678,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           ) : (
             <div className="node-inputs__empty">{translate(language, "node.inputs.readonly", "Read-only node")}</div>
           )}
-          {showLLMConfig ? <BrainConfigSection language={language} /> : null}
+          {showLLMConfig ? <BrainConfigSection language={language} nodeData={nodeData} onInput={onInput} /> : null}
+          {memoryMode ? <MemorySection mode={memoryMode} nodeData={nodeData} language={language} onInput={onInput} /> : null}
         </div>
       </details>
 

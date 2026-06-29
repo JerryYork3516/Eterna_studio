@@ -19,7 +19,8 @@ import type {
   Artifact,
   ResidentStepResponse,
   RuntimeMemorySnapshot,
-  RuntimeTraceStep
+  RuntimeTraceStep,
+  LatticeStateResponse
 } from "@/lib/schema-types";
 
 export type RuntimeLogLine = {
@@ -43,6 +44,8 @@ export type HydratedRuntimeResult = {
   memoryArtifacts: Artifact[];
   /** Composed node output text. */
   outputText: string;
+  /** Lattice state attached to the runtime response. */
+  latticeState: LatticeStateResponse | null;
   /** Compact debug summary (status / run_id / counts). */
   debug: RuntimeDebugSummary;
   /** Raw trace, sorted by index, for any structured viewer. */
@@ -107,6 +110,7 @@ export function hydrateRuntimeResult(response: ResidentStepResponse): HydratedRu
   const memorySnapshot = readMemorySnapshot(response);
   const memoryCount = memorySnapshot.count ?? memorySnapshot.entries?.length ?? 0;
   const outputText = response.output_text ?? "";
+  const latticeState = response.lattice_state ?? null;
 
   const logLines: RuntimeLogLine[] = [];
   // Header (status / run_id / turn) for the debug panel.
@@ -129,6 +133,7 @@ export function hydrateRuntimeResult(response: ResidentStepResponse): HydratedRu
     logLines,
     memoryArtifacts: mapMemoryToArtifacts(memorySnapshot, residentId),
     outputText,
+    latticeState,
     debug: {
       runId,
       status,

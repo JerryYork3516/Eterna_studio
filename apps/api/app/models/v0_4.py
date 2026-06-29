@@ -102,6 +102,7 @@ class SlotType(str, Enum):
     screen = "screen"
     ar = "ar"
     tool = "tool"
+    lattice = "lattice"
 
 
 class ExecutionMode(str, Enum):
@@ -114,6 +115,65 @@ class OnError(str, Enum):
     mock = "mock"
     next_provider = "next_provider"
     fail = "fail"
+
+
+class LatticeEmotion(str, Enum):
+    calm = "calm"
+    focused = "focused"
+    thinking = "thinking"
+    speaking = "speaking"
+    neutral = "neutral"
+
+
+class LatticeMotion(str, Enum):
+    idle_breathing = "idle_breathing"
+    thinking_pulse = "thinking_pulse"
+    speaking_motion = "speaking_motion"
+    focused_stillness = "focused_stillness"
+    idle = "idle"
+    thinking = "thinking"
+
+
+class LatticeVoiceState(str, Enum):
+    idle = "idle"
+    speaking = "speaking"
+    listening = "listening"
+    muted = "muted"
+
+
+class LatticeParticleStyle(str, Enum):
+    sparse = "sparse"
+    medium = "medium"
+    dense = "dense"
+
+
+class LatticeConfigV04(V04BaseModel):
+    resident_id: str
+    grid_size: Dict[str, int] = Field(default_factory=lambda: {"x": 8, "y": 8, "z": 4})
+    multi_resident_enabled: bool = False
+    focus_mode: str = "single"
+    color_palette: List[str] = Field(default_factory=list)
+    reserved: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LatticeStateV04(V04BaseModel):
+    resident_id: str
+    emotion: LatticeEmotion = LatticeEmotion.neutral
+    energy: float = 0.5
+    attention: str = "self"
+    motion: LatticeMotion = LatticeMotion.idle_breathing
+    voice_state: LatticeVoiceState = LatticeVoiceState.idle
+    particle_density: float = 0.5
+    color_palette: List[str] = Field(default_factory=list)
+    focus_target: str = "none"
+    stage: str = "calm"
+    reserved: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MultiResidentLatticeStateV04(V04BaseModel):
+    resident_ids: List[str] = Field(default_factory=list)
+    states: List[LatticeStateV04] = Field(default_factory=list)
+    reserved: Dict[str, Any] = Field(default_factory=dict)
 
 
 # --- Layer reference (trunk) ----------------------------------------------
@@ -207,6 +267,12 @@ class ModuleV04(V04BaseModel):
     color_status: str = "gray"
 
 
+class LatticeModuleConfigV04(V04BaseModel):
+    lattice_config: LatticeConfigV04 = Field(default_factory=lambda: LatticeConfigV04(resident_id="resident_v1"))
+    lattice_state_schema: LatticeStateV04 = Field(default_factory=lambda: LatticeStateV04(resident_id="resident_v1"))
+    multi_resident_lattice_state: MultiResidentLatticeStateV04 = Field(default_factory=MultiResidentLatticeStateV04)
+
+
 # --- Slot Protocol ---------------------------------------------------------
 class FallbackPolicy(V04BaseModel):
     on_error: OnError = OnError.mock
@@ -297,6 +363,44 @@ class PersonaV04(V04BaseModel):
     risk_level: RiskLevel = RiskLevel.none
     audit_log: List[Dict[str, Any]] = Field(default_factory=list)
     extensions: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+# --- Lattice State (reserved, declarative only) ----------------------------
+class LatticeConfigV04(V04BaseModel):
+    resident_id: str
+    point_grid: Dict[str, Any] = Field(default_factory=dict)
+    emotion_model: Dict[str, Any] = Field(default_factory=dict)
+    energy_model: Dict[str, Any] = Field(default_factory=dict)
+    motion_model: Dict[str, Any] = Field(default_factory=dict)
+    attention_model: Dict[str, Any] = Field(default_factory=dict)
+    voice_model: Dict[str, Any] = Field(default_factory=dict)
+    particle_model: Dict[str, Any] = Field(default_factory=dict)
+    multi_resident: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LatticeModuleConfigV04(V04BaseModel):
+    lattice_config: LatticeConfigV04 = Field(default_factory=lambda: LatticeConfigV04(resident_id="resident_v1"))
+    lattice_state_schema: LatticeStateSchemaV04 = Field(default_factory=lambda: LatticeStateSchemaV04(resident_id="resident_v1"))
+    multi_resident_lattice_state: MultiResidentLatticeStateV04 = Field(default_factory=MultiResidentLatticeStateV04)
+
+
+class LatticeStateSchemaV04(V04BaseModel):
+    resident_id: str
+    emotion: str = "calm"
+    energy: float = 0.5
+    attention: str = "self"
+    motion: str = "idle_breathing"
+    voice_state: str = "idle"
+    particle_density: float = 0.4
+    color_palette: List[str] = Field(default_factory=list)
+    focus_target: str = "self"
+
+
+class MultiResidentLatticeStateV04(V04BaseModel):
+    resident_ids: List[str] = Field(default_factory=list)
+    lattice_states: List[LatticeStateSchemaV04] = Field(default_factory=list)
+    coordination_mode: str = "reserved"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

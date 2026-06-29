@@ -20,7 +20,13 @@ from ..registry.provider_registry import (
 )
 from .llm_mock_engine import run_mock_llm
 from .llm_real_adapter import call_openai_compat
-from .runtime_llm_config import get_runtime_llm_config
+from .memory_store import (
+    DEFAULT_MEMORY_TYPE,
+    DEFAULT_NAMESPACE,
+    get_memory_store,
+    reset_memory_store,
+)
+from .runtime_llm_config import get_runtime_llm_config, get_runtime_llm_profile, get_runtime_llm_profile_ids
 
 
 class ProviderAdapter:
@@ -46,68 +52,90 @@ class MockLLMProvider(ProviderAdapter):
 
 
 class RealLLMProvider(ProviderAdapter):
-    """Stage 6.6 real LLM. Reads the global RuntimeLLMConfig and calls the
-    OpenAI-compatible relay via llm_real_adapter. NEVER receives or echoes the
-    api_key in its payload — it pulls it from the process-local config. Any
-    failure is returned as a structured error so the runtime can fall back."""
+    """Stage 6.6 real LLM. Resolves a named runtime profile and calls the
+    OpenAI-compatible relay via llm_real_adapter. Any failure is returned as a
+    structured error so the runtime can fall back."""
 
     provider_id = "provider_llm_real"
     provider_type = "llm"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        cfg = get_runtime_llm_config()
         prompt = payload.get("prompt") if isinstance(payload, dict) else None
-        if not cfg.is_valid():
+        profile_id = payload.get("llm_profile_id") if isinstance(payload, dict) else None
+        profile = get_runtime_llm_profile(profile_id)
+        if not profile.is_valid():
             return {
                 "status": "error",
                 "mock": False,
                 "engine": "llm_primary",
+                "profile_id": profile.profile_id,
+                "provider": profile.provider,
+                "model": profile.model,
                 "error": "llm config not enabled or incomplete",
             }
-        return call_openai_compat(cfg.base_url, cfg.api_key, cfg.model, prompt or "")
+        result = call_openai_compat(profile.base_url, profile.api_key, profile.model, prompt or "")
+        result["profile_id"] = profile.profile_id
+        result["provider"] = profile.provider
+        result["model"] = profile.model
+        result["fallback_mock"] = False
+        return result
 
 
-# Process-only memory store, isolated per resident_id. No database.
+# Legacy process-only store kept for backward-compatible reset_memory(); the
+# real storage now lives in memory_store (SQLite -> JSON -> mock).
 _STORE: Dict[str, List[Dict[str, Any]]] = {}
 
 
 class InMemoryProvider(ProviderAdapter):
-    """Memory provider backed by a process-local dict keyed by resident_id.
+    """Memory provider — Stage 6.7. Delegates to memory_store (SQLite/JSON/mock).
 
-    Supports read / list / write. Isolated per resident_id. No persistence.
+    Supports read / list / write / view / clear with memory_type + namespace.
+    Still a mock-tier provider (mock=True), but with real local persistence and a
+    `storage_backend` marker. Isolated per resident_id; no cross-resident sharing,
+    no vector memory, no cloud.
     """
 
     provider_id = "provider_memory_mock"
     provider_type = "memory"
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        store = get_memory_store()
         op = payload.get("op")
         resident_id = payload.get("resident_id") or "resident_v1"
-        bucket = _STORE.setdefault(resident_id, [])
+        namespace = payload.get("namespace") or DEFAULT_NAMESPACE
+        memory_type = payload.get("memory_type")  # None = across all types
+        base = {
+            "status": "success",
+            "mock": True,
+            "op": op,
+            "resident_id": resident_id,
+            "namespace": namespace,
+            "memory_type": memory_type,
+            "storage_backend": store.backend,
+        }
         if op in ("read", "list"):
-            return {
-                "status": "success",
-                "mock": True,
-                "op": op,
-                "resident_id": resident_id,
-                "entries": list(bucket),
-                "count": len(bucket),
-            }
+            entries = store.read(resident_id, namespace, memory_type)
+            return {**base, "entries": entries, "count": len(entries)}
+        if op == "view":
+            limit = payload.get("limit")
+            limit_value = int(limit) if isinstance(limit, (int, float, str)) and str(limit).strip() != "" else None
+            items = store.view(resident_id, namespace, memory_type, limit=limit_value)
+            return {**base, "entries": items, "items": items, "count": len(items), "limit": limit_value}
         if op == "write":
-            entry = payload.get("entry") or {}
-            bucket.append(entry)
-            return {
-                "status": "success",
-                "mock": True,
-                "op": "write",
-                "resident_id": resident_id,
-                "entry": entry,
-                "count": len(bucket),
-            }
+            entry = payload.get("entry") or payload.get("content") or {}
+            mt = memory_type or DEFAULT_MEMORY_TYPE
+            count = store.write(resident_id, namespace, mt, entry)
+            return {**base, "memory_type": mt, "entry": entry, "count": count}
+        if op == "clear":
+            deleted = store.clear(resident_id, namespace, memory_type)
+            remaining = store.read(resident_id, namespace, memory_type)
+            return {**base, "cleared": bool(deleted), "deleted_count": deleted, "count": len(remaining)}
         return {
             "status": "error",
             "mock": True,
             "resident_id": resident_id,
+            "namespace": namespace,
+            "storage_backend": store.backend,
             "error": f"unknown memory op: {op!r}",
         }
 
@@ -180,7 +208,7 @@ _ADAPTERS_BY_PROVIDER_ID: Dict[str, ProviderAdapter] = {
     "provider_avatar_mock": MockAvatarProvider(),
     "provider_speech_mock": MockSpeechProvider(),
     "provider_screen_mock": MockScreenProvider(),
-    # Stage 6.6 real LLM v1.
+    # Stage 6.6 real LLM v2.
     "provider_llm_real": RealLLMProvider(),
     "provider_llm_fallback": _mock_llm_adapter,  # llm_fallback reuses the mock LLM
 }
@@ -190,8 +218,6 @@ def _with_provider_metadata(
     result: Dict[str, Any], *, provider_id: str, provider_type: str, engine_id: str
 ) -> Dict[str, Any]:
     enriched = dict(result)
-    # Respect the adapter's own mock flag (defaults True for the mock providers).
-    # The real LLM adapter returns mock=False so the trace can distinguish them.
     enriched["mock"] = bool(result.get("mock", True))
     enriched["provider_id"] = provider_id
     enriched["provider_type"] = provider_type
@@ -249,5 +275,6 @@ def route_provider_by_id(provider_id: str, payload: Dict[str, Any]) -> Dict[str,
 
 
 def reset_memory() -> None:
-    """Test seam: clear the process-local memory store."""
+    """Test seam: clear the legacy store and the memory_store (SQLite/JSON/mock)."""
     _STORE.clear()
+    reset_memory_store()

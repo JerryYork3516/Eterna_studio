@@ -33,7 +33,22 @@ def _reset_llm():
 
 # --- llm persists across a simulated restart ---------------------------------
 def test_llm_config_persists_across_restart():
-    rcs.set_section("llm", {"base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x", "enabled": True})
+    rcs.set_section(
+        "llm",
+        {
+            "profiles": {
+                "default": {
+                    "profile_id": "default",
+                    "provider": "openai_compatible",
+                    "base_url": "https://relay/v1",
+                    "api_key": "sk-secret",
+                    "model": "gpt-x",
+                    "enabled": True,
+                    "fallback_to_mock": True,
+                }
+            }
+        },
+    )
     assert rcs._LOCAL_PATH.exists()  # written to the (tmp) local JSON
 
     # Simulate a backend restart: clear in-process llm, reload from local JSON.
@@ -48,9 +63,26 @@ def test_llm_config_persists_across_restart():
 
 
 def test_llm_get_is_masked_no_secret():
-    rcs.set_section("llm", {"base_url": "https://relay/v1", "api_key": "sk-secret", "model": "gpt-x", "enabled": True})
+    rcs.set_section(
+        "llm",
+        {
+            "profiles": {
+                "default": {
+                    "profile_id": "default",
+                    "provider": "openai_compatible",
+                    "base_url": "https://relay/v1",
+                    "api_key": "sk-secret",
+                    "model": "gpt-x",
+                    "enabled": True,
+                    "fallback_to_mock": True,
+                }
+            }
+        },
+    )
     got = client.get("/runtime/config/llm").json()
     assert got["has_api_key"] is True
+    assert got["default_profile_id"] == "default"
+    assert got["profiles"]["default"]["has_api_key"] is True
     assert "api_key" not in got
     assert "sk-secret" not in json.dumps(got)
 
@@ -86,13 +118,29 @@ def test_secret_empty_keeps_existing():
 
 # --- unified endpoints -------------------------------------------------------
 def test_get_all_config_masked_no_secrets():
-    rcs.set_section("llm", {"api_key": "sk-a", "base_url": "u", "model": "m", "enabled": True})
+    rcs.set_section(
+        "llm",
+        {
+            "profiles": {
+                "default": {
+                    "profile_id": "default",
+                    "provider": "openai_compatible",
+                    "base_url": "u",
+                    "api_key": "sk-a",
+                    "model": "m",
+                    "enabled": True,
+                    "fallback_to_mock": True,
+                }
+            }
+        },
+    )
     rcs.set_section("screen", {"secret": "shh", "enabled": True})
     body = client.get("/runtime/config").json()
     assert set(body["sections"].keys()) == set(rcs.SECTIONS)
     blob = json.dumps(body)
     assert "sk-a" not in blob and "shh" not in blob
     assert body["sections"]["llm"]["has_api_key"] is True
+    assert body["sections"]["llm"]["profiles"]["default"]["has_api_key"] is True
     assert body["sections"]["screen"]["has_secret"] is True
 
 

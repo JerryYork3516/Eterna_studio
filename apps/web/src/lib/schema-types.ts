@@ -98,6 +98,20 @@ export type RuntimeRunHistoryEntry = {
 };
 
 // Stage 6 Resident v1 mock runtime step response (POST /runtime/resident/step).
+export type LatticeStateResponse = {
+  resident_id: string;
+  emotion?: string;
+  energy?: number;
+  attention?: string;
+  motion?: string;
+  voice_state?: string;
+  particle_density?: number;
+  color_palette?: string[];
+  focus_target?: string;
+  stage?: string;
+  [key: string]: unknown;
+};
+
 export type ResidentStepResponse = {
   schema_version?: string;
   runtime_version?: string;
@@ -106,6 +120,8 @@ export type ResidentStepResponse = {
   run_id?: string;
   status: string;
   output_text?: string;
+  lattice_state?: LatticeStateResponse;
+  multi_resident_lattice_state?: Record<string, unknown>;
   memory_snapshot?: RuntimeMemorySnapshot;
   execution_trace?: RuntimeTraceStep[];
   trace?: RuntimeTraceStep[];
