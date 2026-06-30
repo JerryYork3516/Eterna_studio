@@ -448,8 +448,7 @@ export function BrainConfigSection({
 }
 
 // Stage 6.7 — Memory Viewer / Clear section embedded in the Node card.
-// All config (resident_id / namespace / memory_type) is read from the node's own
-// fields; the section only views/clears via the backend (never the store).
+// v0.3 formal path keeps resident_id on the node; v0.1/v0.2 remain legacy only.
 function MemorySection({
   mode,
   nodeData,
@@ -466,18 +465,30 @@ function MemorySection({
   const memoryStatus = useCanvasStore((state) => state.memoryStatus);
   const viewMemory = useCanvasStore((state) => state.viewMemory);
   const clearMemory = useCanvasStore((state) => state.clearMemory);
-  const residentId = typeof runtimeResult?.resident_id === "string" ? runtimeResult.resident_id : "";
+  const runtimeResidentId = typeof runtimeResult?.resident_id === "string" ? runtimeResult.resident_id.trim() : "";
+  const configuredResidentId = typeof nodeData.resident_id === "string" ? nodeData.resident_id.trim() : "";
+  const effectiveResidentId = configuredResidentId && configuredResidentId !== "resident_v1" ? configuredResidentId : runtimeResidentId || configuredResidentId || "resident_v1";
   const namespace = typeof nodeData.namespace === "string" && nodeData.namespace ? nodeData.namespace : "default";
   const memoryType = typeof nodeData.memory_type === "string" && nodeData.memory_type ? nodeData.memory_type : "interaction_log";
   const localEntries = Array.isArray(nodeData.memory_entries) ? nodeData.memory_entries : [];
   const memoryViewResult = (nodeData.memory_view_result as Record<string, unknown> | undefined) ?? null;
   const entries = localEntries;
-  const clearResult = memoryClearResult && memoryClearResult.resident_id === residentId ? memoryClearResult : null;
+  const clearResult = memoryClearResult && memoryClearResult.resident_id === effectiveResidentId ? memoryClearResult : null;
   const t = (key: string, fallback: string) => translate(language, key, fallback);
   const actionError = memoryStatus === "error" ? t("memory.error", "记忆操作失败") : "";
 
+  useEffect(() => {
+    if (!onInput) {
+      return;
+    }
+    if (!runtimeResidentId || effectiveResidentId !== runtimeResidentId || configuredResidentId && configuredResidentId !== "resident_v1") {
+      return;
+    }
+    onInput("resident_id", effectiveResidentId);
+  }, [configuredResidentId, effectiveResidentId, onInput, runtimeResidentId]);
+
   const handleView = async () => {
-    const latest = await viewMemory(residentId, namespace, memoryType, 20);
+    const latest = await viewMemory(effectiveResidentId, namespace, memoryType, 20);
     if (!latest) {
       return;
     }
@@ -487,7 +498,7 @@ function MemorySection({
   };
 
   const handleClear = async () => {
-    const result = await clearMemory(residentId, namespace, memoryType);
+    const result = await clearMemory(effectiveResidentId, namespace, memoryType);
     if (!result) {
       return;
     }
@@ -508,7 +519,7 @@ function MemorySection({
         ) : null}
       </div>
       <div className="node-memory__meta-row">
-        <span>{t("input.resident_id", "Resident ID")}: {residentId}</span>
+        <span>{t("input.resident_id", "Resident ID")}: {effectiveResidentId}</span>
         <span>{t("input.namespace", "Namespace")}: {namespace}</span>
         <span>{t("input.memory_type", "Memory Type")}: {translate(language, `memory.type.${memoryType}`, memoryType)}</span>
       </div>
