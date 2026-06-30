@@ -447,6 +447,7 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str = "reside
         "output_text": output_text,
         "memory_snapshot": snapshot,
         "lattice_state": lattice_state,
+        "visual_state": lattice_state,
         "voice_state": lattice_state.get("voice_state", LatticeVoiceState.idle.value),
         "trace": trace,
         "execution_trace": trace,
