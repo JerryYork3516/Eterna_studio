@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import provider_adapters, resident_runtime
-from app.services.dr_compiler import compile_dr_result
+from app.services.dr_compiler import compile_dr_result_v0_3
 from app.services.runtime_llm_config import (
     get_runtime_llm_config,
     reset_runtime_llm_config,
@@ -176,9 +176,9 @@ def test_resident_step_regression():
         assert required in steps
 
 
-def test_load_dr_regression():
-    dr = compile_dr_result({"workflow": {"name": "Aria", "nodes": [{"node_id": f"layer_{i}"} for i in range(1, 14)]}})["dr_payload"]
-    resp = client.post("/runtime/resident/load-dr", json=dr)
+def test_load_dr_regression_v03_formal_path():
+    dr = compile_dr_result_v0_3({"workflow": {"name": "Aria", "nodes": [{"node_id": f"layer_{i}"} for i in range(1, 14)]}})["compiled_dr"]
+    resp = client.post("/runtime/resident/load-dr", json={"dr": dr})
     assert resp.status_code == 200
     body = resp.json()
     assert body["loaded"] is True

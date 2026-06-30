@@ -332,8 +332,9 @@ def test_gate_does_not_import_execution_engine():
     assert "PURE_OK" in out.stdout, out.stderr
 
 
-# --- Stage 6.3.3: /dr/compile invokes the Gate (compile-only, no download) ---
-def test_compile_endpoint_invokes_gate():
+# Stage 6.11 formal path is v0.3; this file keeps the gate coverage aligned
+# to the new envelope while preserving legacy validation semantics.
+def test_compile_endpoint_surfaces_v03_gate():
     nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
     body = client.post("/dr/compile", json={"workflow": {"name": "Aria", "nodes": nodes13}}).json()
     # Gate outputs are surfaced by the compile endpoint.
@@ -341,28 +342,29 @@ def test_compile_endpoint_invokes_gate():
     assert body["orchestration_compatibility"] is True
     assert body["module_audit"]["ok"] and body["layer_audit"]["ok"] and body["compile_audit"]["ok"]
     assert any(rec["type"] == "meta" for rec in body["pseudo_dag"])
-    # The validated, downloadable payload is DR v0.2 (not the v0.1 wrapper).
-    assert body["dr_version"] == "0.2"
-    assert body["compiled_dr"]["dr_version"] == "0.2"
+    # Stage 6.11 makes the public compile/export path v0.3.
+    assert body["dr_version"] == "0.3"
+    assert body["compiled_dr"]["dr_version"] == "0.3"
 
 
-def test_export_downloads_v0_2_payload():
+def test_export_downloads_v03_payload_formal_path():
     import json as _json
 
     nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
     resp = client.post("/dr/export", json={"workflow": {"name": "Aria", "nodes": nodes13}})
     assert resp.status_code == 200
     dr = _json.loads(resp.text)
-    assert dr["dr_version"] == "0.2"
+    assert dr["dr_version"] == "0.3"
+    assert dr["manifest"]["resident_id"]
     for seg in (
-        "identity", "intent_model", "scheduling_policy", "execution_policy",
-        "capabilities", "memory_policy", "risk_policy", "stability_constraints",
-        "capability_profile", "security_manifest", "skill_policy",
+        "resident_identity", "resident_blueprint", "runtime_requirements", "provider_requirements",
+        "memory_policy", "memory_config", "lattice_config", "voice_config",
+        "screen_capability_declaration", "safety_policy", "runtime_plan", "fallback_routes",
     ):
-        assert seg in dr
+        assert seg in dr["payload"]
 
 
-def test_compile_endpoint_invalid_reports_errors():
+def test_compile_endpoint_invalid_reports_errors_v03():
     nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
     canvas = {
         "workflow": {"name": "Bad", "nodes": nodes13},

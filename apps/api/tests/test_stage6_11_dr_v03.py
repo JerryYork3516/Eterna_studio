@@ -90,7 +90,7 @@ def test_compile_result_and_export_use_v03_payload():
     assert body["compiled_dr"]["dr_version"] == "0.3"
     assert body["dr_payload"]["runtime_plan"]["steps"]
 
-    resp = client.post("/dr/compile-v0.3", json=_canvas_13())
+    resp = client.post("/dr/compile", json=_canvas_13())
     assert resp.status_code == 200
     compile_body = resp.json()
     assert compile_body["valid"] is True
@@ -99,7 +99,7 @@ def test_compile_result_and_export_use_v03_payload():
     assert compile_body["compiled_dr"]["dr_schema_version"] == "0.3.0"
     assert compile_body["compiled_dr"]["not_executable"] is True
 
-    export_resp = client.post("/dr/export-v0.3", json=_canvas_13())
+    export_resp = client.post("/dr/export", json=_canvas_13())
     assert export_resp.status_code == 200
     assert export_resp.headers["content-type"] == "application/x-digital-resident"
     exported = json.loads(export_resp.text)
@@ -107,7 +107,7 @@ def test_compile_result_and_export_use_v03_payload():
     assert exported["dr_schema_version"] == "0.3.0"
     assert exported["not_executable"] is True
 
-    load_resp = client.post("/dr/load-v0.3", json={"dr": body["compiled_dr"]})
+    load_resp = client.post("/dr/load", json={"dr": body["compiled_dr"]})
     assert load_resp.status_code == 200
     assert load_resp.json()["loaded"] is True
 

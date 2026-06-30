@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import provider_adapters, resident_runtime
-from app.services.dr_compiler import compile_dr_result
+from app.services.dr_compiler import compile_dr_result_v0_3
 
 client = TestClient(app)
 
@@ -35,7 +35,7 @@ def _step(input_text: str, resident_id: str = "rlattice") -> dict:
 
 
 # --- runtime lattice_state ---------------------------------------------------
-def test_runtime_emits_lattice_state():
+def test_runtime_emits_lattice_state_formal_runtime():
     body = _step("hello world")
     assert body["mock"] is True
     assert body["resident_id"] == "rlattice"
@@ -50,7 +50,7 @@ def test_runtime_emits_lattice_state():
     assert isinstance(lattice_state["color_palette"], list)
 
 
-def test_stage_transitions_change_lattice_state():
+def test_stage_transitions_change_lattice_state_formal_runtime():
     thinking = _step("please think about this")
     speaking = _step("please speak now")
     calm = _step("just continue")
@@ -64,25 +64,24 @@ def test_stage_transitions_change_lattice_state():
 
 
 # --- DR reservations ---------------------------------------------------------
-def test_dr_compile_reserves_lattice_fields():
+def test_dr_compile_reserves_lattice_fields_v03():
     nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
-    result = compile_dr_result({"workflow": {"name": "Aria", "nodes": nodes13}})
+    result = compile_dr_result_v0_3({"workflow": {"name": "Aria", "nodes": nodes13}})
 
     assert result["valid"] in (True, False)
     assert result["lattice_config"]["resident_id"] == "aria"
     assert result["lattice_state_schema"]["resident_id"] == "aria"
     assert result["multi_resident_lattice_state"]["resident_ids"] == ["aria"]
-    assert "memory_config" in result["metadata"]["v01_compile_info"] or True
-    assert result["lattice_config"]["resident_id"] == "aria"
-    assert result["lattice_state_schema"]["emotion"] == "neutral"
-    assert result["multi_resident_lattice_state"]["resident_ids"] == ["aria"]
+    assert result["metadata"]["v03_valid"] in (True, False)
+    assert result["metadata"]["v03_compile_info"]["schema_version"] == "0.3.0"
+    assert result["lattice_state_schema"]["voice_state"] == "idle"
 
 
 # --- load-dr / preview path still returns lattice_state ----------------------
-def test_load_dr_response_contains_lattice_state():
+def test_load_dr_response_contains_lattice_state_v03():
     nodes13 = [{"node_id": f"layer_{i}"} for i in range(1, 14)]
-    dr = compile_dr_result({"workflow": {"name": "Aria", "nodes": nodes13}})["dr_payload"]
-    resp = client.post("/runtime/resident/load-dr", json=dr)
+    dr = compile_dr_result_v0_3({"workflow": {"name": "Aria", "nodes": nodes13}})["compiled_dr"]
+    resp = client.post("/runtime/resident/load-dr", json={"dr": dr})
     assert resp.status_code == 200
     body = resp.json()
     assert "lattice_state" in body

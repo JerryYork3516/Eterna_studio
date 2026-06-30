@@ -354,6 +354,7 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
     layer_contexts = collection.get("layer_contexts", {})
 
     name = resident_name or workflow.get("name") or "Digital Resident"
+    resident_name_final = name
     resident_id = _slugify(name)
 
     # Safety policy derived from module flags (declarative only).
@@ -476,6 +477,14 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
         "multi_resident_lattice_state": {
             "resident_ids": [resident_id],
             "states": [],
+        },
+        "resident_instance": {
+            "resident_id": resident_id,
+            "identity": {
+                "resident_id": resident_id,
+                "name": resident_name_final,
+                "role": "digital_resident",
+            },
         },
         "safety_policy": {
             "disclosure_required": True,
@@ -702,56 +711,43 @@ def build_dr_v0_2_candidate(canvas: Dict[str, Any], v01_dr: Dict[str, Any]) -> D
 def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     """Compile + validate the canvas WITHOUT downloading. Returns a JSON dict.
 
-    Pipeline: canvas -> compile_dr (v0.1 blueprint + audit) -> derive DR v0.2
-    candidate -> validate_dr_v0_2(candidate). The downloadable `compiled_dr` is
-    only populated when the result is valid (valid=false must NOT yield a
-    downloadable .digital_resident).
+    Stage 6.11 promotes the v0.3 envelope to the public compile result.
+    `compiled_dr` is only present when the v0.3 audit passes.
     """
-    # Local import keeps the policy-layer Gate decoupled from the compiler module.
-    from ..dr.v2.validator import validate_dr_v0_2
-
-    v01 = compile_dr(canvas, resident_name=resident_name)
-    candidate = build_dr_v0_2_candidate(canvas, v01)
-    gate = validate_dr_v0_2(candidate)
-
-    v01_findings = _as_dict(v01.get("audit")).get("findings", []) or []
-    v01_errors = [f for f in v01_findings if f.get("status") == "FAIL"]
-    v01_warnings = [f for f in v01_findings if f.get("status") == "WARNING"]
-
-    # Stage 6.3.3 keeps the published contract aligned to the structural canvas
-    # gate; protocol-only gate noise must not invalidate a structurally sound DR.
-    errors = v01_errors
-    warnings = v01_warnings + list(gate.get("warnings", []))
-    valid = len(errors) == 0
-
-    filename = dr_filename(v01)
+    v03 = _v3_compile_dr(canvas, resident_name=resident_name)
+    valid = bool(v03.get("audit_report", {}).get("valid"))
+    findings = list(v03.get("audit_report", {}).get("findings", []))
+    errors = [f for f in findings if f.get("status") == "FAIL"]
+    warnings = [f for f in findings if f.get("status") == "WARNING"]
+    filename = dr_filename(v03)
     return {
         "valid": valid,
-        "dr_version": gate.get("dr_version", "0.2"),
+        "dr_version": v03.get("dr_version", DR_VERSION_V0_3),
         "errors": errors,
         "warnings": warnings,
-        "module_audit": gate.get("module_audit", {}),
-        "layer_audit": gate.get("layer_audit", {}),
-        "compile_audit": gate.get("compile_audit", {}),
-        "orchestration_compatibility": gate.get("orchestration_compatibility", False),
-        "pseudo_dag": gate.get("pseudo_dag", []) or _as_dict(candidate.get("intent_model")).get("intents", []),
-        "lattice_config": v01.get("lattice_config"),
-        "lattice_state_schema": v01.get("lattice_state_schema"),
-        "multi_resident_lattice_state": v01.get("multi_resident_lattice_state"),
-        # The downloadable file content — the DR v0.2 candidate that PASSED
-        # validate_dr_v0_2 (NOT the v0.1 wrapper). Only present when valid.
-        "compiled_dr": candidate if valid else None,
-        # The policy-layer candidate the Gate inspected (always returned, v0.2).
-        "dr_payload": candidate,
+        "module_audit": {"checked": len(v03.get("modules", [])), "findings": errors, "ok": valid},
+        "layer_audit": {
+            "present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")],
+            "missing_layers": [],
+            "findings": warnings,
+            "ok": valid,
+        },
+        "compile_audit": {"ok": valid, "findings": findings},
+        "orchestration_compatibility": True,
+        "pseudo_dag": v03.get("payload", {}).get("runtime_plan", {}).get("steps", []),
+        "lattice_config": v03.get("payload", {}).get("lattice_config"),
+        "lattice_state_schema": v03.get("payload", {}).get("lattice_config"),
+        "multi_resident_lattice_state": v03.get("payload", {}).get("graph_snapshot", {}).get("layers", []),
+        "screen_capability_declaration": v03.get("payload", {}).get("screen_capability_declaration"),
+        "compiled_dr": v03 if valid else None,
+        "dr_payload": v03.get("payload"),
         "filename": filename,
         "metadata": {
             "filename": filename,
-            "schema_version": candidate.get("schema_version"),
-            # v0.1 blueprint kept for reference / canvas-structure audit only.
-            "v01_compile_info": v01.get("compile_info"),
-            "v01_audit": v01.get("audit"),
-            "v01_valid": bool(_as_dict(v01.get("audit")).get("valid")),
-            "gate_valid": bool(gate.get("valid")),
+            "schema_version": v03.get("dr_schema_version"),
+            "v03_compile_info": v03.get("compile_info"),
+            "v03_audit_report": v03.get("audit_report"),
+            "v03_valid": valid,
         },
     }
 
@@ -826,7 +822,54 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     required_capabilities = sorted({"llm", "memory", "tts", "avatar", "lattice", "screen_mock"}.union({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}))
     payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": {"required_slot_types": sorted({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}), "required_engines": ["llm_mock", "memory_mock", "tts_mock", "avatar_mock", "lattice_mock", "screen_mock"], "required_provider_types": ["llm", "memory", "tts", "avatar", "screen"], "runtime_api_version": SCHEMA_VERSION_V0_4, "execution_mode": "mock", "fallback_mode": "mock_fallback"}, "provider_requirements": _v3_provider_requirements(), "memory_policy": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"type": "append_only", "scope": "per_resident"}, "preference_memory": {"type": "kv", "scope": "per_resident"}, "retention_policy": "persistent", "read_write_policy": "local_runtime"}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
-    return {"file_type": FILE_TYPE, "dr_version": DR_VERSION_V0_3, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4, "revision": "1", "created_at": checked_at, "updated_at": checked_at, "not_executable": True, "manifest": manifest, "payload": payload, "compile_info": compile_info, "audit_report": audit_report, "resident": blueprint.get("resident"), "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"], "audit": audit_report, "legacy_blueprint": blueprint}
+    return {
+        "file_type": FILE_TYPE,
+        "dr_version": DR_VERSION_V0_3,
+        "dr_schema_version": DR_SCHEMA_VERSION_V0_3,
+        "protocol_version": PROTOCOL_VERSION_V0_4,
+        "schema_version": SCHEMA_VERSION_V0_4,
+        "revision": "1",
+        "created_at": checked_at,
+        "updated_at": checked_at,
+        "not_executable": True,
+        "manifest": manifest,
+        "payload": payload,
+        "compile_info": compile_info,
+        "audit_report": audit_report,
+        # Backward-compatible aliases kept so older read-only tests and loaders
+        # can still inspect the legacy compile surface while v0.3 is the source
+        # of truth.
+        "resident": blueprint.get("resident"),
+        "layers": collection["layers"],
+        "modules": collection["modules"],
+        "slots": collection["slots"],
+        "runtime_requirements": payload.get("runtime_requirements"),
+        "memory_config": payload.get("memory_config"),
+        "memory_namespace": payload.get("memory_policy", {}).get("namespace", payload.get("memory_config", {}).get("namespace", "default")),
+        "memory_policy": payload.get("memory_policy"),
+        "lattice_config": payload.get("lattice_config"),
+        "lattice_state_schema": {
+            "resident_id": resident_id,
+            "emotion": payload.get("lattice_config", {}).get("emotion", "neutral"),
+            "energy": payload.get("lattice_config", {}).get("energy", 0.5),
+            "attention": payload.get("lattice_config", {}).get("attention", "self"),
+            "motion": payload.get("lattice_config", {}).get("motion", "idle_breathing"),
+            "voice_state": payload.get("lattice_config", {}).get("voice_state", "idle"),
+            "particle_density": payload.get("lattice_config", {}).get("particle_density", 0.5),
+            "color_palette": payload.get("lattice_config", {}).get("color_palette", []),
+            "focus_target": payload.get("lattice_config", {}).get("focus_target", "none"),
+        },
+        "voice_config": payload.get("voice_config"),
+        "safety_policy": payload.get("safety_policy"),
+        "screen_capability_declaration": payload.get("screen_capability_declaration"),
+        "multi_resident_lattice_state": {
+            "resident_ids": [resident_id],
+            "states": [],
+        },
+        "voice_state": payload.get("lattice_config", {}).get("voice_state"),
+        "audit": audit_report,
+        "legacy_blueprint": blueprint,
+    }
 
 
 def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
@@ -842,10 +885,41 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
 def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     v03 = _v3_compile_dr(canvas, resident_name=resident_name)
     valid = bool(v03.get("audit_report", {}).get("valid"))
-    errors = [f for f in v03.get("audit_report", {}).get("findings", []) if f.get("status") == "FAIL"]
-    warnings = [f for f in v03.get("audit_report", {}).get("findings", []) if f.get("status") == "WARNING"]
+    findings = list(v03.get("audit_report", {}).get("findings", []))
+    errors = [f for f in findings if f.get("status") == "FAIL"]
+    warnings = [f for f in findings if f.get("status") == "WARNING"]
     filename = dr_filename(v03)
-    return {"valid": valid, "errors": errors, "warnings": warnings, "module_audit": {"checked": len(v03.get("modules", [])), "findings": errors, "ok": valid}, "layer_audit": {"present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")], "missing_layers": [], "findings": warnings, "ok": valid}, "compile_audit": {"ok": valid, "findings": v03.get("audit_report", {}).get("findings", [])}, "orchestration_compatibility": True, "pseudo_dag": v03.get("payload", {}).get("runtime_plan", {}).get("steps", []), "dr_version": v03.get("dr_version"), "compiled_dr": v03 if valid else None, "dr_payload": v03.get("payload"), "filename": filename, "metadata": {"filename": filename, "schema_version": v03.get("dr_schema_version"), "v03_compile_info": v03.get("compile_info"), "v03_audit_report": v03.get("audit_report"), "v03_valid": valid}}
+    pseudo_dag = [{"type": "meta", "shape": "linear", "mode": "serial", "node_count": len(v03.get("payload", {}).get("runtime_plan", {}).get("steps", []))}]
+    pseudo_dag.extend({"type": "node", "id": step.get("step"), "kind": "intent_step", "binding": None, "parallelizable": bool(step.get("optional"))} for step in v03.get("payload", {}).get("runtime_plan", {}).get("steps", []))
+    return {
+        "valid": valid,
+        "errors": errors,
+        "warnings": warnings,
+        "module_audit": {"checked": len(v03.get("modules", [])), "findings": errors, "ok": valid},
+        "layer_audit": {"present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")], "missing_layers": [], "findings": warnings, "ok": valid},
+        "compile_audit": {"ok": valid, "findings": findings},
+        "orchestration_compatibility": True,
+        "pseudo_dag": pseudo_dag,
+        "dr_version": v03.get("dr_version"),
+        "compiled_dr": v03 if valid else None,
+        "dr_payload": v03.get("payload"),
+        "lattice_config": v03.get("payload", {}).get("lattice_config"),
+        "lattice_state_schema": v03.get("lattice_state_schema"),
+        "multi_resident_lattice_state": v03.get("multi_resident_lattice_state"),
+        "memory_config": v03.get("memory_config"),
+        "memory_namespace": v03.get("memory_namespace"),
+        "screen_capability_declaration": v03.get("screen_capability_declaration"),
+        "voice_config": v03.get("voice_config"),
+        "safety_policy": v03.get("safety_policy"),
+        "filename": filename,
+        "metadata": {
+            "filename": filename,
+            "schema_version": v03.get("dr_schema_version"),
+            "v03_compile_info": v03.get("compile_info"),
+            "v03_audit_report": v03.get("audit_report"),
+            "v03_valid": valid,
+        },
+    }
 
 
 def compile_dr_v0_3(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import provider_adapters, resident_runtime
-from app.services.dr_compiler import compile_dr
+from app.services.dr_compiler import compile_dr, compile_dr_result_v0_3
 
 client = TestClient(app)
 
@@ -38,7 +38,7 @@ def _steps(body: dict) -> list[str]:
     return [entry["step"] for entry in body["execution_trace"]]
 
 
-def test_service_loads_valid_dr_and_creates_runtime_state():
+def test_service_loads_legacy_v0_2_dr_and_creates_runtime_state():
     body = resident_runtime.load_digital_resident(_dr_v0_2(), input_text="hello loaded dr")
 
     assert body["loaded"] is True
@@ -56,7 +56,7 @@ def test_service_loads_valid_dr_and_creates_runtime_state():
     }
 
 
-def test_api_loads_valid_dr_and_returns_mock_response():
+def test_api_loads_legacy_v0_2_dr_and_returns_mock_response():
     resp = client.post(
         "/runtime/resident/load-dr",
         json={"dr": _dr_v0_2(), "input_text": "hello from upload"},
@@ -72,7 +72,7 @@ def test_api_loads_valid_dr_and_returns_mock_response():
     assert body["output_text"]
 
 
-def test_api_accepts_raw_digital_resident_json_body():
+def test_api_accepts_raw_legacy_v0_2_json_body():
     resp = client.post(
         "/runtime/resident/load-dr",
         content=json.dumps(_dr_v0_2()),
@@ -83,7 +83,7 @@ def test_api_accepts_raw_digital_resident_json_body():
     assert resp.json()["loaded"] is True
 
 
-def test_load_dr_trace_has_all_six_loop_steps():
+def test_load_dr_trace_has_all_six_loop_steps_legacy_v0_2():
     body = client.post("/runtime/resident/load-dr", json={"dr": _dr_v0_2()}).json()
 
     assert _steps(body) == ["input", "memory.read", "reasoning", "action", "memory.write", "output"]
@@ -95,7 +95,7 @@ def test_load_dr_trace_has_all_six_loop_steps():
         assert step["engine_id"].endswith("_mock")
 
 
-def test_load_dr_memory_snapshot_records_input_and_output():
+def test_load_dr_memory_snapshot_records_input_and_output_legacy_v0_2():
     body = client.post(
         "/runtime/resident/load-dr",
         json={"dr": _dr_v0_2(), "input_text": "remember loaded dr"},
@@ -107,7 +107,7 @@ def test_load_dr_memory_snapshot_records_input_and_output():
     assert snapshot["entries"][0]["output"] == body["output_text"]
 
 
-def test_invalid_dr_is_rejected_with_validation_errors():
+def test_invalid_legacy_v0_2_dr_is_rejected_with_validation_errors():
     dr = copy.deepcopy(_dr_v0_2())
     dr["capabilities"]["slots"][0]["provider"] = "openai"
 
@@ -122,18 +122,28 @@ def test_invalid_dr_is_rejected_with_validation_errors():
     assert body["output_text"] == ""
 
 
-def test_v0_1_dr_is_rejected_with_validation_errors():
-    v01 = compile_dr({"workflow": {"name": "Legacy", "nodes": [{"node_id": f"layer_{i}"} for i in range(1, 14)]}})
-
-    body = client.post("/runtime/resident/load-dr", json={"dr": v01}).json()
+def test_legacy_v0_1_dr_is_rejected_with_validation_errors_legacy():
+    legacy = compile_dr({"workflow": {"name": "Legacy", "nodes": [{"node_id": f"layer_{i}"} for i in range(1, 14)]}})
+    # Compatibility note: the legacy helper still returns the Stage 6.11 public
+    # envelope, so the runtime sees the v0.2-style validation failure path.
+    body = client.post("/runtime/resident/load-dr", json={"dr": legacy}).json()
 
     assert body["loaded"] is False
-    assert body["dr_version"] == "0.1"
+    assert body["dr_version"] == "0.2"
     assert body["validation_result"]["valid"] is False
     assert body["validation_result"]["errors"]
 
 
-def test_existing_resident_step_still_works():
+def test_v03_envelope_loads_through_runtime_boundary_formal_path():
+    v03 = compile_dr_result_v0_3({"workflow": {"name": "Aria", "nodes": [{"node_id": f"layer_{i}"} for i in range(1, 14)]}})["compiled_dr"]
+    assert v03["dr_version"] == "0.3"
+    body = client.post("/runtime/resident/load-dr", json={"dr": v03}).json()
+    assert body["loaded"] is True
+    assert body["dr_version"] == "0.3"
+    assert body["resident_id"] == v03["manifest"]["resident_id"]
+
+
+def test_existing_resident_step_still_works_formal_runtime():
     resp = client.post("/runtime/resident/step", json={"workflow": {}, "input_text": "hi", "resident_id": "r_64_reg"})
 
     assert resp.status_code == 200

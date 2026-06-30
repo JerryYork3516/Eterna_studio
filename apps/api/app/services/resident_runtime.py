@@ -92,19 +92,45 @@ def get_or_create_state(resident_id: str) -> ResidentRuntimeState:
     return state
 
 
+def _dr_identity(dr: Dict[str, Any]) -> Dict[str, Any]:
+    identity = dict(dr.get("identity") or {})
+    if identity:
+        return identity
+    payload = dr.get("payload") if isinstance(dr.get("payload"), dict) else {}
+    payload_identity = payload.get("resident_identity") if isinstance(payload.get("resident_identity"), dict) else {}
+    if payload_identity:
+        return {
+            "resident_id": payload_identity.get("resident_id") or "resident_v1",
+            "name": payload_identity.get("name") or payload_identity.get("resident_name") or "",
+            "role": payload_identity.get("resident_type") or "digital_resident",
+            "description": payload_identity.get("personality_summary") or None,
+            "disclosure": "AI-generated digital resident; synthetic persona.",
+        }
+    resident_instance = dr.get("resident_instance") if isinstance(dr.get("resident_instance"), dict) else {}
+    if resident_instance:
+        return {
+            "resident_id": resident_instance.get("resident_id") or "resident_v1",
+            "name": resident_instance.get("identity", {}).get("name") or "",
+            "role": resident_instance.get("identity", {}).get("role") or "digital_resident",
+            "description": resident_instance.get("identity", {}).get("description"),
+            "disclosure": resident_instance.get("identity", {}).get("disclosure", "AI-generated digital resident; synthetic persona."),
+        }
+    return {}
+
+
 def create_runtime_state_from_dr(dr: Dict[str, Any]) -> ResidentRuntimeState:
-    """Create or refresh the process-local runtime state from a valid DR v0.2.
+    """Create or refresh the process-local runtime state from a valid DR doc.
 
     This only binds the existing deterministic mock providers. It does not create
     real provider clients, schedulers, secure loaders, or orchestration runners.
     """
-    identity = dict(dr.get("identity") or {})
+    identity = _dr_identity(dr)
     resident_id = identity.get("resident_id") or "resident_v1"
     state = get_or_create_state(resident_id)
     state.dr_version = str(dr.get("dr_version") or "")
     state.identity = identity
-    state.capability_profile = dict(dr.get("capability_profile") or {})
-    state.memory_policy = dict(dr.get("memory_policy") or {})
+    state.capability_profile = dict(dr.get("capability_profile") or dr.get("payload", {}).get("capability_profile") or {})
+    state.memory_policy = dict(dr.get("memory_policy") or dr.get("payload", {}).get("memory_policy") or {})
     state.status = "idle"
     state.runtime_status = "idle"
     state.provider_bindings = {
@@ -433,12 +459,32 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str = "reside
 
 
 def load_digital_resident(file_or_dict: Any, input_text: str = "load digital resident") -> Dict[str, Any]:
-    """Load a validated DR v0.2 through the Stage 6 runtime boundary."""
+    """Load a validated DR document through the Stage 6 runtime boundary."""
     if not isinstance(file_or_dict, dict):
         return _rejected_load(resident_id=None, dr_version=None, errors=[{"code": "INVALID_INPUT", "message": "DR payload must be an object", "path": "dr"}])
 
-    validation = validate_dr_v0_2(file_or_dict)
-    resident_id = (file_or_dict.get("resident_instance") or {}).get("resident_id") if isinstance(file_or_dict.get("resident_instance"), dict) else None
+    # Accept the router envelope: {"dr": {...}, "input_text": ...}
+    if isinstance(file_or_dict.get("dr"), dict) and len(file_or_dict.keys()) <= 3:
+        input_text = str(file_or_dict.get("input_text") or input_text)
+        file_or_dict = file_or_dict["dr"]
+
+    identity = _dr_identity(file_or_dict)
+    resident_id = identity.get("resident_id") if isinstance(identity, dict) else None
+
+    dr_version = str(file_or_dict.get("dr_version") or "")
+    if dr_version == "0.3" or "manifest" in file_or_dict or "payload" in file_or_dict:
+        audit = dict(file_or_dict.get("audit_report") or file_or_dict.get("audit") or {})
+        validation = {
+            "valid": bool(audit.get("valid")),
+            "dr_version": dr_version or "0.3",
+            "errors": [f for f in audit.get("findings", []) if f.get("status") == "FAIL"],
+            "warnings": [f for f in audit.get("findings", []) if f.get("status") == "WARNING"],
+        }
+        if not validation["valid"] and dr_version == "0.3":
+            validation = validate_dr_v0_2(file_or_dict)
+    else:
+        validation = validate_dr_v0_2(file_or_dict)
+
     if not validation.get("valid"):
         errors = list(validation.get("errors", []))
         warnings = list(validation.get("warnings", []))
