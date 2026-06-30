@@ -61,6 +61,27 @@ class ResidentRuntimeState:
 _STATES: Dict[str, ResidentRuntimeState] = {}
 
 _state_manager = RuntimeStateManager()
+RUNTIME_API_VERSION = "6.11.0"
+
+
+def _error_envelope(code: str, message: str, *, stage: Optional[str] = None, retryable: bool = False) -> Dict[str, Any]:
+    error: Dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
+    if stage is not None:
+        error["stage"] = stage
+    return error
+
+
+def _diagnostics(*, resident_id: str, run_id: Optional[str], stage: Optional[str] = None, trace: Optional[List[Dict[str, Any]]] = None, memory_snapshot: Optional[Dict[str, Any]] = None, status: Optional[str] = None, fallback_mock: bool = False, reasoning_error: bool = False) -> Dict[str, Any]:
+    return {
+        "resident_id": resident_id,
+        "run_id": run_id,
+        "stage": stage,
+        "status": status,
+        "trace_count": len(trace or []),
+        "memory_count": int((memory_snapshot or {}).get("count", 0)),
+        "fallback_mock": fallback_mock,
+        "reasoning_error": reasoning_error,
+    }
 
 
 def get_or_create_state(resident_id: str) -> ResidentRuntimeState:
@@ -125,7 +146,10 @@ def _rejected_load(
 ) -> Dict[str, Any]:
     rid = resident_id or "resident_v1"
     validation_result = _empty_validation_result(dr_version=dr_version, errors=errors, warnings=warnings)
+    memory_snapshot = _empty_memory_snapshot(rid)
+    diagnostics = _diagnostics(resident_id=rid, run_id=None, stage="load-dr", trace=[], memory_snapshot=memory_snapshot, status="rejected")
     return {
+        "runtime_api_version": RUNTIME_API_VERSION,
         "loaded": False,
         "resident_id": rid,
         "dr_version": dr_version,
@@ -133,11 +157,14 @@ def _rejected_load(
         "validation_result": validation_result,
         "runtime_state": None,
         "output_text": "",
-        "memory_snapshot": _empty_memory_snapshot(rid),
+        "memory_snapshot": memory_snapshot,
         "execution_trace": [],
         "trace": [],
         "turn_count": 0,
         "run_history": [],
+        "diagnostics": diagnostics,
+        "error": _error_envelope("DR_LOAD_REJECTED", "Digital resident load was rejected", stage="load-dr", retryable=False),
+        "voice_state": LatticeVoiceState.idle.value,
         "mock": True,
     }
 
@@ -147,9 +174,11 @@ def reset_states() -> None:
     reset_history()
 
 
-def _profile_trace_info(profile_id: str, provider: str, model: str, mock: bool, fallback_mock: bool) -> Dict[str, Any]:
+def _profile_trace_info(profile_id: str, provider_type: str, provider_id: str, provider: str, model: str, mock: bool, fallback_mock: bool) -> Dict[str, Any]:
     return {
         "profile_id": profile_id,
+        "provider_type": provider_type,
+        "provider_id": provider_id,
         "provider": provider,
         "model": model,
         "mock": mock,
@@ -294,6 +323,8 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str = "reside
     state.last_reasoning = reasoning_text
     trace_profile = _profile_trace_info(
         profile_id=_llm_cfg.profile_id,
+        provider_type=reasoning.get("provider_type") or _llm_cfg.provider_type,
+        provider_id=reasoning.get("provider_id") or _llm_cfg.provider_id,
         provider=reasoning.get("provider") or _llm_cfg.provider,
         model=reasoning.get("model") or _llm_cfg.model,
         mock=bool(reasoning.get("mock", True)),
@@ -372,17 +403,31 @@ def run_resident_loop(workflow: Any, input_text: str, resident_id: str = "reside
         input_text=input_text,
         output_text=output_text,
     )
+    diagnostics = _diagnostics(
+        resident_id=resident_id,
+        run_id=run.run_id,
+        stage=stage,
+        trace=trace,
+        memory_snapshot=snapshot,
+        status=state.status,
+        fallback_mock=fallback_mock,
+        reasoning_error=reasoning_error is not None,
+    )
     return {
+        "runtime_api_version": RUNTIME_API_VERSION,
         "resident_id": resident_id,
         "run_id": run.run_id,
         "status": state.status,
         "output_text": output_text,
         "memory_snapshot": snapshot,
-        "execution_trace": trace,
+        "lattice_state": lattice_state,
+        "voice_state": lattice_state.get("voice_state", LatticeVoiceState.idle.value),
         "trace": trace,
+        "execution_trace": trace,
         "turn_count": state.turn_count,
         "run_history": _state_manager.history(resident_id),
-        "lattice_state": lattice_state,
+        "diagnostics": diagnostics,
+        "error": None,
         "mock": True,
     }
 
@@ -407,19 +452,31 @@ def load_digital_resident(file_or_dict: Any, input_text: str = "load digital res
     resident_id = resident_id or "resident_v1"
     create_runtime_state_from_dr(file_or_dict)
     step = run_resident_loop(file_or_dict, input_text=input_text, resident_id=resident_id)
+    runtime_state = {
+        "resident_id": resident_id,
+        "identity": get_or_create_state(resident_id).identity,
+        "capability_profile": get_or_create_state(resident_id).capability_profile,
+        "memory_policy": get_or_create_state(resident_id).memory_policy,
+        "provider_bindings": get_or_create_state(resident_id).provider_bindings,
+        "status": get_or_create_state(resident_id).status,
+    }
     step.update(
         {
             "loaded": True,
             "dr_version": validation.get("dr_version"),
             "validation_result": validation,
-            "runtime_state": {
-                "resident_id": resident_id,
-                "identity": get_or_create_state(resident_id).identity,
-                "capability_profile": get_or_create_state(resident_id).capability_profile,
-                "memory_policy": get_or_create_state(resident_id).memory_policy,
-                "provider_bindings": get_or_create_state(resident_id).provider_bindings,
-                "status": get_or_create_state(resident_id).status,
-            },
+            "runtime_state": runtime_state,
+            "diagnostics": _diagnostics(
+                resident_id=resident_id,
+                run_id=step.get("run_id"),
+                stage="load-dr",
+                trace=step.get("trace", []),
+                memory_snapshot=step.get("memory_snapshot"),
+                status=step.get("status"),
+            ),
+            "error": None,
+            "voice_state": step.get("voice_state", LatticeVoiceState.idle.value),
+            "runtime_api_version": RUNTIME_API_VERSION,
         }
     )
     return step

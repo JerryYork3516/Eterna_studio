@@ -66,6 +66,14 @@ def select_options(*values: str) -> List[NodeInputOption]:
     return [NodeInputOption(value=value, label=value.replace("_", " ").title()) for value in values]
 
 
+def keyed_options(*values: str) -> List[NodeInputOption]:
+    return [NodeInputOption(value=value, label=f"input.option.{value}") for value in values]
+
+
+def i18n_label(key: str) -> str:
+    return key
+
+
 def registry_entry(
     node_type: str,
     category: str,
@@ -217,18 +225,95 @@ NODE_REGISTRY: Dict[str, NodeRegistryEntry] = {
         status=NodeStatus.mock,
         mock_executor="dialogue_mock",
     ),
+    "voice_config": registry_entry(
+        "voice_config",
+        "media",
+        "node.type.voice_config",
+        "node.voice_config.description",
+        input_schema=[
+            input_field("provider", NodeInputType.select, "voice.provider.default", options=keyed_options("default", "elevenlabs", "volcano"), default="default"),
+            input_field("enabled", NodeInputType.boolean, "voice.config.enabled", default=True),
+            input_field("locale", NodeInputType.select, "voice.config.locale", options=keyed_options("zh-CN", "en-US"), default="zh-CN"),
+        ],
+        output_schema=[output_field("voice_config", "object", "voice_config DTO.", True)],
+        status=NodeStatus.ready,
+        mock_executor="voice_config_mock",
+    ),
+    "tts_provider": registry_entry(
+        "tts_provider",
+        "media",
+        "node.type.tts_provider",
+        "node.tts_provider.description",
+        input_schema=[
+            input_field("provider", NodeInputType.select, "voice.provider.default", options=keyed_options("default", "elevenlabs", "volcano"), default="default"),
+            input_field("voice_id", NodeInputType.text, "input.voice", default="mock_voice"),
+        ],
+        output_schema=[output_field("tts_provider_config", "object", "tts_provider_config DTO.", True)],
+        status=NodeStatus.ready,
+        mock_executor="tts_provider_mock",
+    ),
     "voice_profile": registry_entry(
         "voice_profile",
         "media",
-        "Voice Profile",
-        "Mock voice profile settings. No TTS runtime is called.",
+        "node.type.voice_profile",
+        "node.voice_profile.description",
         input_schema=[
-            input_field("voice_id", NodeInputType.select, "Voice", options=select_options("neutral", "female", "male")),
-            input_field("speed", NodeInputType.slider, "Speed", default=1, min=0.5, max=1.5, step=0.1),
+            input_field("voice_id", NodeInputType.select, "input.voice", options=keyed_options("neutral", "female", "male")),
+            input_field("speed", NodeInputType.slider, "input.speed", default=1, min=0.5, max=1.5, step=0.1),
         ],
-        output_schema=[output_field("voice_profile", "object", "Voice profile DTO.", True)],
+        output_schema=[output_field("voice_profile", "object", "voice_profile DTO.", True)],
         status=NodeStatus.mock,
         mock_executor="voice_profile_mock",
+    ),
+    "audio_output": registry_entry(
+        "audio_output",
+        "media",
+        "node.type.audio_output",
+        "node.audio_output.description",
+        input_schema=[
+            input_field("audio_url", NodeInputType.text, "voice.audio.output", default=""),
+            input_field("volume", NodeInputType.slider, "node.audio_output.volume", default=1, min=0, max=1, step=0.1),
+        ],
+        output_schema=[output_field("audio_output", "object", "audio_output DTO.", True)],
+        status=NodeStatus.ready,
+        mock_executor="audio_output_mock",
+    ),
+    "speaking_status": registry_entry(
+        "speaking_status",
+        "media",
+        "node.type.speaking_status",
+        "node.speaking_status.description",
+        input_schema=[
+            input_field("voice_state", NodeInputType.select, "voice.status.speaking", options=keyed_options("speaking", "idle"), default="idle"),
+        ],
+        output_schema=[output_field("speaking_status", "object", "speaking_status DTO.", True)],
+        status=NodeStatus.ready,
+        mock_executor="speaking_status_mock",
+    ),
+    "voice_lattice_sync": registry_entry(
+        "voice_lattice_sync",
+        "media",
+        "node.type.voice_lattice_sync",
+        "node.voice_lattice_sync.description",
+        input_schema=[
+            input_field("voice_state", NodeInputType.select, "voice.status.idle", options=keyed_options("speaking", "idle"), default="idle"),
+            input_field("sync_policy", NodeInputType.select, "voice.sync.lattice_voice", options=keyed_options("mirror", "append"), default="mirror"),
+        ],
+        output_schema=[output_field("voice_lattice_sync", "object", "voice_lattice_sync DTO.", True)],
+        status=NodeStatus.ready,
+        mock_executor="voice_lattice_sync_mock",
+    ),
+    "speech_input_event_placeholder": registry_entry(
+        "speech_input_event_placeholder",
+        "media",
+        "node.type.speech_input_event_placeholder",
+        "node.speech_input_event_placeholder.description",
+        input_schema=[
+            input_field("speech_event", NodeInputType.json, "speech.input_event"),
+        ],
+        output_schema=[output_field("speech_input_event_placeholder", "object", "speech_input_event_placeholder DTO.", True)],
+        status=NodeStatus.mock,
+        mock_executor="speech_input_event_placeholder_mock",
     ),
     "particle_avatar": registry_entry(
         "particle_avatar",

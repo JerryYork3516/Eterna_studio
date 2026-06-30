@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..services.dr_compiler import compile_dr_result, mock_load_dr
+from ..services.dr_compiler import compile_dr_result_v0_3, compile_dr_v0_3, mock_load_dr_v0_3
 
 router = APIRouter(prefix="/dr", tags=["dr"])
 
@@ -60,18 +60,18 @@ def _build_canvas(req: DRCompileRequest) -> Dict[str, Any]:
 
 @router.post("/compile")
 def dr_compile(req: DRCompileRequest) -> Dict[str, Any]:
-    """Compile + validate the canvas and return JSON. Does NOT download a file."""
-    return compile_dr_result(_build_canvas(req), resident_name=req.resident_name)
+    """Compile + validate the canvas and return the DR v0.3 result."""
+    return compile_dr_result_v0_3(_build_canvas(req), resident_name=req.resident_name)
 
 
 @router.post("/export")
 def dr_export(req: DRCompileRequest) -> Response:
-    """Download the validated compiled DR. Rejected (422) when the DR is invalid."""
-    result = compile_dr_result(_build_canvas(req), resident_name=req.resident_name)
+    """Download the validated compiled DR v0.3 envelope."""
+    result = compile_dr_result_v0_3(_build_canvas(req), resident_name=req.resident_name)
     if not result["valid"] or result.get("compiled_dr") is None:
         raise HTTPException(
             status_code=422,
-            detail={"error": "DR did not pass validation; export is not allowed", "errors": result["errors"]},
+            detail={"error": "DR v0.3 did not pass validation; export is not allowed", "errors": result["errors"]},
         )
     dr = result["compiled_dr"]
     filename = result["filename"]
@@ -83,12 +83,48 @@ def dr_export(req: DRCompileRequest) -> Response:
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-DR-Filename": filename,
             "X-DR-Audit-Valid": "true",
-            "X-DR-Version": str(dr.get("dr_version", "0.1")),
+            "X-DR-Version": str(dr.get("dr_version", "0.3")),
         },
     )
 
 
 @router.post("/load")
 def dr_load(req: DRLoadRequest) -> Dict[str, Any]:
-    """Mock-load a DR document (read-only; proves runtime can consume it)."""
-    return mock_load_dr(req.dr)
+    """Mock-load a DR v0.3 document (read-only; proves runtime can consume it)."""
+    return mock_load_dr_v0_3(req.dr)
+
+
+@router.post("/compile-v0.3")
+def dr_compile_v0_3(req: DRCompileRequest) -> Dict[str, Any]:
+    """Alias that returns the same v0.3 compile result."""
+    return compile_dr_result_v0_3(_build_canvas(req), resident_name=req.resident_name)
+
+
+@router.post("/export-v0.3")
+def dr_export_v0_3(req: DRCompileRequest) -> Response:
+    """Alias that downloads the same v0.3 envelope."""
+    result = compile_dr_result_v0_3(_build_canvas(req), resident_name=req.resident_name)
+    if not result["valid"] or result.get("compiled_dr") is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "DR v0.3 did not pass validation; export is not allowed", "errors": result["errors"]},
+        )
+    dr = result["compiled_dr"]
+    filename = result["filename"]
+    body = json.dumps(dr, ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type=DR_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-DR-Filename": filename,
+            "X-DR-Audit-Valid": "true",
+            "X-DR-Version": str(dr.get("dr_version", "0.3")),
+        },
+    )
+
+
+@router.post("/load-v0.3")
+def dr_load_v0_3(req: DRLoadRequest) -> Dict[str, Any]:
+    """Alias that mock-loads the same v0.3 document."""
+    return mock_load_dr_v0_3(req.dr)

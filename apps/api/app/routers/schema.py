@@ -16,11 +16,12 @@ from ..models.v0_4 import (
     ModuleCatalogResponseV04,
     PROTOCOL_VERSION_V0_4,
     SCHEMA_VERSION_V0_4,
+    ScreenUiAnchorModuleCatalogResponseV04,
     SlotCatalogResponseV04,
 )
 from ..models.v0_4 import LayerRefV04
 from ..registry.engine_registry import get_engine_registry
-from ..registry.module_catalog import get_module_catalog
+from ..registry.module_catalog import SCREEN_UI_ANCHOR_MODULE, get_module_catalog
 from ..registry.node_registry import NODE_REGISTRY
 from ..registry.slot_catalog import get_slot_catalog
 from ..models.v0_4 import CANONICAL_LAYERS
@@ -72,6 +73,25 @@ def module_catalog_v0_4() -> ModuleCatalogResponseV04:
 @router.get("/slot-catalog-v0.4", response_model=SlotCatalogResponseV04)
 def slot_catalog_v0_4() -> SlotCatalogResponseV04:
     return SlotCatalogResponseV04(slots=get_slot_catalog())
+
+
+@router.get("/screen-ui-anchor-module-v0", response_model=ScreenUiAnchorModuleCatalogResponseV04)
+def screen_ui_anchor_module_v0() -> ScreenUiAnchorModuleCatalogResponseV04:
+    module = SCREEN_UI_ANCHOR_MODULE
+    return ScreenUiAnchorModuleCatalogResponseV04(
+        module=module,
+        screen_context_schema=module.screen_context_schema.model_dump(mode="json"),
+        ui_element_schema=module.ui_element_schema.model_dump(mode="json"),
+        ui_anchor_schema=module.ui_anchor_schema.model_dump(mode="json"),
+        guidance_action_schema=module.guidance_action_schema.model_dump(mode="json"),
+        screen_trace_schema=module.screen_trace_schema.model_dump(mode="json"),
+        screen_permission_policy=module.screen_permission_policy.model_dump(mode="json"),
+        screen_config=module.screen_config,
+        slot_declarations=list(module.slot_declarations),
+        runtime_chain=module.screen_config.get("runtime_chain", []),
+        i18n_keys=module.i18n_keys,
+        dr_write_keys=list(module.dr_write_keys),
+    )
 
 
 @router.get("/engine-registry-v0.4", response_model=EngineRegistryResponseV04)

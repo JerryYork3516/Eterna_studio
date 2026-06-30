@@ -15,6 +15,7 @@ from app.services.dr_compiler import (
     FILE_SUFFIX,
     FILE_TYPE,
     compile_dr,
+    compile_dr_v0_3,
     dr_filename,
     mock_load_dr,
 )
@@ -121,38 +122,50 @@ def test_compile_endpoint_returns_json_not_file():
     ):
         assert key in body
     assert body["valid"] is True
-    assert body["dr_version"] == "0.2"
-    assert body["compiled_dr"] is not None  # downloadable only when valid
-    # The downloadable payload MUST be the v0.2 candidate, never the v0.1 wrapper.
-    assert body["compiled_dr"]["dr_version"] == "0.2"
-    assert body["dr_payload"]["dr_version"] == "0.2"
+    assert body["dr_version"] == "0.3"
+    assert body["compiled_dr"] is not None
+    assert body["compiled_dr"]["dr_version"] == "0.3"
+    assert body["compiled_dr"]["dr_schema_version"] == "0.3.0"
+    assert body["dr_payload"]["runtime_plan"]["steps"]
     assert body["filename"].endswith(FILE_SUFFIX)
-    assert body["pseudo_dag"]
 
 
-V0_2_SEGMENTS = (
-    "identity",
-    "intent_model",
-    "scheduling_policy",
-    "execution_policy",
-    "capabilities",
-    "memory_policy",
-    "risk_policy",
-    "stability_constraints",
-    "capability_profile",
-    "security_manifest",
-    "skill_policy",
+def test_compile_v03_endpoint_returns_json_not_file():
+    resp = client.post("/dr/compile", json=_canvas_13())
+    assert resp.status_code == 200
+    assert "application/json" in resp.headers["content-type"]
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["dr_version"] == "0.3"
+    assert body["compiled_dr"]["dr_version"] == "0.3"
+    assert body["dr_payload"]["runtime_plan"]["steps"]
+
+
+V0_3_ROOT_FIELDS = (
+    "file_type",
+    "dr_version",
+    "dr_schema_version",
+    "protocol_version",
+    "revision",
+    "created_at",
+    "updated_at",
+    "not_executable",
+    "manifest",
+    "payload",
+    "compile_info",
+    "audit_report",
 )
 
 
-def test_compiled_dr_is_v0_2_eleven_segment_structure():
+def test_compiled_dr_is_v0_3_envelope():
     body = client.post("/dr/compile", json=_canvas_13()).json()
     compiled = body["compiled_dr"]
-    for seg in V0_2_SEGMENTS:
-        assert seg in compiled  # 11-segment DR v0.2 structure
-    # And it must NOT be the old v0.1 wrapper shape.
-    assert "runtime_requirements" not in compiled
-    assert "layers" not in compiled
+    for field in V0_3_ROOT_FIELDS:
+        assert field in compiled
+    assert compiled["dr_version"] == "0.3"
+    assert compiled["dr_schema_version"] == "0.3.0"
+    assert compiled["not_executable"] is True
+    assert "audit" in compiled  # legacy compatibility only
 
 
 def test_compile_invalid_canvas_blocks_export():
@@ -173,14 +186,29 @@ def test_export_endpoint_returns_file_when_valid():
     assert resp.headers["content-type"] == "application/x-digital-resident"
     assert resp.headers["content-disposition"].endswith(f'{FILE_SUFFIX}"')
     assert resp.headers["x-dr-filename"].endswith(FILE_SUFFIX)
-    assert resp.headers["x-dr-version"] == "0.2"
+    assert resp.headers["x-dr-version"] == "0.3"
     body = json.loads(resp.text)
     assert body["file_type"] == FILE_TYPE
-    # Downloaded file MUST be the DR v0.2 candidate (eleven segments), not v0.1.
-    assert body["dr_version"] == "0.2"
-    for seg in V0_2_SEGMENTS:
-        assert seg in body
-    assert "runtime_requirements" not in body  # no v0.1 wrapper leakage
+    assert body["dr_version"] == "0.3"
+    assert body["dr_schema_version"] == "0.3.0"
+    assert body["not_executable"] is True
+    assert body["manifest"]["resident_id"]
+    assert body["payload"]["runtime_plan"]["steps"]
+    assert "api_key" not in json.dumps(body, ensure_ascii=False)
+
+
+def test_export_v03_endpoint_returns_file_when_valid():
+    resp = client.post("/dr/export", json=_canvas_13())
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/x-digital-resident"
+    assert resp.headers["x-dr-version"] == "0.3"
+    body = json.loads(resp.text)
+    assert body["file_type"] == FILE_TYPE
+    assert body["dr_version"] == "0.3"
+    assert body["dr_schema_version"] == "0.3.0"
+    assert body["not_executable"] is True
+    assert body["manifest"]["resident_id"]
+    assert body["payload"]["runtime_plan"]["steps"]
 
 
 def test_valid_export_never_emits_v0_1_payload():
@@ -188,7 +216,7 @@ def test_valid_export_never_emits_v0_1_payload():
     body = client.post("/dr/compile", json=_canvas_13()).json()
     assert body["valid"] is True
     assert body["compiled_dr"]["dr_version"] != "0.1"
-    assert body["compiled_dr"]["dr_version"] == "0.2"
+    assert body["compiled_dr"]["dr_version"] == "0.3"
 
 
 def test_export_rejected_when_invalid():
@@ -209,7 +237,7 @@ def test_runtime_can_mock_load_dr():
 
 
 def test_dr_load_endpoint():
-    dr = compile_dr(_canvas_13())
+    dr = compile_dr_v0_3(_canvas_13())
     resp = client.post("/dr/load", json={"dr": dr})
     assert resp.status_code == 200
     assert resp.json()["loaded"] is True

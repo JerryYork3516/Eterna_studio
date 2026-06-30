@@ -66,8 +66,6 @@ class ProtocolStatus(str, Enum):
     planned = "PLANNED"
     later = "LATER"
     disabled = "DISABLED"
-    unplanned = "UNPLANNED"
-    error = "ERROR"
 
 
 class ContractStatus(str, Enum):
@@ -103,6 +101,87 @@ class SlotType(str, Enum):
     ar = "ar"
     tool = "tool"
     lattice = "lattice"
+
+
+class ScreenContextV04(V04BaseModel):
+    screen_id: str
+    app_id: str
+    window_title_key: str
+    visible_text_keys: List[str] = Field(default_factory=list)
+    timestamp: str
+
+
+class ScreenElementType(str, Enum):
+    button = "button"
+    input = "input"
+    label = "label"
+    icon = "icon"
+
+
+class ScreenElementState(str, Enum):
+    normal = "normal"
+    hover = "hover"
+    disabled = "disabled"
+
+
+class UIElementV04(V04BaseModel):
+    element_id: str
+    type: ScreenElementType
+    label_key: str
+    bounds: ScreenBoundsV04
+    state: ScreenElementState = ScreenElementState.normal
+
+
+class UIAnchorActionHint(str, Enum):
+    click = "click"
+    type = "type"
+    focus = "focus"
+    observe = "observe"
+
+
+class UIAnchorV04(V04BaseModel):
+    anchor_id: str
+    target_element_id: str
+    intent_key: str
+    action_hint: UIAnchorActionHint
+    confidence: float = 0.0
+
+
+class GuidanceActionType(str, Enum):
+    highlight = "highlight"
+    point = "point"
+    suggest = "suggest"
+
+
+class GuidanceActionV04(V04BaseModel):
+    action_type: GuidanceActionType
+    target_anchor_id: str
+    description_key: str
+
+
+class ScreenTraceEntryV04(V04BaseModel):
+    trace_step_id: str
+    event_type: str
+    source: str
+    target: Optional[str] = None
+    timestamp: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ScreenTraceV04(V04BaseModel):
+    trace_id: str
+    screen_id: str
+    app_id: str
+    entries: List[ScreenTraceEntryV04] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ScreenPermissionPolicyV04(V04BaseModel):
+    allowed: bool = True
+    human_confirm_required: bool = False
+    scopes: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    mock_only: bool = True
 
 
 class ExecutionMode(str, Enum):
@@ -265,12 +344,21 @@ class ModuleV04(V04BaseModel):
     category: str = ""
     tags: List[str] = Field(default_factory=list)
     color_status: str = "gray"
+    mock_only: bool = False
+    no_execution: bool = False
+    slot_declarations: List[str] = Field(default_factory=list)
+    screen_config: Dict[str, Any] = Field(default_factory=dict)
+    dr_write_keys: List[str] = Field(default_factory=list)
 
 
-class LatticeModuleConfigV04(V04BaseModel):
-    lattice_config: LatticeConfigV04 = Field(default_factory=lambda: LatticeConfigV04(resident_id="resident_v1"))
-    lattice_state_schema: LatticeStateV04 = Field(default_factory=lambda: LatticeStateV04(resident_id="resident_v1"))
-    multi_resident_lattice_state: MultiResidentLatticeStateV04 = Field(default_factory=MultiResidentLatticeStateV04)
+class ScreenBoundsV04(V04BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+# Screen / UI Anchor module definitions are declared below; keep a single source of truth.
 
 
 # --- Slot Protocol ---------------------------------------------------------
@@ -317,6 +405,12 @@ class SlotV04(V04BaseModel):
     mock_supported: bool = True
     i18n_keys: Dict[str, str] = Field(default_factory=dict)
     enabled: bool = False
+
+
+class LatticeModuleConfigV04(V04BaseModel):
+    lattice_config: LatticeConfigV04 = Field(default_factory=lambda: LatticeConfigV04(resident_id="resident_v1"))
+    lattice_state_schema: LatticeStateV04 = Field(default_factory=lambda: LatticeStateV04(resident_id="resident_v1"))
+    multi_resident_lattice_state: MultiResidentLatticeStateV04 = Field(default_factory=MultiResidentLatticeStateV04)
 
 
 # --- Workflow / Persona v0.4 core envelope ---------------------------------
@@ -366,45 +460,7 @@ class PersonaV04(V04BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-# --- Lattice State (reserved, declarative only) ----------------------------
-class LatticeConfigV04(V04BaseModel):
-    resident_id: str
-    point_grid: Dict[str, Any] = Field(default_factory=dict)
-    emotion_model: Dict[str, Any] = Field(default_factory=dict)
-    energy_model: Dict[str, Any] = Field(default_factory=dict)
-    motion_model: Dict[str, Any] = Field(default_factory=dict)
-    attention_model: Dict[str, Any] = Field(default_factory=dict)
-    voice_model: Dict[str, Any] = Field(default_factory=dict)
-    particle_model: Dict[str, Any] = Field(default_factory=dict)
-    multi_resident: Dict[str, Any] = Field(default_factory=dict)
-
-
-class LatticeModuleConfigV04(V04BaseModel):
-    lattice_config: LatticeConfigV04 = Field(default_factory=lambda: LatticeConfigV04(resident_id="resident_v1"))
-    lattice_state_schema: LatticeStateSchemaV04 = Field(default_factory=lambda: LatticeStateSchemaV04(resident_id="resident_v1"))
-    multi_resident_lattice_state: MultiResidentLatticeStateV04 = Field(default_factory=MultiResidentLatticeStateV04)
-
-
-class LatticeStateSchemaV04(V04BaseModel):
-    resident_id: str
-    emotion: str = "calm"
-    energy: float = 0.5
-    attention: str = "self"
-    motion: str = "idle_breathing"
-    voice_state: str = "idle"
-    particle_density: float = 0.4
-    color_palette: List[str] = Field(default_factory=list)
-    focus_target: str = "self"
-
-
-class MultiResidentLatticeStateV04(V04BaseModel):
-    resident_ids: List[str] = Field(default_factory=list)
-    lattice_states: List[LatticeStateSchemaV04] = Field(default_factory=list)
-    coordination_mode: str = "reserved"
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-# --- Engine Registry -------------------------------------------------------
+# --- Execution + engine surface -------------------------------------------
 class EngineType(str, Enum):
     llm = "llm"
     memory = "memory"
@@ -555,3 +611,189 @@ class V4ExecutionResponse(V04BaseModel):
     executed: bool
     plan: V4ExecutionPlan
     result: Dict[str, Any] = Field(default_factory=dict)
+
+
+# --- Stage 6.10 Screen / UI Anchor protocol (schema-only; mock) ------------
+class ScreenBoundsV04(V04BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class ScreenContextV04(V04BaseModel):
+    screen_id: str
+    app_id: str
+    window_title_key: str
+    visible_text_keys: List[str] = Field(default_factory=list)
+    timestamp: str
+
+
+class ScreenElementType(str, Enum):
+    button = "button"
+    input = "input"
+    label = "label"
+    icon = "icon"
+
+
+class ScreenElementState(str, Enum):
+    normal = "normal"
+    hover = "hover"
+    disabled = "disabled"
+
+
+class UIElementV04(V04BaseModel):
+    element_id: str
+    type: ScreenElementType
+    label_key: str
+    bounds: ScreenBoundsV04
+    state: ScreenElementState = ScreenElementState.normal
+
+
+class UIAnchorActionHint(str, Enum):
+    click = "click"
+    type = "type"
+    focus = "focus"
+    observe = "observe"
+
+
+class UIAnchorV04(V04BaseModel):
+    anchor_id: str
+    target_element_id: str
+    intent_key: str
+    action_hint: UIAnchorActionHint
+    confidence: float = 0.0
+
+
+class GuidanceActionType(str, Enum):
+    highlight = "highlight"
+    point = "point"
+    suggest = "suggest"
+
+
+class GuidanceActionV04(V04BaseModel):
+    action_type: GuidanceActionType
+    target_anchor_id: str
+    description_key: str
+
+
+class ScreenTraceEntryV04(V04BaseModel):
+    trace_step_id: str
+    event_type: str
+    source: str
+    target: Optional[str] = None
+    timestamp: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ScreenTraceV04(V04BaseModel):
+    trace_id: str
+    screen_id: str
+    app_id: str
+    entries: List[ScreenTraceEntryV04] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ScreenPermissionPolicyV04(V04BaseModel):
+    allowed: bool = True
+    human_confirm_required: bool = False
+    scopes: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    mock_only: bool = True
+
+
+class ScreenUiAnchorModuleV04(V04BaseModel):
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    module_id: str = "screen_ui_anchor_module_v0"
+    module_type: str = "screen_ui_anchor"
+    module_name: str = "Screen / UI Anchor Module v0"
+    module_version: str = "0.1.0"
+    layer_id: str = "layer_7"
+    slot_declarations: List[str] = Field(default_factory=lambda: ["screen.context", "ui.anchor", "guidance.action"])
+    screen_context_schema: ScreenContextV04 = Field(default_factory=lambda: ScreenContextV04(
+        screen_id="screen_demo",
+        app_id="app_demo",
+        window_title_key="screen.window_title_key",
+        visible_text_keys=["screen.title_key"],
+        timestamp="2026-06-29T00:00:00Z",
+    ))
+    ui_element_schema: UIElementV04 = Field(default_factory=lambda: UIElementV04(
+        element_id="ui_element_demo",
+        type=ScreenElementType.button,
+        label_key="ui.element.label_key",
+        bounds=ScreenBoundsV04(x=0, y=0, width=320, height=48),
+        state=ScreenElementState.normal,
+    ))
+    ui_anchor_schema: UIAnchorV04 = Field(default_factory=lambda: UIAnchorV04(
+        anchor_id="ui_anchor_demo",
+        target_element_id="ui_element_demo",
+        intent_key="ui.anchor.intent_key",
+        action_hint=UIAnchorActionHint.observe,
+        confidence=0.8,
+    ))
+    guidance_action_schema: GuidanceActionV04 = Field(default_factory=lambda: GuidanceActionV04(
+        action_type=GuidanceActionType.highlight,
+        target_anchor_id="ui_anchor_demo",
+        description_key="guidance.action.key",
+    ))
+    screen_trace_schema: ScreenTraceV04 = Field(default_factory=lambda: ScreenTraceV04(
+        trace_id="trace_demo",
+        screen_id="screen_demo",
+        app_id="app_demo",
+        entries=[],
+    ))
+    screen_permission_policy: ScreenPermissionPolicyV04 = Field(default_factory=ScreenPermissionPolicyV04)
+    screen_config: Dict[str, Any] = Field(default_factory=lambda: {
+        "mock_only": True,
+        "no_real_screen": True,
+        "no_auto_click": True,
+        "no_cross_app_control": True,
+        "no_accessibility_automation": True,
+        "no_agent_loop": True,
+        "no_runtime_kernel_change": True,
+        "no_cloud_bridge": True,
+        "runtime_chain": [
+            "screen_context",
+            "UI Element Node",
+            "UI Anchor Node",
+            "Guidance Action Node",
+            "UI Overlay",
+        ],
+    })
+    i18n_keys: Dict[str, str] = Field(default_factory=lambda: {
+        "screen.title_key": "screen.title_key",
+        "screen.window_title_key": "screen.window_title_key",
+        "ui.element.label_key": "ui.element.label_key",
+        "ui.anchor.intent_key": "ui.anchor.intent_key",
+        "guidance.action.key": "guidance.action.key",
+        "screen.permission.key": "screen.permission.key",
+    })
+    dr_write_keys: List[str] = Field(default_factory=lambda: [
+        "screen_context_schema",
+        "ui_element_schema",
+        "ui_anchor_schema",
+        "guidance_action_schema",
+        "screen_trace_schema",
+        "screen_permission_policy",
+        "screen_config",
+    ])
+    mock_only: bool = True
+    runtime_enabled: bool = False
+    no_execution: bool = True
+
+
+class ScreenUiAnchorModuleCatalogResponseV04(V04BaseModel):
+    schema_version: Literal["0.4.0"] = SCHEMA_VERSION_V0_4
+    protocol_version: Literal["0.4.0"] = PROTOCOL_VERSION_V0_4
+    module: ScreenUiAnchorModuleV04 = Field(default_factory=ScreenUiAnchorModuleV04)
+    screen_context_schema: Dict[str, Any] = Field(default_factory=dict)
+    ui_element_schema: Dict[str, Any] = Field(default_factory=dict)
+    ui_anchor_schema: Dict[str, Any] = Field(default_factory=dict)
+    guidance_action_schema: Dict[str, Any] = Field(default_factory=dict)
+    screen_trace_schema: Dict[str, Any] = Field(default_factory=dict)
+    screen_permission_policy: Dict[str, Any] = Field(default_factory=dict)
+    screen_config: Dict[str, Any] = Field(default_factory=dict)
+    slot_declarations: List[str] = Field(default_factory=list)
+    runtime_chain: List[str] = Field(default_factory=list)
+    i18n_keys: Dict[str, str] = Field(default_factory=dict)
+    dr_write_keys: List[str] = Field(default_factory=list)

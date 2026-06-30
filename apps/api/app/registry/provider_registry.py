@@ -41,6 +41,7 @@ PROVIDER_REGISTRY: List[ProviderRegistryEntry] = [
     ProviderRegistryEntry("provider_avatar_mock", "avatar", "avatar_mock"),
     ProviderRegistryEntry("provider_speech_mock", "speech", "speech_mock"),
     ProviderRegistryEntry("provider_screen_mock", "screen", "screen_mock"),
+    ProviderRegistryEntry("provider_lattice_mock", "screen", "lattice_mock"),
     # Stage 6.6 real LLM v1 (additive — the seven mock providers above are
     # unchanged). llm_primary routes to the real OpenAI-compatible adapter;
     # llm_fallback is the mock used when the real call is unconfigured/fails.

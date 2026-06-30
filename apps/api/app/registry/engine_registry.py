@@ -84,7 +84,7 @@ ENGINE_REGISTRY: List[EngineV04] = [
         engine_type=EngineType.screen,
         engine_name="Lattice Mock Engine",
         supported_slot_types=[SlotType.lattice],
-        providers=["provider_screen_mock"],
+        providers=["provider_lattice_mock"],
         status=ProtocolStatus.mock,
     ),
 ]

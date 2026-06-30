@@ -19,7 +19,15 @@ from ..models.v0_4 import (
 )
 
 
-def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = None) -> SlotV04:
+def _slot(
+    slot_id: str,
+    slot_type: SlotType,
+    *,
+    engine_binding: str | None = None,
+    runtime_capability: Dict[str, object] | None = None,
+    trace_schema: Dict[str, object] | None = None,
+    i18n_keys: Dict[str, str] | None = None,
+) -> SlotV04:
     return SlotV04(
         slot_id=slot_id,
         slot_type=slot_type,
@@ -28,6 +36,9 @@ def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = Non
         enabled=False,
         status=ContractStatus.mock,
         fallback_policy=FallbackPolicy(on_error=OnError.mock, retry=0, fallback_provider=None),
+        runtime_capability=runtime_capability or {},
+        trace_schema=trace_schema or {},
+        i18n_keys=i18n_keys or {},
     )
 
 
@@ -35,7 +46,30 @@ def _slot(slot_id: str, slot_type: SlotType, *, engine_binding: str | None = Non
 # Slots bind Engines only; no Slot binds a real provider directly.
 SLOT_CATALOG: List[SlotV04] = [
     _slot("slot_llm", SlotType.llm, engine_binding="llm_mock"),
-    _slot("slot_tts", SlotType.tts, engine_binding="tts_mock"),
+    _slot(
+        "slot_tts",
+        SlotType.tts,
+        engine_binding="tts_mock",
+        runtime_capability={"methods": ["tts.speak", "tts.preview"], "mode": "mock"},
+        trace_schema={"fields": [{"key": "voice_trace", "type": "array"}, {"key": "voice_state", "type": "string"}]},
+        i18n_keys={"display_name": "slot.tts", "description": "slot.tts.description"},
+    ),
+    _slot(
+        "slot_voice_status",
+        SlotType.lattice,
+        engine_binding="lattice_mock",
+        runtime_capability={"methods": ["voice.status", "voice.sync.lattice_voice"], "mode": "mock"},
+        trace_schema={"fields": [{"key": "voice_state", "type": "string"}, {"key": "lattice_state.voice_state", "type": "string"}]},
+        i18n_keys={"display_name": "slot.voice_status", "description": "slot.voice_status.description"},
+    ),
+    _slot(
+        "slot_speech_input_event",
+        SlotType.speech,
+        engine_binding="speech_mock",
+        runtime_capability={"methods": ["speech.input_event"], "mode": "mock"},
+        trace_schema={"fields": [{"key": "speech.input_event", "type": "object"}]},
+        i18n_keys={"display_name": "slot.speech_input_event", "description": "slot.speech_input_event.description"},
+    ),
     _slot("slot_memory", SlotType.memory, engine_binding="memory_mock"),
     _slot("slot_avatar", SlotType.avatar, engine_binding="avatar_mock"),
     _slot("slot_speech", SlotType.speech, engine_binding="speech_mock"),

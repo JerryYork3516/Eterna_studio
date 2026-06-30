@@ -14,10 +14,15 @@ from app.main import app
 from app.models.v0_4 import (
     CANONICAL_LAYERS,
     FallbackPolicy,
+    GuidanceActionType,
     ModuleV04,
     NodeV04,
     PersonaV04,
     ProtocolStatus,
+    ScreenElementState,
+    ScreenElementType,
+    ScreenUiAnchorModuleCatalogResponseV04,
+    ScreenUiAnchorModuleV04,
     SlotType,
     SlotV04,
     WorkflowV04,
@@ -51,7 +56,7 @@ SLOT_FIELDS = {
     "execution_mode", "fallback_policy", "status", "engine_binding",
     "enabled", "protocol_version",
 }
-ALLOWED_SLOT_TYPES = {"llm", "tts", "memory", "avatar", "speech", "screen", "ar", "tool"}
+ALLOWED_SLOT_TYPES = {"llm", "tts", "memory", "avatar", "speech", "screen", "ar", "tool", "lattice"}
 ALLOWED_STATUS = {"CORE", "READY", "MOCK", "PLANNED", "LATER", "DISABLED"}
 ALLOWED_ON_ERROR = {"mock", "next_provider", "fail"}
 
@@ -132,6 +137,38 @@ def test_future_capabilities_are_modules_only():
     ids = {m.module_id for m in get_module_catalog()}
     for future in ("module_agent", "module_wallet", "module_phone", "module_social", "module_ar", "module_emergency_contact"):
         assert future in ids
+    assert "screen_ui_anchor_module_v0" in ids
+    module = next(m for m in get_module_catalog() if m.module_id == "screen_ui_anchor_module_v0")
+    assert module.module_graph == module.screen_config
+    assert module.module_graph["runtime_chain"] == module.config["runtime_chain"]
+
+
+def test_screen_ui_anchor_module_protocol_and_defaults():
+    module = next(m for m in get_module_catalog() if m.module_id == "screen_ui_anchor_module_v0")
+    assert module.mock_only is True
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.slot_declarations == ["screen.context", "ui.anchor", "guidance.action"]
+    assert module.i18n_keys["screen.title_key"] == "screen.title_key"
+    assert module.config["mock_only"] is True
+    assert module.config["runtime_chain"] == [
+        "screen_context",
+        "UI Element Node",
+        "UI Anchor Node",
+        "Guidance Action Node",
+        "UI Overlay",
+    ]
+    assert module.dr_write_keys == [
+        "screen_context_schema",
+        "ui_element_schema",
+        "ui_anchor_schema",
+        "guidance_action_schema",
+        "screen_trace_schema",
+        "screen_permission_policy",
+        "screen_config",
+    ]
+    assert module.screen_config["no_real_screen"] is True
+    assert module.screen_config["no_auto_click"] is True
 
 
 # --- IV. Slot Protocol ----------------------------------------------------
@@ -157,6 +194,11 @@ def test_slot_catalog_unique_and_allowed_types():
     assert all(ids) and len(set(ids)) == len(ids)
     assert {s.slot_type.value for s in slots} <= ALLOWED_SLOT_TYPES
     assert client.get("/schema/slot-catalog-v0.4").status_code == 200
+    response = client.get("/schema/screen-ui-anchor-module-v0")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["slot_declarations"] == ["screen.context", "ui.anchor", "guidance.action"]
+    assert payload["screen_config"]["no_cloud_bridge"] is True
 
 
 # --- V. existing v0.3 compile / audit / preview untouched -----------------
