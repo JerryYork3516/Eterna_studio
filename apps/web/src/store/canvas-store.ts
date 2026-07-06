@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Language } from "@/i18n";
+import { translate, type Language } from "@/i18n";
 import type {
   Artifact,
   ExportPreview,
@@ -19,6 +19,10 @@ import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "
 import type { ModuleGraphState } from "@/lib/canvas-persistence";
 
 type LogLevel = RunLog["level"];
+
+function formatMessage(template: string, values: Record<string, string | number | boolean | null | undefined> = {}) {
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) => String(values[key] ?? ""));
+}
 
 // P1-FIX：规范化 ModuleGraph 类型，替代 unknown[]
 export type ModuleGraph = {
@@ -358,10 +362,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // compiled DR + audit result; sets canExportDR only when valid. No runtime calls.
   compileDR: async (workflow) => {
     const appendLog = get().appendLog;
+    const t = (key: string, fallback?: string, values?: Record<string, string | number | boolean | null | undefined>) =>
+      formatMessage(translate(get().language, key, fallback), values);
+    const auditMessage = (code: string, message: string) => translate(get().language, `audit.${code}`, message);
     // Clear any previously compiled DR first so a stale payload can never be
     // exported after a recompile (or while the new compile is in flight).
     set({ compiledDR: null, drCompileResult: null, canExportDR: false });
-    appendLog("DR compile → /dr/compile (validate, no download)");
+    appendLog(t("status.drCompile.started", "DR compile -> /dr/compile (validate, no download)"));
     try {
       const result: DRCompileResult = await api.compileDR(workflow, workflow.name);
       set({
@@ -371,16 +378,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
       if (result.valid) {
         appendLog(
-          `DR compiled OK — dr_version=${result.dr_version}, orchestration_compatible=${result.orchestration_compatibility}, ready to export ${result.filename}`
+          t("status.drCompile.ok", "DR compiled OK - dr_version={version}, orchestration_compatible={compatible}, ready to export {filename}", {
+            version: result.dr_version,
+            compatible: result.orchestration_compatibility,
+            filename: result.filename
+          })
         );
       } else {
-        appendLog(`DR compile FAILED (dr_version=${result.dr_version}) — ${result.errors.length} error(s); export disabled`, "error");
+        appendLog(
+          t("status.drCompile.failed", "DR compile FAILED (dr_version={version}) - {count} error(s); export disabled", {
+            version: result.dr_version,
+            count: result.errors.length
+          }),
+          "error"
+        );
       }
-      result.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
-      result.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
+      result.errors.forEach((e) => appendLog(t("status.drCompile.errorFinding", "  [error] {code}: {message}", { code: e.code, message: auditMessage(e.code, e.message) }), "error"));
+      result.warnings.forEach((w) => appendLog(t("status.drCompile.warningFinding", "  [warn] {code}: {message}", { code: w.code, message: auditMessage(w.code, w.message) }), "warn"));
     } catch (error) {
       set({ compiledDR: null, drCompileResult: null, canExportDR: false });
-      appendLog(`DR compile failed: ${(error as Error).message}`, "error");
+      appendLog(t("status.drCompile.exception", "DR compile failed: {message}", { message: (error as Error).message }), "error");
     }
   },
 
@@ -388,9 +405,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // compiledDR. Blocked unless a valid DR was compiled first. No backend call.
   exportDR: async () => {
     const appendLog = get().appendLog;
+    const t = (key: string, fallback?: string, values?: Record<string, string | number | boolean | null | undefined>) =>
+      formatMessage(translate(get().language, key, fallback), values);
     const { compiledDR, drCompileResult, canExportDR } = get();
     if (!compiledDR || !drCompileResult || !canExportDR) {
-      appendLog("Export blocked: compile a valid DR first.", "warn");
+      appendLog(t("status.drExport.blocked", "Export blocked: compile a valid DR first."), "warn");
       return;
     }
     const filename = drCompileResult.filename || "digital_resident.digital_resident";
@@ -405,7 +424,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       anchor.remove();
       URL.revokeObjectURL(url);
     }
-    appendLog(`DR exported: ${filename} (dr_version=${drCompileResult.dr_version})`);
+    appendLog(t("status.drExport.ok", "DR exported: {filename} (dr_version={version})", { filename, version: drCompileResult.dr_version }));
   },
 
   // Stage 6.4 Load .digital_resident: the browser reads the JSON file, then the
@@ -413,27 +432,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // real provider is introduced here.
   loadDRFile: async (file) => {
     const appendLog = get().appendLog;
+    const t = (key: string, fallback?: string, values?: Record<string, string | number | boolean | null | undefined>) =>
+      formatMessage(translate(get().language, key, fallback), values);
+    const auditMessage = (code: string, message: string) => translate(get().language, `audit.${code}`, message);
     set({ loadedDRResult: null });
-    appendLog(`Load DR → /runtime/resident/load-dr (${file.name})`);
+    appendLog(t("status.drLoad.fileStarted", "Load DR -> /runtime/resident/load-dr ({filename})", { filename: file.name }));
     try {
       const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
       const result: DRLoadResult = await api.loadDigitalResident(parsed, `Load DR: ${file.name}`);
       set({ loadedDRResult: result });
       if (result.loaded) {
-        appendLog(`DR loaded OK — resident=${result.resident_id}, dr_version=${result.dr_version ?? "unknown"}`);
+        appendLog(t("status.drLoad.ok", "DR loaded OK - resident={resident}, dr_version={version}", { resident: result.resident_id, version: result.dr_version ?? "unknown" }));
         get().applyRuntimeResult(result);
       } else {
         const validation = result.validation_result;
         appendLog(
-          `DR load rejected — dr_version=${result.dr_version ?? validation.dr_version ?? "unknown"} · ${validation.errors.length} error(s)`,
+          t("status.drLoad.rejected", "DR load rejected - dr_version={version} - {count} error(s)", {
+            version: result.dr_version ?? validation.dr_version ?? "unknown",
+            count: validation.errors.length
+          }),
           "error"
         );
-        validation.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
-        validation.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
+        validation.errors.forEach((e) => appendLog(t("status.drCompile.errorFinding", "  [error] {code}: {message}", { code: e.code, message: auditMessage(e.code, e.message) }), "error"));
+        validation.warnings.forEach((w) => appendLog(t("status.drCompile.warningFinding", "  [warn] {code}: {message}", { code: w.code, message: auditMessage(w.code, w.message) }), "warn"));
       }
     } catch (error) {
       set({ loadedDRResult: null });
-      appendLog(`DR load failed: ${(error as Error).message}`, "error");
+      appendLog(t("status.drLoad.failed", "DR load failed: {message}", { message: (error as Error).message }), "error");
     }
   },
 
@@ -441,37 +466,43 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // remains download-only; local Load File remains file-picker-only.
   loadCompiledDRToPreview: async () => {
     const appendLog = get().appendLog;
+    const t = (key: string, fallback?: string, values?: Record<string, string | number | boolean | null | undefined>) =>
+      formatMessage(translate(get().language, key, fallback), values);
+    const auditMessage = (code: string, message: string) => translate(get().language, `audit.${code}`, message);
     const { compiledDR, drCompileResult, canExportDR } = get();
     if (!compiledDR || !drCompileResult || !canExportDR) {
       set({
         previewLoadStatus: "error",
-        previewLoadError: "Compile a valid file first.",
+        previewLoadError: t("preview.loadCompiledBlocked", "Compile a valid file first."),
         loadedDRResult: null
       });
-      appendLog("Preview load blocked: compile a valid file first.", "warn");
+      appendLog(t("status.drLoad.previewBlocked", "Preview load blocked: compile a valid file first."), "warn");
       return;
     }
     set({ loadedDRResult: null, previewLoadStatus: "loading", previewLoadError: null });
-    appendLog(`Load compiled file → /runtime/resident/load-dr (${drCompileResult.filename})`);
+    appendLog(t("status.drLoad.previewStarted", "Load compiled file -> /runtime/resident/load-dr ({filename})", { filename: drCompileResult.filename }));
     try {
       const result: DRLoadResult = await api.loadCompiledDigitalResident(compiledDR, drCompileResult.filename);
       set({ loadedDRResult: result, previewLoadStatus: result.loaded ? "success" : "error", previewLoadError: null });
       if (result.loaded) {
-        appendLog(`DR loaded OK — resident=${result.resident_id}, dr_version=${result.dr_version ?? "unknown"}`);
+        appendLog(t("status.drLoad.ok", "DR loaded OK - resident={resident}, dr_version={version}", { resident: result.resident_id, version: result.dr_version ?? "unknown" }));
         get().applyRuntimeResult(result);
       } else {
         const validation = result.validation_result;
-        set({ previewLoadError: validation.errors.map((e) => `${e.code}: ${e.message}`).join("\n") || "Load failed." });
+        set({ previewLoadError: validation.errors.map((e) => `${e.code}: ${auditMessage(e.code, e.message)}`).join("\n") || t("preview.loadFailed", "Load failed.") });
         appendLog(
-          `DR load rejected — dr_version=${result.dr_version ?? validation.dr_version ?? "unknown"} · ${validation.errors.length} error(s)`,
+          t("status.drLoad.rejected", "DR load rejected - dr_version={version} - {count} error(s)", {
+            version: result.dr_version ?? validation.dr_version ?? "unknown",
+            count: validation.errors.length
+          }),
           "error"
         );
-        validation.errors.forEach((e) => appendLog(`  [error] ${e.code}: ${e.message}`, "error"));
-        validation.warnings.forEach((w) => appendLog(`  [warn] ${w.code}: ${w.message}`, "warn"));
+        validation.errors.forEach((e) => appendLog(t("status.drCompile.errorFinding", "  [error] {code}: {message}", { code: e.code, message: auditMessage(e.code, e.message) }), "error"));
+        validation.warnings.forEach((w) => appendLog(t("status.drCompile.warningFinding", "  [warn] {code}: {message}", { code: w.code, message: auditMessage(w.code, w.message) }), "warn"));
       }
     } catch (error) {
       set({ loadedDRResult: null, previewLoadStatus: "error", previewLoadError: (error as Error).message });
-      appendLog(`DR load failed: ${(error as Error).message}`, "error");
+      appendLog(t("status.drLoad.failed", "DR load failed: {message}", { message: (error as Error).message }), "error");
     }
   },
 

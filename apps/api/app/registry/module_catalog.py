@@ -91,15 +91,151 @@ def _module(
 
 SCREEN_UI_ANCHOR_MODULE = ScreenUiAnchorModuleV04()
 
+IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
+    {
+        "module_id": "module_basic_identity",
+        "module_type": "identity_basic",
+        "module_name": "Basic Identity",
+        "output": "basic_identity",
+        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
+        "fields": [
+            ("resident_id", "locked_core", "developer_only", True),
+            ("codename", "locked_core", "developer_only", True),
+            ("name", "locked_core", "developer_only", True),
+            ("primary_language", "versioned_core", "user_editable", True),
+        ],
+    },
+    {
+        "module_id": "module_growth_background",
+        "module_type": "identity_growth_background",
+        "module_name": "Growth Background",
+        "output": "growth_background",
+        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
+        "fields": [
+            ("origin_region", "versioned_core", "user_editable", True),
+            ("cultural_context", "versioned_core", "user_editable", True),
+            ("growth_notes", "versioned_core", "user_editable", True),
+        ],
+    },
+    {
+        "module_id": "module_career_identity",
+        "module_type": "identity_career",
+        "module_name": "Career Identity",
+        "output": "career_identity",
+        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
+        "fields": [
+            ("career_domain", "versioned_core", "user_editable", True),
+            ("role_identity", "versioned_core", "user_editable", True),
+            ("expertise_summary", "versioned_core", "user_editable", True),
+        ],
+    },
+    {
+        "module_id": "module_existence_mode",
+        "module_type": "identity_existence_mode",
+        "module_name": "Existence Mode",
+        "output": "existence_mode",
+        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
+        "fields": [
+            ("existence_mode", "locked_core", "developer_only", True),
+            ("local_only", "config", "developer_only", True),
+            ("cloud_enabled", "config", "developer_only", True),
+        ],
+    },
+    {
+        "module_id": "module_identity_anchor",
+        "module_type": "identity_anchor",
+        "module_name": "Identity Anchor",
+        "output": "identity_anchor",
+        "nodes": [
+            "field_input",
+            "structure_normalize",
+            "identity_consistency_validation",
+            "identity_lock_rule",
+            "module_output",
+        ],
+        "fields": [
+            ("identity_anchor", "locked_core", "developer_only", True),
+            ("locked_core_fields", "locked_core", "developer_only", True),
+            ("versioned_core_fields", "versioned_core", "developer_only", True),
+        ],
+    },
+]
+
+
+def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
+    module_id = str(spec["module_id"])
+    output_key = str(spec["output"])
+    node_ids = [str(node_id) for node_id in spec["nodes"]]
+    fields = [
+        {
+            "field_id": field_id,
+            "required": True,
+            "edit_scope": edit_scope,
+            "update_level": update_level,
+            "requires_recompile": requires_recompile,
+            "i18n_keys": {
+                "label": f"field.identity.{field_id}.label",
+                "placeholder": f"field.identity.{field_id}.placeholder",
+                "help": f"field.identity.{field_id}.help",
+            },
+        }
+        for field_id, update_level, edit_scope, requires_recompile in spec["fields"]  # type: ignore[misc]
+    ]
+    nodes = [
+        {
+            "node_id": node_id,
+            "node_type": "identity_core_template",
+            "module_id": module_id,
+            "layer_id": "layer_1",
+            "i18n_keys": {
+                "name": f"module.{module_id}.node.{node_id}.name",
+                "description": f"module.{module_id}.node.{node_id}.description",
+            },
+            "outputs": {"module_output": output_key} if node_id == "module_output" else {},
+        }
+        for node_id in node_ids
+    ]
+    return _module(
+        module_id,
+        str(spec["module_type"]),
+        str(spec["module_name"]),
+        "layer_1",
+        status=ProtocolStatus.core,
+        category="identity",
+        is_placeholder=False,
+        audit_required=True,
+        color_status="green",
+        tags=["identity", "stage7_4", "core"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "output_key": output_key,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": f"module.{module_id}.output"}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": f"module.{module_id}",
+            "description": f"module.{module_id}.description",
+            "output": f"module.{module_id}.output",
+        },
+        outputs={output_key: {"type": "object"}, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "fields": fields,
+            "edit_scope": "developer_only",
+            "update_level": "versioned_core",
+            "requires_recompile": True,
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.graph_snapshot.layer_outputs.layer_1.{output_key}"],
+    )
+
+
 MODULE_CATALOG: List[ModuleV04] = [
     # L1 Identity Core
-    _module("basic_identity", "identity_core", "Basic Identity", "layer_1", status=ProtocolStatus.ready, category="identity", is_placeholder=True, color_status="green"),
-    _module("existence_boundary", "identity_core", "Existence Boundary", "layer_1", status=ProtocolStatus.ready, category="identity", is_placeholder=True, color_status="green"),
-    _module("identity_anchor", "identity_core", "Identity Anchor", "layer_1", status=ProtocolStatus.ready, category="identity", is_placeholder=True, color_status="green"),
-    _module("identity_llm_slot", "identity_slot", "Identity LLM Slot", "layer_1", status=ProtocolStatus.ready, slot_type=SlotType.llm, category="identity", is_placeholder=True, color_status="green"),
-    _module("background_setting", "identity_profile", "Background Setting", "layer_1", status=ProtocolStatus.mock, category="identity", color_status="amber"),
-    _module("worldview_position", "identity_profile", "Worldview Position", "layer_1", status=ProtocolStatus.mock, category="identity", color_status="amber"),
-    _module("identity_consistency_lock", "identity_guard", "Identity Consistency Lock", "layer_1", status=ProtocolStatus.mock, category="identity", color_status="amber"),
+    *[_identity_core_module(spec) for spec in IDENTITY_CORE_MODULE_SPECS],
 
     # L2 Personality
     _module("personality_traits", "personality", "Personality Traits", "layer_2", status=ProtocolStatus.ready, category="persona", is_placeholder=True, color_status="green"),
@@ -310,10 +446,7 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("mac_app_binding_slot", "export_slot", "Mac App Binding Slot", "layer_13", status=ProtocolStatus.later, slot_type=SlotType.tool, category="export", color_status="gray"),
     _module("ar_runtime_binding_slot", "export_slot", "AR Runtime Binding Slot", "layer_13", status=ProtocolStatus.later, slot_type=SlotType.ar, category="export", color_status="gray"),
     # --- Protocol skeleton anchors (Stage 5 baseline) -----------------------
-    # The 13-layer trunk keeps four CORE anchor modules — the non-placeholder
-    # backbone of identity / personality / safety / legal. These were part of
-    # the v0.4 protocol baseline and are data-only additions (no protocol change).
-    _module("module_identity_core", "identity", "Identity Core", "layer_1", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
+    # Layer 1 is represented by the five Stage 7.4 identity core modules above.
     _module("module_personality", "personality", "Personality", "layer_2", status=ProtocolStatus.core, category="persona", is_placeholder=False, color_status="green"),
     _module("module_safety_boundary", "safety", "Safety Boundary", "layer_3", status=ProtocolStatus.core, risk_level=RiskLevel.high, category="governance", is_placeholder=False, audit_required=True, color_status="green"),
     _module("module_legal_permission", "permission", "Legal Permission", "layer_4", status=ProtocolStatus.core, risk_level=RiskLevel.medium, category="governance", is_placeholder=False, audit_required=True, color_status="green"),

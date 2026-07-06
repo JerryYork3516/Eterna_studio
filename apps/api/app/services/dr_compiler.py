@@ -56,7 +56,7 @@ from ..models.v0_4 import (
     SlotType,
 )
 from ..registry.engine_registry import get_engine_registry
-from ..registry.module_catalog import get_module_catalog
+from ..registry.module_catalog import IDENTITY_CORE_MODULE_SPECS, get_module_catalog
 from ..registry.slot_catalog import get_slot_catalog
 
 DR_VERSION = "0.1"
@@ -69,6 +69,22 @@ MIN_KERNEL = "6.1"
 
 # Allowed slot_types this stage (mock-only capability interfaces).
 _ALLOWED_SLOT_TYPES = frozenset(t.value for t in SlotType)
+_FORBIDDEN_SECRET_KEYS = {
+    "api_key",
+    "token",
+    "access_token",
+    "refresh_token",
+    "base_url",
+    "credential",
+    "credentials",
+    "secret",
+    "client_secret",
+    "provider",
+    "provider_binding",
+}
+_SECRET_REF_KEYS = {"key_ref", "secret_ref", "credential_ref", "api_key_ref"}
+_IDENTITY_CORE_OUTPUTS = {str(spec["module_id"]): str(spec["output"]) for spec in IDENTITY_CORE_MODULE_SPECS}
+_IDENTITY_CORE_IDS = set(_IDENTITY_CORE_OUTPUTS)
 
 
 def _now_iso() -> str:
@@ -94,6 +110,156 @@ def _slugify(text: str) -> str:
     while "__" in cleaned:
         cleaned = cleaned.replace("__", "_")
     return cleaned.strip("_") or "digital_resident"
+
+
+def _secret_findings(value: Any, path: str) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            key_lower = key_text.lower()
+            item_path = f"{path}.{key_text}" if path else key_text
+            has_value = item not in (None, "", [], {})
+            if has_value and key_lower in _FORBIDDEN_SECRET_KEYS and key_lower not in _SECRET_REF_KEYS:
+                findings.append(_finding("FAIL", "DR_SECRET_FIELD", f"secret-like field is not allowed in DR compile input: {key_text}", item_path))
+            if has_value and key_lower in {"provider", "provider_binding"}:
+                findings.append(_finding("FAIL", "DR_ILLEGAL_PROVIDER_BINDING", f"provider binding is not allowed in module/node data: {key_text}", item_path))
+            findings.extend(_secret_findings(item, item_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            findings.extend(_secret_findings(item, f"{path}[{index}]"))
+    return findings
+
+
+def _module_output_exists(module: Dict[str, Any], output_key: str) -> bool:
+    outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    if output_key in outputs or outputs.get("module_output") == output_key:
+        return True
+    graph = module.get("module_graph") if isinstance(module.get("module_graph"), dict) else {}
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_outputs = node.get("outputs") if isinstance(node.get("outputs"), dict) else {}
+        if node.get("node_id") == "module_output" and node_outputs.get("module_output") == output_key:
+            return True
+    return False
+
+
+def _identity_core_audit_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    modules = collection.get("modules", [])
+    by_id = {module.get("module_id"): module for module in modules if isinstance(module, dict)}
+    layer_1_ids = {module.get("module_id") for module in modules if isinstance(module, dict) and module.get("layer_id") == "layer_1"}
+    extra_layer_1 = sorted(str(module_id) for module_id in layer_1_ids - _IDENTITY_CORE_IDS if module_id)
+    if extra_layer_1:
+        findings.append(_finding("FAIL", "DR_IDENTITY_LAYER1_EXTRA_MODULE", f"Layer 1 may only contain Stage 7.4 identity core modules: {extra_layer_1}", "modules.layer_1"))
+
+    for module_id, output_key in _IDENTITY_CORE_OUTPUTS.items():
+        module = by_id.get(module_id)
+        path = f"modules.{module_id}"
+        if not module:
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_MISSING", f"missing Layer 1 identity core module: {module_id}", path))
+            continue
+        if module.get("layer_id") != "layer_1":
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_LAYER", f"{module_id} must be bound to layer_1", f"{path}.layer_id"))
+        if module.get("category") != "identity":
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_CATEGORY", f"{module_id} must use identity domain category", f"{path}.category"))
+        config = module.get("config") if isinstance(module.get("config"), dict) else {}
+        ui_config = module.get("ui_config") if isinstance(module.get("ui_config"), dict) else {}
+        module_class = ui_config.get("classification") or config.get("module_class")
+        if module_class != "core":
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_CLASS", f"{module_id} must use module_class core", f"{path}.ui_config.classification"))
+        if module.get("slot_type") is not None:
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_SLOT_BINDING", f"{module_id} must not bind a slot/provider", f"{path}.slot_type"))
+        if not _module_output_exists(module, output_key):
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_OUTPUT_MISSING", f"{module_id} must expose module_output {output_key}", f"{path}.outputs"))
+        fields = config.get("fields") if isinstance(config.get("fields"), list) else []
+        if not fields:
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_FIELDS_MISSING", f"{module_id} must declare Module Shell v1 fields", f"{path}.config.fields"))
+        for index, field in enumerate(fields):
+            if not isinstance(field, dict):
+                findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_INVALID", f"{module_id} field must be an object", f"{path}.config.fields[{index}]"))
+                continue
+            for key in ("edit_scope", "update_level", "requires_recompile"):
+                if key not in field:
+                    findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_PERMISSION_MISSING", f"{module_id} field missing {key}", f"{path}.config.fields[{index}].{key}"))
+            if field.get("update_level") == "runtime_state":
+                findings.append(_finding("FAIL", "DR_IDENTITY_RUNTIME_STATE_IN_PROFILE", f"{module_id} runtime_state fields cannot enter identity_profile", f"{path}.config.fields[{index}].update_level"))
+    return findings
+
+
+def _assemble_identity_core_outputs(
+    collection: Dict[str, Any],
+    resident_id: str,
+    resident_name: str,
+    findings: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
+    module_outputs: Dict[str, Any] = {}
+    locked_core_fields: List[str] = []
+    versioned_core_fields: List[str] = []
+    update_rules: List[Dict[str, Any]] = []
+
+    for module_id, output_key in _IDENTITY_CORE_OUTPUTS.items():
+        module = modules.get(module_id) or {}
+        outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+        module_outputs[output_key] = outputs.get(output_key, {})
+        config = module.get("config") if isinstance(module.get("config"), dict) else {}
+        fields = config.get("fields") if isinstance(config.get("fields"), list) else []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_id = str(field.get("field_id") or "")
+            if not field_id:
+                continue
+            if field.get("update_level") == "locked_core":
+                locked_core_fields.append(field_id)
+            elif field.get("update_level") == "versioned_core":
+                versioned_core_fields.append(field_id)
+            update_rules.append(
+                {
+                    "field_id": field_id,
+                    "edit_scope": field.get("edit_scope"),
+                    "update_level": field.get("update_level"),
+                    "requires_recompile": bool(field.get("requires_recompile")),
+                }
+            )
+
+    fail_count = sum(1 for finding in findings if finding.get("status") == "FAIL")
+    module_audit = {"ok": fail_count == 0, "findings": [finding for finding in findings if "IDENTITY_MODULE" in finding.get("code", "")]}
+    layer_audit = {"ok": fail_count == 0, "findings": findings}
+    identity_summary = {
+        "resident_id": resident_id,
+        "name": resident_name,
+        "source": "identity_core_aggregator",
+    }
+    identity_profile = {
+        "resident_id": resident_id,
+        "name": resident_name,
+        **module_outputs,
+        "locked_core_fields": sorted(set(locked_core_fields)),
+        "versioned_core_fields": sorted(set(versioned_core_fields)),
+        "update_rules": update_rules,
+        "identity_summary": identity_summary,
+    }
+    aggregator = {
+        "inputs": list(_IDENTITY_CORE_OUTPUTS.values()),
+        "identity_profile": identity_profile,
+        "locked_core_fields": identity_profile["locked_core_fields"],
+        "versioned_core_fields": identity_profile["versioned_core_fields"],
+        "update_rules": update_rules,
+        "identity_summary": identity_summary,
+        "module_audit": module_audit,
+        "layer_audit": layer_audit,
+    }
+    return {
+        "identity_profile": identity_profile,
+        "layer_1": {
+            "identity_core_aggregator": aggregator,
+            "identity_profile": identity_profile,
+        },
+    }
 
 
 def _collect_layer_contexts(workflow: Dict[str, Any], layers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -340,6 +506,10 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
                     f"edges[{index}]",
                 )
             )
+
+    for section in ("modules", "nodes", "slots"):
+        findings.extend(_secret_findings(collection.get(section, []), section))
+    findings.extend(_identity_core_audit_findings(collection))
 
     return findings
 
@@ -821,6 +991,12 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     resident_name_final = resident.get("name") or resident_name or "Digital Resident"
     required_capabilities = sorted({"llm", "memory", "tts", "avatar", "lattice", "screen_mock"}.union({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}))
     payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": {"required_slot_types": sorted({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}), "required_engines": ["llm_mock", "memory_mock", "tts_mock", "avatar_mock", "lattice_mock", "screen_mock"], "required_provider_types": ["llm", "memory", "tts", "avatar", "screen"], "runtime_api_version": SCHEMA_VERSION_V0_4, "execution_mode": "mock", "fallback_mode": "mock_fallback"}, "provider_requirements": _v3_provider_requirements(), "memory_policy": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"type": "append_only", "scope": "per_resident"}, "preference_memory": {"type": "kv", "scope": "per_resident"}, "retention_policy": "persistent", "read_write_policy": "local_runtime"}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    payload["graph_snapshot"]["layer_outputs"] = _assemble_identity_core_outputs(
+        collection,
+        resident_id,
+        resident_name_final,
+        findings,
+    )
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
     return {
         "file_type": FILE_TYPE,

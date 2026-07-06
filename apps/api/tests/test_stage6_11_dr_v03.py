@@ -83,6 +83,60 @@ def test_provider_requirements_do_not_include_secrets():
         assert forbidden not in providers
 
 
+def test_identity_profile_assembled():
+    dr = compile_dr_v0_3(_canvas_13())
+    layer_outputs = dr["payload"]["graph_snapshot"]["layer_outputs"]
+    identity_profile = layer_outputs["identity_profile"]
+
+    assert identity_profile["resident_id"] == dr["manifest"]["resident_id"]
+    assert identity_profile["name"] == dr["manifest"]["resident_name"]
+    for key in ("basic_identity", "growth_background", "career_identity", "existence_mode", "identity_anchor"):
+        assert key in identity_profile
+    assert layer_outputs["layer_1"]["identity_profile"] == identity_profile
+
+
+def test_identity_core_aggregator_outputs_exist():
+    dr = compile_dr_v0_3(_canvas_13())
+    aggregator = dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_1"]["identity_core_aggregator"]
+
+    for key in (
+        "identity_profile",
+        "locked_core_fields",
+        "versioned_core_fields",
+        "update_rules",
+        "identity_summary",
+        "module_audit",
+        "layer_audit",
+    ):
+        assert key in aggregator
+    assert aggregator["module_audit"]["ok"] is True
+    assert aggregator["layer_audit"]["ok"] is True
+
+
+def test_v03_contract_unchanged_for_aftelle():
+    dr = compile_dr_v0_3(_canvas_13())
+
+    assert dr["manifest"]["resident_id"]
+    assert dr["payload"]["resident_identity"]["resident_id"] == dr["manifest"]["resident_id"]
+    assert dr["payload"]["resident_identity"]["name"] == dr["manifest"]["resident_name"]
+    assert dr["payload"]["lattice_config"]["schema_version"] == "0.3.0"
+    assert dr["payload"]["voice_config"]["schema_version"] == "0.3.0"
+    assert dr["payload"]["safety_policy"]["no_secret_in_dr"] is True
+    assert dr["payload"]["safety_policy"]["no_direct_provider_binding"] is True
+    assert dr["lattice_config"] == dr["payload"]["lattice_config"]
+    assert dr["voice_config"] == dr["payload"]["voice_config"]
+    assert dr["safety_policy"] == dr["payload"]["safety_policy"]
+
+
+def test_identity_profile_optional_and_fallback_safe():
+    dr = compile_dr_v0_3(_canvas_13())
+    dr["payload"]["graph_snapshot"].pop("layer_outputs", None)
+
+    loaded = mock_load_dr_v0_3(dr)
+    assert loaded["loaded"] is True
+    assert loaded["resident_id"] == dr["manifest"]["resident_id"]
+
+
 def test_compile_result_and_export_use_v03_payload():
     body = compile_dr_result_v0_3(_canvas_13())
     assert body["valid"] is True

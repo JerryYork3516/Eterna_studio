@@ -108,7 +108,7 @@ def test_gate_blocks_critical_module_and_does_not_forward():
 
 def test_placeholder_module_does_not_enter_execution_path():
     wf4 = _demo_v0_4()
-    wf4["nodes"][0]["module_id"] = "basic_identity"
+    wf4["nodes"][0]["module_id"] = "voice_profile"
     plan = client.post("/protocol/plan", json={"workflow": wf4, "action": "mock_run"}).json()
     assert plan["blocked"] is True
     resp = client.post("/protocol/execute", json={"workflow": wf4, "action": "mock_run"}).json()

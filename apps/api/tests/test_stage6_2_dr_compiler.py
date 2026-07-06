@@ -19,6 +19,7 @@ from app.services.dr_compiler import (
     dr_filename,
     mock_load_dr,
 )
+from app.registry.module_catalog import get_module_catalog
 
 client = TestClient(app)
 
@@ -128,6 +129,48 @@ def test_compile_endpoint_returns_json_not_file():
     assert body["compiled_dr"]["dr_schema_version"] == "0.3.0"
     assert body["dr_payload"]["runtime_plan"]["steps"]
     assert body["filename"].endswith(FILE_SUFFIX)
+
+
+def test_compile_audit_blocks_secret():
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    modules[0]["config"]["api_key"] = "sk-test-secret"
+    modules[0]["config"]["access_token"] = "access-token"
+    modules[0]["config"]["base_url_hint"] = "local runtime hint"
+    modules[0]["config"]["token_policy"] = "reference-only"
+    modules[0]["config"]["credential_ref"] = "runtime-profile"
+    modules[0]["config"]["api_key_ref"] = "runtime-profile"
+    modules[0]["config"]["provider_requirement"] = {"mode": "mock"}
+    modules[0]["config"]["provider_type"] = "mock"
+    canvas = _canvas_13()
+    canvas["modules"] = modules
+
+    body = client.post("/dr/compile", json=canvas).json()
+    codes = {finding["code"] for finding in body["errors"]}
+    paths = {finding["path"] for finding in body["errors"]}
+    assert body["valid"] is False
+    assert body["compiled_dr"] is None
+    assert "DR_SECRET_FIELD" in codes
+    assert any(path.endswith(".api_key") for path in paths)
+    assert any(path.endswith(".access_token") for path in paths)
+    assert not any(path.endswith(".base_url_hint") for path in paths)
+    assert not any(path.endswith(".token_policy") for path in paths)
+    assert not any(path.endswith(".credential_ref") for path in paths)
+    assert not any(path.endswith(".api_key_ref") for path in paths)
+    assert not any(path.endswith(".provider_requirement") for path in paths)
+    assert not any(path.endswith(".provider_type") for path in paths)
+
+
+def test_compile_frontend_export_load_preview_intact():
+    compile_body = client.post("/dr/compile", json=_canvas_13()).json()
+
+    assert compile_body["valid"] is True
+    assert compile_body["compiled_dr"] is not None
+    downloadable_compiled_dr = compile_body["compiled_dr"]
+    assert downloadable_compiled_dr["dr_version"] == "0.3"
+
+    load_resp = client.post("/dr/load", json={"dr": downloadable_compiled_dr})
+    assert load_resp.status_code == 200
+    assert load_resp.json()["loaded"] is True
 
 
 def test_compile_v03_endpoint_returns_json_not_file():

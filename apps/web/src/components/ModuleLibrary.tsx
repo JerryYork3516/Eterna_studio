@@ -28,6 +28,23 @@ function moduleName(mod: ModuleCatalogEntryV04) {
   return mod.module_name;
 }
 
+function moduleDisplayName(mod: ModuleCatalogEntryV04, t: (key: string, fallback?: string) => string) {
+  const key = mod.i18n_keys?.display_name || `module.${moduleId(mod)}`;
+  return t(key, moduleName(mod));
+}
+
+function moduleClass(mod: ModuleCatalogEntryV04) {
+  const classification = mod.ui_config?.classification;
+  const moduleClass = mod.config?.module_class;
+  if (typeof classification === "string" && classification) {
+    return classification;
+  }
+  if (typeof moduleClass === "string" && moduleClass) {
+    return moduleClass;
+  }
+  return mod.category || "plugin";
+}
+
 function slotLabel(slot: string | null | undefined, t: (key: string, fallback?: string) => string) {
   const value = slot || "unplanned";
   return t(`module.slot.${value}`, value);
@@ -148,15 +165,15 @@ export function ModuleLibrary({
                       role="button"
                       tabIndex={0}
                       draggable
-                      className={`module-card cat-${mod.category} status-${String(mod.status).toLowerCase()}`}
-                      title={`${t(`module.${moduleId(mod)}`, moduleName(mod))}${mod.slot_type ? ` · ${t("module.capability", "能力类型")}: ${slotLabel(mod.slot_type, t)}` : ""} · ${statusLabel(String(mod.status), t)}`}
+                      className={`module-card cat-${moduleClass(mod)} status-${String(mod.status).toLowerCase()}`}
+                      title={`${moduleDisplayName(mod, t)}${mod.slot_type ? ` · ${t("module.capability", "能力类型")}: ${slotLabel(mod.slot_type, t)}` : ""} · ${statusLabel(String(mod.status), t)}`}
                       onDragStart={(event) => {
                         setModuleDragData(event, moduleId(mod));
                         onDragStartModule?.(moduleId(mod));
                       }}
                     >
                       <div className="module-card__top">
-                        <span className="module-card__name">{t(`module.${moduleId(mod)}`, moduleName(mod))}</span>
+                        <span className="module-card__name">{moduleDisplayName(mod, t)}</span>
                         <span className={`module-card__status is-${String(mod.status).toLowerCase()}`}>{statusLabel(String(mod.status), t)}</span>
                       </div>
                       <div className="module-card__meta">

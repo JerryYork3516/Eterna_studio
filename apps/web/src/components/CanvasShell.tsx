@@ -380,11 +380,23 @@ function moduleCatalogId(module: ModuleCatalogEntryV04) {
 }
 
 function moduleCatalogName(module: ModuleCatalogEntryV04, t: (key: string, fallback?: string) => string) {
-  return t(`module.${module.module_id}`, module.module_name);
+  return t(module.i18n_keys?.display_name || `module.${module.module_id}`, module.module_name);
 }
 
 function moduleCatalogSlot(module: ModuleCatalogEntryV04) {
   return module.slot_type || "unplanned";
+}
+
+function moduleCatalogClass(module: ModuleCatalogEntryV04) {
+  const classification = module.ui_config?.classification;
+  const moduleClass = module.config?.module_class;
+  if (typeof classification === "string" && classification) {
+    return classification;
+  }
+  if (typeof moduleClass === "string" && moduleClass) {
+    return moduleClass;
+  }
+  return module.category || "plugin";
 }
 
 type PendingModuleAdd = {
@@ -945,11 +957,12 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
               const slotLabel = translate(language, `module.slot.${slot}`, slot.toUpperCase());
               const status = String(mod.status);
               const category = String(mod.category || "general");
+              const displayClass = moduleCatalogClass(mod);
               return (
                 <button
                   key={modId}
                   type="button"
-                  className={`submodule-card module-drop-card nodrag nopan cat-${category} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
+                  className={`submodule-card module-drop-card nodrag nopan cat-${displayClass} status-${status.toLowerCase()} ${selectedModuleSet.has(modId) ? "is-selected" : ""}`}
                   style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -3519,12 +3532,13 @@ function ModuleFocusPanel({
               const slot = moduleCatalogSlot(mod);
               const slotLabel = t(`module.slot.${slot}`, slot.toUpperCase());
               const category = String(mod.category || "general");
+              const displayClass = moduleCatalogClass(mod);
               const status = String(mod.status);
               return (
                 <button
                   key={modId}
                   type="button"
-                  className={`submodule-card module-drop-card cat-${category} status-${status.toLowerCase()} ${selectedModuleIds.has(modId) ? "is-selected" : ""}`}
+                  className={`submodule-card module-drop-card cat-${displayClass} status-${status.toLowerCase()} ${selectedModuleIds.has(modId) ? "is-selected" : ""}`}
                   style={moduleColors[modId] ? ({ "--mod-accent": moduleColors[modId] } as CSSProperties) : undefined}
                   onClick={(event) => {
                     event.stopPropagation();

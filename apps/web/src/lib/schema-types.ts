@@ -145,6 +145,7 @@ export type NodeRegistryEntry = {
 
 export type ModuleCatalogEntryV04 = {
   module_id: string;
+  module_type?: string;
   module_name: string;
   layer_id: string;
   category: string;
@@ -152,6 +153,7 @@ export type ModuleCatalogEntryV04 = {
   slot_type?: string | null;
   engine_binding?: string | null;
   description?: string | null;
+  module_graph?: Record<string, unknown>;
   input_schema?: NodeInputField[];
   output_schema?: OutputSchemaField[];
   slot_bindings?: Array<Record<string, unknown>>;
@@ -160,6 +162,8 @@ export type ModuleCatalogEntryV04 = {
   dr_mapping?: Record<string, unknown>;
   ui_config?: Record<string, unknown>;
   i18n_keys?: Record<string, string>;
+  outputs?: Record<string, unknown>;
+  config?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
