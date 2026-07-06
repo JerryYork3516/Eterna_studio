@@ -66,6 +66,9 @@ COMPILER_NAME = "DRCompiler"
 COMPILER_VERSION = "0.1.0"
 RUNTIME_VERSION = "resident_v1_mock"
 MIN_KERNEL = "6.1"
+STAGE_7_4_BASELINE_WORKFLOW_NAME = "Stage 7.4 Human Empathy DR Baseline"
+STAGE_7_4_REQUIRED_SLOT_TYPES = ["llm", "memory", "lattice", "voice"]
+_FORBIDDEN_STAGE_7_4_DOMAIN_FOCUS = {"ar", "tool", "screen_guidance", "provider", "cross_app_control"}
 
 # Allowed slot_types this stage (mock-only capability interfaces).
 _ALLOWED_SLOT_TYPES = frozenset(t.value for t in SlotType)
@@ -130,6 +133,131 @@ def _simplified_codename(value: Any) -> str:
     return slug.split("_", 1)[0] or slug
 
 
+def _nonempty_str(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _normalize_language(value: Any) -> str:
+    raw = _nonempty_str(value).lower().replace("_", "-")
+    if raw in {"cn", "zh", "zh-cn", "ch-zh", "中文", "chinese"}:
+        return "zh-CN"
+    if raw in {"en", "en-us", "english"}:
+        return "en"
+    return _nonempty_str(value) or "zh-CN"
+
+
+def _language_display(value: str) -> str:
+    return "中文" if value == "zh-CN" else value
+
+
+def _normalize_date(value: Any) -> str:
+    raw = _nonempty_str(value)
+    if not raw:
+        return ""
+    parts = raw.replace(".", "/").replace("-", "/").split("/")
+    if len(parts) == 3 and all(part.isdigit() for part in parts):
+        year, month, day = parts
+        if len(year) == 4:
+            return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    return raw
+
+
+def _split_identity_terms(value: Any) -> List[str]:
+    raw = _nonempty_str(value)
+    if not raw:
+        return []
+    separators = ["/", "，", ",", "、", ";", "；", "\n"]
+    parts = [raw]
+    for separator in separators:
+        parts = [child for part in parts for child in part.split(separator)]
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _identity_fields(identity_profile: Dict[str, Any], output_key: str) -> Dict[str, Any]:
+    output = _as_dict(identity_profile.get(output_key))
+    return _as_dict(output.get("fields"))
+
+
+def _sentence(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    return text if text[-1] in "。.!！?" else f"{text}。"
+
+
+def _build_identity_top_summary(identity_profile: Dict[str, Any]) -> Dict[str, Any]:
+    basic = _identity_fields(identity_profile, "basic_identity")
+    growth = _identity_fields(identity_profile, "growth_background")
+    career = _identity_fields(identity_profile, "career_identity")
+    existence = _identity_fields(identity_profile, "existence_mode")
+    anchor = _identity_fields(identity_profile, "identity_anchor")
+
+    name = _nonempty_str(identity_profile.get("name")) or _nonempty_str(basic.get("name")) or "数字居民"
+    city = _nonempty_str(basic.get("city")) or _nonempty_str(anchor.get("representative_city"))
+    language = _normalize_language(identity_profile.get("primary_language") or basic.get("primary_language"))
+    language_text = _language_display(language)
+    resident_type = _nonempty_str(existence.get("digital_resident_type")) or "数字居民"
+    one_line = _nonempty_str(anchor.get("identity_definition"))
+    values = _nonempty_str(anchor.get("representative_value"))
+    boundaries = _nonempty_str(career.get("career_boundaries"))
+    growth_limits = _nonempty_str(growth.get("growth_constraints"))
+
+    summary_parts = [
+        f"{name}是" + (f"来自{city}、" if city else "") + f"以{language_text}交流为主的{resident_type}。",
+    ]
+    if one_line:
+        summary_parts.append(_sentence(one_line))
+    if values:
+        summary_parts.append(f"她重视{values}。")
+    if boundaries:
+        summary_parts.append(_sentence(boundaries))
+    if growth_limits:
+        summary_parts.append(_sentence(growth_limits))
+    personality_summary = "".join(summary_parts)
+
+    description = one_line or (
+        f"{name}，" + (f"来自{city}，" if city else "") + f"定位为稳定陪伴者。"
+    )
+    resident_description = (
+        (f"来自{city}的" if city else "")
+        + f"{language_text}人文共情数字居民，默认关系是稳定陪伴者。"
+    )
+    disclosure_source = " ".join(
+        _nonempty_str(value)
+        for value in (basic.get("appearance_source"), growth_limits)
+        if _nonempty_str(value)
+    )
+    if "原创" in disclosure_source or "虚构" in disclosure_source or "不对应现实真人" in disclosure_source:
+        disclosure = "原创虚构数字居民，不对应现实真人；可在需要时明确说明自身为数字居民。"
+    else:
+        disclosure = "数字居民；可在需要时明确说明自身为数字居民。"
+
+    tags = ["human_empathy", "companion", "boundary-aware", "emotional_support", "relationship_communication", "daily_life"]
+    focus = list(tags)
+    if city and ("西安" in city or "xian" in city.lower()):
+        tags.append("xian")
+        focus.append("xian")
+    tags.append(language)
+    focus.append(language)
+    domain_terms = " ".join(_split_identity_terms(anchor.get("representative_domain")) + _split_identity_terms(anchor.get("identity_keywords")) + [_nonempty_str(career.get("industry_direction"))])
+    if any(term in domain_terms.lower() for term in ("media", "art")) or any(term in domain_terms for term in ("传媒", "艺术")):
+        tags.append("media_art_auxiliary")
+        focus.append("media_art_auxiliary")
+    forbidden_focus = {"screen_guidance", "ar", "tool", "tts_required", "provider", "agent_control", "cross_app_control"}
+    domain_focus = [tag for tag in dict.fromkeys(focus) if tag not in forbidden_focus]
+
+    return {
+        "primary_language": language,
+        "city_symbol": city,
+        "personality_summary": personality_summary,
+        "domain_focus": domain_focus,
+        "description": description,
+        "resident_description": resident_description,
+        "disclosure": disclosure,
+        "tags": list(dict.fromkeys(tags)),
+    }
+
+
 def _secret_findings(value: Any, path: str) -> List[Dict[str, str]]:
     findings: List[Dict[str, str]] = []
     if isinstance(value, dict):
@@ -188,6 +316,26 @@ def _module_output_exists(module: Dict[str, Any], output_key: str) -> bool:
         if node.get("node_type") == "module_output" and (output_key in node_outputs or node_outputs.get("module_output") == output_key):
             return True
     return False
+
+
+def _normalize_basic_identity_language_in_module(module: Dict[str, Any]) -> None:
+    if module.get("module_id") != "module_basic_identity":
+        return
+    fields = _module_fields_from_field_input(module)
+    normalized_language = ""
+    for field in fields:
+        if field.get("field_id") == "primary_language" and _nonempty_str(field.get("value")):
+            normalized_language = _normalize_language(field.get("value"))
+            field["value"] = normalized_language
+            break
+    if not normalized_language:
+        return
+    for output in (
+        _as_dict(_module_output_node_value(module, "basic_identity")).get("fields"),
+        _as_dict(_as_dict(module.get("outputs")).get("basic_identity")).get("fields"),
+    ):
+        if isinstance(output, dict):
+            output["primary_language"] = normalized_language
 
 
 def _legacy_module_output_fallback_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -296,6 +444,7 @@ def _assemble_identity_core_outputs(
 
     for module_id, output_key in _IDENTITY_CORE_OUTPUTS.items():
         module = modules.get(module_id) or {}
+        _normalize_basic_identity_language_in_module(module)
         node_output = _module_output_node_value(module, output_key)
         outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
         module_outputs[output_key] = node_output if node_output is not None else outputs.get(output_key, {})
@@ -321,6 +470,19 @@ def _assemble_identity_core_outputs(
                     "requires_recompile": bool(field.get("requires_recompile")),
                 }
             )
+
+    basic_output = module_outputs.get("basic_identity")
+    if isinstance(basic_output, dict):
+        basic_fields = basic_output.get("fields")
+        if isinstance(basic_fields, dict):
+            if _nonempty_str(basic_fields.get("primary_language")):
+                basic_fields["primary_language"] = _normalize_language(basic_fields.get("primary_language"))
+            birth_date = _normalize_date(basic_fields.get("birth_date") or basic_fields.get("birth_time"))
+            virtual_birth_date = _normalize_date(basic_fields.get("virtual_birth_date") or basic_fields.get("virtual_birth_time"))
+            if birth_date:
+                basic_fields["birth_date"] = birth_date
+            if virtual_birth_date:
+                basic_fields["virtual_birth_date"] = virtual_birth_date
 
     fail_count = sum(1 for finding in findings if finding.get("status") == "FAIL")
     module_audit = {"ok": fail_count == 0, "findings": [finding for finding in findings if "IDENTITY_MODULE" in finding.get("code", "")]}
@@ -384,6 +546,179 @@ def _assemble_identity_core_outputs(
             "identity_profile": identity_profile,
         },
     }
+
+
+def _v3_identity_sync_from_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+    layer_outputs = _as_dict(graph_snapshot.get("layer_outputs"))
+    identity_profile = _as_dict(layer_outputs.get("identity_profile"))
+    basic_identity = _as_dict(identity_profile.get("basic_identity"))
+    basic_fields = _as_dict(basic_identity.get("fields"))
+    top_summary = _build_identity_top_summary(identity_profile)
+
+    def _pick(*keys: str) -> str:
+        for key in keys:
+            value = identity_profile.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            value = basic_fields.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
+
+    return {
+        "resident_id": _pick("resident_id"),
+        "name": _pick("name"),
+        "primary_language": top_summary["primary_language"],
+        "city_symbol": _pick("city", "representative_city"),
+        "personality_summary": top_summary["personality_summary"],
+        "domain_focus": top_summary["domain_focus"],
+        "description": top_summary["description"],
+        "resident_description": top_summary["resident_description"],
+        "disclosure": top_summary["disclosure"],
+        "tags": top_summary["tags"],
+    }
+
+
+def _sync_legacy_blueprint_identity(blueprint: Dict[str, Any], resident_id: str, resident_name: str) -> None:
+    if not isinstance(blueprint, dict):
+        return
+    for key in ("lattice_config", "lattice_state_schema"):
+        if isinstance(blueprint.get(key), dict):
+            blueprint[key]["resident_id"] = resident_id
+    multi_resident = blueprint.get("multi_resident_lattice_state")
+    if isinstance(multi_resident, dict):
+        multi_resident["resident_ids"] = [resident_id]
+    resident_instance = blueprint.get("resident_instance")
+    if isinstance(resident_instance, dict):
+        resident_instance["resident_id"] = resident_id
+        if resident_name:
+            resident_instance["name"] = resident_name
+        identity = resident_instance.get("identity")
+        if isinstance(identity, dict):
+            identity["resident_id"] = resident_id
+            if resident_name:
+                identity["name"] = resident_name
+
+
+def _sync_legacy_blueprint_runtime_requirements(blueprint: Dict[str, Any]) -> None:
+    if not isinstance(blueprint, dict):
+        return
+    runtime_requirements = blueprint.setdefault("runtime_requirements", {})
+    if isinstance(runtime_requirements, dict):
+        runtime_requirements["required_slot_types"] = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+
+
+def _build_v03_audit_report(findings: List[Dict[str, str]], checked_at: str) -> Dict[str, Any]:
+    return {
+        "schema_version": DR_SCHEMA_VERSION_V0_3,
+        "valid": not any(finding.get("status") == "FAIL" for finding in findings),
+        "findings": findings,
+        "checked_at": checked_at,
+        "summary": {
+            "fail": sum(1 for finding in findings if finding.get("status") == "FAIL"),
+            "warning": sum(1 for finding in findings if finding.get("status") == "WARNING"),
+            "pass": sum(1 for finding in findings if finding.get("status") == "PASS"),
+        },
+    }
+
+
+def _has_default_relationship_violation(value: Any) -> bool:
+    text = _nonempty_str(value).lower()
+    if not text:
+        return False
+    if "intimate_partner" in text:
+        return True
+    positive_markers = ("默认女友", "默认是女友", "默认关系是女友", "默认关系定位为女友", "关系定位为女友", "关系定位：女友", "作为女友")
+    return text.strip() == "女友" or any(marker in text for marker in positive_markers)
+
+
+def _identity_consistency_findings(
+    manifest: Dict[str, Any],
+    payload: Dict[str, Any],
+    resident: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    resident_identity = _as_dict(payload.get("resident_identity"))
+    layer_outputs = _as_dict(_as_dict(payload.get("graph_snapshot")).get("layer_outputs"))
+    identity_profile = _as_dict(layer_outputs.get("identity_profile"))
+    basic_fields = _identity_fields(identity_profile, "basic_identity")
+    anchor_fields = _identity_fields(identity_profile, "identity_anchor")
+    growth_fields = _identity_fields(identity_profile, "growth_background")
+
+    def _expect_equal(actual: Any, expected: Any, path: str, code: str) -> None:
+        if _nonempty_str(expected) and actual != expected:
+            findings.append(_finding("FAIL", code, f"{path} must match basic_identity.{code.rsplit('_', 1)[-1].lower()}", path))
+
+    basic_resident_id = _nonempty_str(basic_fields.get("resident_id"))
+    basic_name = _nonempty_str(basic_fields.get("name"))
+    basic_city = _nonempty_str(basic_fields.get("city")) or _nonempty_str(anchor_fields.get("representative_city"))
+    basic_language = _normalize_language(basic_fields.get("primary_language"))
+
+    _expect_equal(manifest.get("resident_id"), basic_resident_id, "manifest.resident_id", "DR_IDENTITY_CONSISTENCY_RESIDENT_ID")
+    _expect_equal(resident_identity.get("resident_id"), basic_resident_id, "payload.resident_identity.resident_id", "DR_IDENTITY_CONSISTENCY_RESIDENT_ID")
+    _expect_equal(manifest.get("resident_name"), basic_name, "manifest.resident_name", "DR_IDENTITY_CONSISTENCY_NAME")
+    _expect_equal(resident_identity.get("name"), basic_name, "payload.resident_identity.name", "DR_IDENTITY_CONSISTENCY_NAME")
+    _expect_equal(resident_identity.get("city_symbol"), basic_city, "payload.resident_identity.city_symbol", "DR_IDENTITY_CONSISTENCY_CITY")
+
+    if _nonempty_str(basic_fields.get("primary_language")) and _normalize_language(resident_identity.get("primary_language")) != basic_language:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_IDENTITY_CONSISTENCY_LANGUAGE",
+                "payload.resident_identity.primary_language must match normalized basic_identity.primary_language",
+                "payload.resident_identity.primary_language",
+            )
+        )
+
+    domain_focus = resident_identity.get("domain_focus")
+    if isinstance(domain_focus, list):
+        forbidden_focus = sorted(
+            focus for focus in {str(item).lower() for item in domain_focus} if focus in _FORBIDDEN_STAGE_7_4_DOMAIN_FOCUS
+        )
+        if forbidden_focus:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_IDENTITY_CONSISTENCY_DOMAIN_FOCUS",
+                    f"domain_focus contains out-of-stage capabilities: {forbidden_focus}",
+                    "payload.resident_identity.domain_focus",
+                )
+            )
+
+    identity_definition = _nonempty_str(anchor_fields.get("identity_definition"))
+    summary_texts = [
+        resident_identity.get("personality_summary"),
+        resident.get("description"),
+        _as_dict(payload.get("resident_blueprint")).get("description"),
+    ]
+    if identity_definition and any(_has_default_relationship_violation(text) for text in summary_texts):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_IDENTITY_CONSISTENCY_IDENTITY_DEFINITION",
+                "resident.description/personality_summary must not conflict with identity_definition default relationship",
+                "payload.resident_identity.personality_summary",
+            )
+        )
+
+    disclosure = _nonempty_str(resident.get("disclosure"))
+    appearance_source = _nonempty_str(basic_fields.get("appearance_source"))
+    growth_limits = _nonempty_str(growth_fields.get("growth_constraints"))
+    if ("虚构" in appearance_source or "原创" in appearance_source) and "虚构" not in disclosure:
+        findings.append(_finding("FAIL", "DR_IDENTITY_CONSISTENCY_DISCLOSURE", "disclosure must preserve fictional appearance_source", "resident.disclosure"))
+    if "不对应现实真人" in growth_limits and "不对应现实真人" not in disclosure:
+        findings.append(_finding("FAIL", "DR_IDENTITY_CONSISTENCY_DISCLOSURE", "disclosure must preserve growth_limits real-person boundary", "resident.disclosure"))
+
+    for path, value in (
+        ("payload.graph_snapshot.layer_outputs.identity_profile.identity_anchor.fields.identity_definition", identity_definition),
+        ("payload.resident_identity.personality_summary", resident_identity.get("personality_summary")),
+        ("resident.description", resident.get("description")),
+    ):
+        if _has_default_relationship_violation(value):
+            findings.append(_finding("FAIL", "DR_IDENTITY_CONSISTENCY_DEFAULT_RELATIONSHIP", "default relationship must not be girlfriend/intimate_partner", path))
+
+    return findings
 
 
 def _collect_layer_contexts(workflow: Dict[str, Any], layers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -1110,20 +1445,59 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
     valid = not any(f["status"] == "FAIL" for f in findings)
     checked_at = _now_iso()
-    audit_report = {"schema_version": DR_SCHEMA_VERSION_V0_3, "valid": valid, "findings": findings, "checked_at": checked_at, "summary": {"fail": sum(1 for f in findings if f["status"] == "FAIL"), "warning": sum(1 for f in findings if f["status"] == "WARNING"), "pass": sum(1 for f in findings if f["status"] == "PASS")}}
+    audit_report = _build_v03_audit_report(findings, checked_at)
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
     resident = blueprint.get("resident", {})
     resident_id = resident.get("resident_id") or _slugify(resident.get("name") or resident_name or "Digital Resident")
     resident_name_final = resident.get("name") or resident_name or "Digital Resident"
-    required_capabilities = sorted({"llm", "memory", "tts", "avatar", "lattice", "screen_mock"}.union({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}))
-    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": {"required_slot_types": sorted({m.get("slot_type") for m in collection["modules"] if m.get("slot_type")}), "required_engines": ["llm_mock", "memory_mock", "tts_mock", "avatar_mock", "lattice_mock", "screen_mock"], "required_provider_types": ["llm", "memory", "tts", "avatar", "screen"], "runtime_api_version": SCHEMA_VERSION_V0_4, "execution_mode": "mock", "fallback_mode": "mock_fallback"}, "provider_requirements": _v3_provider_requirements(), "memory_policy": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"type": "append_only", "scope": "per_resident"}, "preference_memory": {"type": "kv", "scope": "per_resident"}, "retention_policy": "persistent", "read_write_policy": "local_runtime"}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    required_slot_types = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": {"required_slot_types": required_slot_types, "required_engines": ["llm_mock", "memory_mock", "tts_mock", "avatar_mock", "lattice_mock", "screen_mock"], "required_provider_types": ["llm", "memory", "tts", "avatar", "screen"], "runtime_api_version": SCHEMA_VERSION_V0_4, "execution_mode": "mock", "fallback_mode": "mock_fallback"}, "provider_requirements": _v3_provider_requirements(), "memory_policy": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"type": "append_only", "scope": "per_resident"}, "preference_memory": {"type": "kv", "scope": "per_resident"}, "retention_policy": "persistent", "read_write_policy": "local_runtime"}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
     payload["graph_snapshot"]["layer_outputs"] = _assemble_identity_core_outputs(
         collection,
         resident_id,
         resident_name_final,
         findings,
     )
+    identity_sync = _v3_identity_sync_from_profile(payload)
+    if identity_sync.get("resident_id"):
+        resident_id = identity_sync["resident_id"]
+    if identity_sync.get("name"):
+        resident_name_final = identity_sync["name"]
+    payload["resident_identity"]["resident_id"] = resident_id
+    payload["resident_identity"]["name"] = resident_name_final
+    if identity_sync.get("primary_language"):
+        payload["resident_identity"]["primary_language"] = identity_sync["primary_language"]
+    if identity_sync.get("city_symbol"):
+        payload["resident_identity"]["city_symbol"] = identity_sync["city_symbol"]
+    if identity_sync.get("personality_summary"):
+        payload["resident_identity"]["personality_summary"] = identity_sync["personality_summary"]
+    if identity_sync.get("domain_focus"):
+        payload["resident_identity"]["domain_focus"] = identity_sync["domain_focus"]
+    payload["resident_blueprint"]["resident_id"] = resident_id
+    payload["resident_blueprint"]["resident_name"] = resident_name_final
+    payload["resident_blueprint"]["source_workflow_name"] = STAGE_7_4_BASELINE_WORKFLOW_NAME
+    if identity_sync.get("description"):
+        payload["resident_blueprint"]["description"] = identity_sync["description"]
+    if identity_sync.get("primary_language"):
+        payload["resident_blueprint"]["ui_language"] = identity_sync["primary_language"]
+    if identity_sync.get("tags"):
+        payload["resident_blueprint"]["tags"] = identity_sync["tags"]
+    for config_key in ("memory_policy", "memory_config", "lattice_config"):
+        if isinstance(payload.get(config_key), dict):
+            payload[config_key]["resident_id"] = resident_id
+    if isinstance(resident, dict):
+        resident["resident_id"] = resident_id
+        resident["name"] = resident_name_final
+        if identity_sync.get("resident_description"):
+            resident["description"] = identity_sync["resident_description"]
+        if identity_sync.get("disclosure"):
+            resident["disclosure"] = identity_sync["disclosure"]
+    _sync_legacy_blueprint_identity(blueprint, resident_id, resident_name_final)
+    _sync_legacy_blueprint_runtime_requirements(blueprint)
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
+    findings.extend(_identity_consistency_findings(manifest, payload, resident))
+    audit_report = _build_v03_audit_report(findings, checked_at)
     return {
         "file_type": FILE_TYPE,
         "dr_version": DR_VERSION_V0_3,
@@ -1141,7 +1515,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         # Backward-compatible aliases kept so older read-only tests and loaders
         # can still inspect the legacy compile surface while v0.3 is the source
         # of truth.
-        "resident": blueprint.get("resident"),
+        "resident": resident,
         "layers": collection["layers"],
         "modules": collection["modules"],
         "slots": collection["slots"],

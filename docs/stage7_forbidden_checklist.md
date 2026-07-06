@@ -121,6 +121,15 @@ FAIL:UI 绕过 Controller / Orchestration / RuntimeCore 公共入口,把渲染�
 - 是否进入 Stage 8:
 - 是否需要停止并请求确认:
 
+## J. Stage 7.4.1 Identity 验收补充
+
+- [ ] Aftelle 必须能完整读取并 Debug 展示 Layer 1 五个 Identity Core Module 及其全部字段。
+- [ ] Runtime 默认只消费顶层 `resident_identity` 摘要。
+- [ ] 不要求每轮对话注入五个 Identity Core Module 的全部深层字段。
+
+PASS:Aftelle Debug 可读完整 Layer 1 Identity Core 字段,Runtime 对话链路仍只依赖顶层身份摘要与既有 Runtime 契约。
+FAIL:把 Layer 1 全字段塞进每轮 Runtime prompt,或要求 Runtime/Aftelle 默认消费所有深层 Identity 字段。
+
 ## 最小输出模板
 
 ```text
