@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.models.v0_4 import CANONICAL_LAYERS, ProtocolStatus
 from app.registry.module_catalog import get_module_catalog, validate_module_catalog
+from app.registry.node_registry import get_node_definition
 
 
 # Stage 7.4 replaces the old seven Layer 1 identity modules plus the former
@@ -20,6 +21,19 @@ IDENTITY_CORE_MODULE_IDS = {
     "module_existence_mode": "existence_mode",
     "module_identity_anchor": "identity_anchor",
 }
+IDENTITY_CORE_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
+IDENTITY_CORE_COMPILE_TIME_NODE_TYPES = (*IDENTITY_CORE_NODE_TYPES, "layer_aggregator")
+
+
+def _node_id(output_key: str, node_type: str) -> str:
+    suffix = {
+        "field_input": "field_input",
+        "structure_normalize": "normalize",
+        "validation": "validation",
+        "update_rule": "update_rule",
+        "module_output": "output",
+    }[node_type]
+    return f"{output_key}_{suffix}"
 
 
 def test_module_catalog_coverage_and_counts():
@@ -75,16 +89,103 @@ def test_identity_module_outputs_exist():
     for module_id, output_key in IDENTITY_CORE_MODULE_IDS.items():
         module = catalog_map[module_id]
         graph_nodes = module.module_graph.get("nodes", [])
-        module_output_nodes = [node for node in graph_nodes if node.get("node_id") == "module_output"]
+        module_output_nodes = [node for node in graph_nodes if node.get("node_type") == "module_output"]
         assert output_key in module.outputs
         assert module.outputs["module_output"] == output_key
         assert module_output_nodes
+        assert module_output_nodes[0]["node_id"] == _node_id(output_key, "module_output")
         assert module_output_nodes[0]["outputs"]["module_output"] == output_key
+        assert module_output_nodes[0]["outputs"][output_key] == module.outputs[output_key]
         assert module.ui_config["shell_version"] == "module_shell_v1"
-        for field in module.config["fields"]:
+        assert "fields" not in module.config
+        for field in module.config["field_registry"]:
+            assert field["owner_node_id"] == _node_id(output_key, "field_input")
             assert field["edit_scope"] in {"developer_only", "user_editable", "runtime_editable", "plugin_editable"}
             assert field["update_level"] in {"locked_core", "versioned_core", "config", "runtime_state", "plugin"}
             assert "requires_recompile" in field
+
+
+def test_generic_identity_node_types_exist():
+    for node_type in IDENTITY_CORE_COMPILE_TIME_NODE_TYPES:
+        entry = get_node_definition(node_type)
+        assert entry is not None
+        assert entry.category == "compile_time"
+        assert entry.mock_executor is None
+        assert "no_runtime_execution" in entry.audit_rules
+
+
+def test_identity_modules_have_field_input_nodes():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id, output_key in IDENTITY_CORE_MODULE_IDS.items():
+        nodes = catalog_map[module_id].module_graph["nodes"]
+        nodes_by_type = {node["node_type"]: node for node in nodes}
+        assert set(nodes_by_type) == set(IDENTITY_CORE_NODE_TYPES)
+        for node_type in IDENTITY_CORE_NODE_TYPES:
+            assert nodes_by_type[node_type]["node_id"] == _node_id(output_key, node_type)
+
+
+def test_identity_fields_live_under_field_input_params():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id in IDENTITY_CORE_MODULE_IDS:
+        module = catalog_map[module_id]
+        field_input = next(node for node in module.module_graph["nodes"] if node["node_type"] == "field_input")
+        fields = field_input["params"]["fields"]
+        assert fields
+        assert "fields" not in module.config
+        assert {field["field_id"] for field in fields} == {field["field_id"] for field in module.config["field_registry"]}
+        for field in fields:
+            assert "value" in field
+            assert field["i18n_keys"]["label"].startswith("field.identity.")
+            assert field["i18n_keys"]["placeholder"].startswith("field.identity.")
+            assert field["i18n_keys"]["help"].startswith("field.identity.")
+
+
+def test_identity_modules_have_no_slots():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id in IDENTITY_CORE_MODULE_IDS:
+        module = catalog_map[module_id]
+        assert module.slot_type is None
+        assert module.slot_bindings == []
+        assert module.slot_declarations == []
+
+
+def test_identity_modules_are_no_execution():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id in IDENTITY_CORE_MODULE_IDS:
+        module = catalog_map[module_id]
+        assert module.runtime_enabled is False
+        assert module.no_execution is True
+        assert module.module_graph["compile_time_only"] is True
+        for node in module.module_graph["nodes"]:
+            assert node["metadata"]["compile_time_only"] is True
+            assert node["metadata"]["runtime_enabled"] is False
+            assert node["metadata"]["no_execution"] is True
+
+
+def test_identity_node_params_have_i18n_keys():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id in IDENTITY_CORE_MODULE_IDS:
+        for node in catalog_map[module_id].module_graph["nodes"]:
+            assert node["i18n_keys"]["name"].startswith(f"module.{module_id}.node.")
+            assert node["i18n_keys"]["description"].startswith(f"module.{module_id}.node.")
+            assert node["i18n_keys"]["type_name"].startswith("node.type.")
+
+
+def test_module_output_generated_from_node_outputs():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id, output_key in IDENTITY_CORE_MODULE_IDS.items():
+        module = catalog_map[module_id]
+        output_node = next(node for node in module.module_graph["nodes"] if node["node_type"] == "module_output")
+        output = output_node["outputs"][output_key]
+        assert output["output_key"] == output_key
+        assert output["compile_time_only"] is True
+        assert output["fields"] == module.outputs[output_key]["fields"]
 
 
 def test_placeholder_modules_exist_and_safe():
@@ -130,15 +231,20 @@ def test_i18n_keys_present_for_layer1_identity_modules():
     for module_id in IDENTITY_CORE_MODULE_IDS:
         required.add(f"module.{module_id}")
         required.add(f"module.{module_id}.description")
-        for node_id in ("field_input", "structure_normalize", "module_output"):
+        output_key = IDENTITY_CORE_MODULE_IDS[module_id]
+        for node_type in IDENTITY_CORE_NODE_TYPES:
+            node_id = _node_id(output_key, node_type)
             required.add(f"module.{module_id}.node.{node_id}.name")
             required.add(f"module.{module_id}.node.{node_id}.description")
     required.update(
         {
-            "module.module_identity_anchor.node.identity_consistency_validation.name",
-            "module.module_identity_anchor.node.identity_lock_rule.name",
+            "node.type.field_input",
+            "node.field_input.description",
+            "node.type.layer_aggregator",
             "field.identity.resident_id.label",
             "field.identity.identity_anchor.help",
+            "audit.DR_IDENTITY_NODE_MISSING",
+            "audit.DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING",
         }
     )
     for key in required:
@@ -186,6 +292,17 @@ def test_screen_ui_anchor_module_catalog_and_config():
         "screen_permission_policy",
         "screen_config",
     ]
+
+
+def test_identity_catalog_contains_no_linxuan_content():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    serialized = json.dumps(
+        {module_id: catalog_map[module_id].model_dump(mode="json") for module_id in IDENTITY_CORE_MODULE_IDS},
+        ensure_ascii=False,
+    )
+
+    for forbidden in ("林瑄", "Linxuan", "Lin Xuan"):
+        assert forbidden not in serialized
 
 
 def test_module_catalog_validation_passes():

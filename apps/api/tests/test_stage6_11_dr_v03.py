@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.dr_compiler import compile_dr_result_v0_3, compile_dr_v0_3, mock_load_dr_v0_3
+from app.registry.module_catalog import get_module_catalog
 
 client = TestClient(app)
 
@@ -95,6 +96,25 @@ def test_identity_profile_assembled():
     assert layer_outputs["layer_1"]["identity_profile"] == identity_profile
 
 
+def test_identity_profile_assembled_from_module_outputs():
+    dr = compile_dr_v0_3(_canvas_13())
+    modules = {module["module_id"]: module for module in dr["payload"]["modules"]}
+    identity_profile = dr["payload"]["graph_snapshot"]["layer_outputs"]["identity_profile"]
+
+    expected_outputs = {
+        "module_basic_identity": "basic_identity",
+        "module_growth_background": "growth_background",
+        "module_career_identity": "career_identity",
+        "module_existence_mode": "existence_mode",
+        "module_identity_anchor": "identity_anchor",
+    }
+    for module_id, output_key in expected_outputs.items():
+        module_output = next(
+            node for node in modules[module_id]["module_graph"]["nodes"] if node["node_type"] == "module_output"
+        )
+        assert identity_profile[output_key] == module_output["outputs"][output_key]
+
+
 def test_identity_core_aggregator_outputs_exist():
     dr = compile_dr_v0_3(_canvas_13())
     aggregator = dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_1"]["identity_core_aggregator"]
@@ -135,6 +155,42 @@ def test_identity_profile_optional_and_fallback_safe():
     loaded = mock_load_dr_v0_3(dr)
     assert loaded["loaded"] is True
     assert loaded["resident_id"] == dr["manifest"]["resident_id"]
+
+
+def test_identity_compile_time_nodes_not_in_runtime_plan():
+    dr = compile_dr_v0_3(_canvas_13())
+    runtime_steps = json.dumps(dr["payload"]["runtime_plan"]["steps"], ensure_ascii=False)
+
+    for node_type in ("field_input", "structure_normalize", "validation", "update_rule", "module_output", "layer_aggregator"):
+        assert node_type not in runtime_steps
+
+
+def test_legacy_module_output_fallback_warning():
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    modules.append(
+        {
+            "module_id": "legacy_persona_output",
+            "module_type": "legacy_persona",
+            "module_name": "Legacy Persona Output",
+            "module_version": "0.1.0",
+            "layer_id": "layer_2",
+            "module_graph": {"nodes": []},
+            "outputs": {"legacy_persona": {"fields": {}}, "module_output": "legacy_persona"},
+            "category": "persona",
+            "status": "MOCK",
+            "runtime_enabled": False,
+            "no_execution": True,
+        }
+    )
+    canvas = _canvas_13()
+    canvas["modules"] = modules
+
+    body = compile_dr_result_v0_3(canvas)
+    assert body["valid"] is True
+    assert any(
+        finding["status"] == "WARNING" and finding["code"] == "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING"
+        for finding in body["warnings"]
+    )
 
 
 def test_compile_result_and_export_use_v03_payload():

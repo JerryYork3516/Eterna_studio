@@ -85,6 +85,10 @@ _FORBIDDEN_SECRET_KEYS = {
 _SECRET_REF_KEYS = {"key_ref", "secret_ref", "credential_ref", "api_key_ref"}
 _IDENTITY_CORE_OUTPUTS = {str(spec["module_id"]): str(spec["output"]) for spec in IDENTITY_CORE_MODULE_SPECS}
 _IDENTITY_CORE_IDS = set(_IDENTITY_CORE_OUTPUTS)
+_IDENTITY_CORE_REQUIRED_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
+_STAGE_7_4_1_COMPILE_TIME_NODE_TYPES = frozenset(
+    {"field_input", "structure_normalize", "validation", "update_rule", "module_output", "layer_aggregator"}
+)
 
 
 def _now_iso() -> str:
@@ -131,19 +135,64 @@ def _secret_findings(value: Any, path: str) -> List[Dict[str, str]]:
     return findings
 
 
+def _module_graph_nodes(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+    graph = module.get("module_graph") if isinstance(module.get("module_graph"), dict) else {}
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    return [node for node in nodes if isinstance(node, dict)]
+
+
+def _module_node_by_type(module: Dict[str, Any], node_type: str) -> Dict[str, Any] | None:
+    for node in _module_graph_nodes(module):
+        if node.get("node_type") == node_type:
+            return node
+    return None
+
+
+def _module_fields_from_field_input(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+    field_input = _module_node_by_type(module, "field_input")
+    if not field_input:
+        return []
+    params = field_input.get("params") if isinstance(field_input.get("params"), dict) else {}
+    fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+    return [field for field in fields if isinstance(field, dict)]
+
+
+def _module_output_node_value(module: Dict[str, Any], output_key: str) -> Any:
+    module_output = _module_node_by_type(module, "module_output")
+    if not module_output:
+        return None
+    node_outputs = module_output.get("outputs") if isinstance(module_output.get("outputs"), dict) else {}
+    return node_outputs.get(output_key)
+
+
 def _module_output_exists(module: Dict[str, Any], output_key: str) -> bool:
     outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
     if output_key in outputs or outputs.get("module_output") == output_key:
         return True
-    graph = module.get("module_graph") if isinstance(module.get("module_graph"), dict) else {}
-    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
+    for node in _module_graph_nodes(module):
         node_outputs = node.get("outputs") if isinstance(node.get("outputs"), dict) else {}
-        if node.get("node_id") == "module_output" and node_outputs.get("module_output") == output_key:
+        if node.get("node_type") == "module_output" and (output_key in node_outputs or node_outputs.get("module_output") == output_key):
             return True
     return False
+
+
+def _legacy_module_output_fallback_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    for index, module in enumerate(collection.get("modules", [])):
+        if not isinstance(module, dict) or module.get("module_id") in _IDENTITY_CORE_IDS:
+            continue
+        outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+        has_module_output = bool(outputs.get("module_output"))
+        if has_module_output and _module_node_by_type(module, "field_input") is None:
+            findings.append(
+                _finding(
+                    "WARNING",
+                    "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING",
+                    f"legacy module {module.get('module_id')} uses module.outputs.module_output fallback without field_input",
+                    f"modules[{index}].module_graph.nodes",
+                )
+            )
+    return findings
 
 
 def _identity_core_audit_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -172,20 +221,50 @@ def _identity_core_audit_findings(collection: Dict[str, Any]) -> List[Dict[str, 
             findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_CLASS", f"{module_id} must use module_class core", f"{path}.ui_config.classification"))
         if module.get("slot_type") is not None:
             findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_SLOT_BINDING", f"{module_id} must not bind a slot/provider", f"{path}.slot_type"))
+        if module.get("slot_bindings"):
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_SLOT_BINDING", f"{module_id} must not declare slot bindings", f"{path}.slot_bindings"))
+        if module.get("slot_declarations"):
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_SLOT_BINDING", f"{module_id} must not declare slots", f"{path}.slot_declarations"))
+        if module.get("runtime_enabled") is not False or module.get("no_execution") is not True:
+            findings.append(_finding("FAIL", "DR_IDENTITY_NODE_NOT_COMPILE_TIME", f"{module_id} must stay compile-time only", f"{path}.runtime_enabled"))
+        nodes_by_type = {str(node.get("node_type")): node for node in _module_graph_nodes(module)}
+        for node_type in _IDENTITY_CORE_REQUIRED_NODE_TYPES:
+            node = nodes_by_type.get(node_type)
+            if not node:
+                findings.append(_finding("FAIL", "DR_IDENTITY_NODE_MISSING", f"{module_id} missing compile-time node {node_type}", f"{path}.module_graph.nodes.{node_type}"))
+                continue
+            node_metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+            if node.get("node_type") in _STAGE_7_4_1_COMPILE_TIME_NODE_TYPES and node_metadata.get("no_execution") is not True:
+                findings.append(_finding("FAIL", "DR_IDENTITY_NODE_NOT_COMPILE_TIME", f"{module_id} node {node_type} must be compile-time only", f"{path}.module_graph.nodes.{node_type}.metadata"))
+            i18n_keys = node.get("i18n_keys") if isinstance(node.get("i18n_keys"), dict) else {}
+            if not i18n_keys.get("name") or not i18n_keys.get("description"):
+                findings.append(_finding("FAIL", "DR_IDENTITY_NODE_I18N_MISSING", f"{module_id} node {node_type} missing i18n keys", f"{path}.module_graph.nodes.{node_type}.i18n_keys"))
         if not _module_output_exists(module, output_key):
             findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_OUTPUT_MISSING", f"{module_id} must expose module_output {output_key}", f"{path}.outputs"))
-        fields = config.get("fields") if isinstance(config.get("fields"), list) else []
+        module_output_value = _module_output_node_value(module, output_key)
+        top_outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+        if module_output_value is None:
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_OUTPUT_MISSING", f"{module_id} module_output node must emit {output_key}", f"{path}.module_graph.nodes.module_output.outputs"))
+        elif output_key in top_outputs and top_outputs.get(output_key) != module_output_value:
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_OUTPUT_MISMATCH", f"{module_id} top-level output differs from module_output node; node output is authoritative", f"{path}.outputs.{output_key}"))
+        fields = _module_fields_from_field_input(module)
         if not fields:
-            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_FIELDS_MISSING", f"{module_id} must declare Module Shell v1 fields", f"{path}.config.fields"))
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_FIELDS_MISSING", f"{module_id} must declare fields under field_input.params.fields", f"{path}.module_graph.nodes.field_input.params.fields"))
         for index, field in enumerate(fields):
             if not isinstance(field, dict):
-                findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_INVALID", f"{module_id} field must be an object", f"{path}.config.fields[{index}]"))
+                findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_INVALID", f"{module_id} field must be an object", f"{path}.module_graph.nodes.field_input.params.fields[{index}]"))
                 continue
+            if not field.get("field_id"):
+                findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_INVALID", f"{module_id} field missing field_id", f"{path}.module_graph.nodes.field_input.params.fields[{index}].field_id"))
             for key in ("edit_scope", "update_level", "requires_recompile"):
                 if key not in field:
-                    findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_PERMISSION_MISSING", f"{module_id} field missing {key}", f"{path}.config.fields[{index}].{key}"))
+                    findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_PERMISSION_MISSING", f"{module_id} field missing {key}", f"{path}.module_graph.nodes.field_input.params.fields[{index}].{key}"))
+            field_i18n = field.get("i18n_keys") if isinstance(field.get("i18n_keys"), dict) else {}
+            for key in ("label", "placeholder", "help"):
+                if not field_i18n.get(key):
+                    findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_I18N_MISSING", f"{module_id} field missing i18n key {key}", f"{path}.module_graph.nodes.field_input.params.fields[{index}].i18n_keys.{key}"))
             if field.get("update_level") == "runtime_state":
-                findings.append(_finding("FAIL", "DR_IDENTITY_RUNTIME_STATE_IN_PROFILE", f"{module_id} runtime_state fields cannot enter identity_profile", f"{path}.config.fields[{index}].update_level"))
+                findings.append(_finding("FAIL", "DR_IDENTITY_RUNTIME_STATE_IN_PROFILE", f"{module_id} runtime_state fields cannot enter identity_profile", f"{path}.module_graph.nodes.field_input.params.fields[{index}].update_level"))
     return findings
 
 
@@ -203,10 +282,13 @@ def _assemble_identity_core_outputs(
 
     for module_id, output_key in _IDENTITY_CORE_OUTPUTS.items():
         module = modules.get(module_id) or {}
+        node_output = _module_output_node_value(module, output_key)
         outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
-        module_outputs[output_key] = outputs.get(output_key, {})
-        config = module.get("config") if isinstance(module.get("config"), dict) else {}
-        fields = config.get("fields") if isinstance(config.get("fields"), list) else []
+        module_outputs[output_key] = node_output if node_output is not None else outputs.get(output_key, {})
+        fields = _module_fields_from_field_input(module)
+        if not fields:
+            config = module.get("config") if isinstance(module.get("config"), dict) else {}
+            fields = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []
         for field in fields:
             if not isinstance(field, dict):
                 continue
@@ -509,6 +591,7 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
 
     for section in ("modules", "nodes", "slots"):
         findings.extend(_secret_findings(collection.get(section, []), section))
+    findings.extend(_legacy_module_output_fallback_findings(collection))
     findings.extend(_identity_core_audit_findings(collection))
 
     return findings

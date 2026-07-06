@@ -18,6 +18,8 @@ from ..models.v0_4 import (
     SlotType,
 )
 
+IDENTITY_CORE_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
+
 
 def _module(
     module_id: str,
@@ -97,7 +99,6 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_type": "identity_basic",
         "module_name": "Basic Identity",
         "output": "basic_identity",
-        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
         "fields": [
             ("resident_id", "locked_core", "developer_only", True),
             ("codename", "locked_core", "developer_only", True),
@@ -110,7 +111,6 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_type": "identity_growth_background",
         "module_name": "Growth Background",
         "output": "growth_background",
-        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
         "fields": [
             ("origin_region", "versioned_core", "user_editable", True),
             ("cultural_context", "versioned_core", "user_editable", True),
@@ -122,7 +122,6 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_type": "identity_career",
         "module_name": "Career Identity",
         "output": "career_identity",
-        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
         "fields": [
             ("career_domain", "versioned_core", "user_editable", True),
             ("role_identity", "versioned_core", "user_editable", True),
@@ -134,7 +133,6 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_type": "identity_existence_mode",
         "module_name": "Existence Mode",
         "output": "existence_mode",
-        "nodes": ["field_input", "structure_normalize", "validation", "update_rule", "module_output"],
         "fields": [
             ("existence_mode", "locked_core", "developer_only", True),
             ("local_only", "config", "developer_only", True),
@@ -146,13 +144,6 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_type": "identity_anchor",
         "module_name": "Identity Anchor",
         "output": "identity_anchor",
-        "nodes": [
-            "field_input",
-            "structure_normalize",
-            "identity_consistency_validation",
-            "identity_lock_rule",
-            "module_output",
-        ],
         "fields": [
             ("identity_anchor", "locked_core", "developer_only", True),
             ("locked_core_fields", "locked_core", "developer_only", True),
@@ -162,13 +153,32 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
 ]
 
 
+def _identity_field_default(field_id: str) -> object:
+    if field_id in {"locked_core_fields", "versioned_core_fields"}:
+        return []
+    if field_id in {"local_only", "cloud_enabled"}:
+        return False
+    return ""
+
+
+def _identity_node_id(output_key: str, node_type: str) -> str:
+    suffix = {
+        "field_input": "field_input",
+        "structure_normalize": "normalize",
+        "validation": "validation",
+        "update_rule": "update_rule",
+        "module_output": "output",
+    }[node_type]
+    return f"{output_key}_{suffix}"
+
+
 def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
     module_id = str(spec["module_id"])
     output_key = str(spec["output"])
-    node_ids = [str(node_id) for node_id in spec["nodes"]]
     fields = [
         {
             "field_id": field_id,
+            "value": _identity_field_default(str(field_id)),
             "required": True,
             "edit_scope": edit_scope,
             "update_level": update_level,
@@ -181,20 +191,81 @@ def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
         }
         for field_id, update_level, edit_scope, requires_recompile in spec["fields"]  # type: ignore[misc]
     ]
-    nodes = [
+    field_input_node_id = _identity_node_id(output_key, "field_input")
+    normalize_node_id = _identity_node_id(output_key, "structure_normalize")
+    validation_node_id = _identity_node_id(output_key, "validation")
+    update_rule_node_id = _identity_node_id(output_key, "update_rule")
+    field_registry = [
         {
-            "node_id": node_id,
-            "node_type": "identity_core_template",
-            "module_id": module_id,
-            "layer_id": "layer_1",
-            "i18n_keys": {
-                "name": f"module.{module_id}.node.{node_id}.name",
-                "description": f"module.{module_id}.node.{node_id}.description",
-            },
-            "outputs": {"module_output": output_key} if node_id == "module_output" else {},
+            **{key: value for key, value in field.items() if key != "value"},
+            "owner_node_id": field_input_node_id,
         }
-        for node_id in node_ids
+        for field in fields
     ]
+    update_rules = [
+        {
+            "field_id": field["field_id"],
+            "edit_scope": field["edit_scope"],
+            "update_level": field["update_level"],
+            "requires_recompile": field["requires_recompile"],
+        }
+        for field in fields
+    ]
+    module_output = {
+        "output_key": output_key,
+        "fields": {str(field["field_id"]): field["value"] for field in fields},
+        "source_node": field_input_node_id,
+        "validation_node": validation_node_id,
+        "update_rule_node": update_rule_node_id,
+        "compile_time_only": True,
+    }
+    validation_rules = ["required_fields_present", "field_i18n_keys_present"]
+    if module_id == "module_identity_anchor":
+        validation_rules.append("identity_consistency_validation")
+    update_rule_names = ["field_update_policy"]
+    if module_id == "module_identity_anchor":
+        update_rule_names.append("identity_lock_rule")
+    node_params = {
+        "field_input": {"fields": fields},
+        "structure_normalize": {
+            "input": field_input_node_id,
+            "normalize_rules": ["preserve_field_ids", "preserve_empty_defaults"],
+        },
+        "validation": {
+            "input": normalize_node_id,
+            "required_fields": [str(field["field_id"]) for field in fields if field.get("required")],
+            "validation_rules": validation_rules,
+        },
+        "update_rule": {
+            "input": validation_node_id,
+            "update_rules": update_rules,
+            "rule_names": update_rule_names,
+        },
+        "module_output": {
+            "input": update_rule_node_id,
+            "output_key": output_key,
+            "output_schema": {"type": "object", "required": True},
+        },
+    }
+    nodes = []
+    for node_type in IDENTITY_CORE_NODE_TYPES:
+        node_id = _identity_node_id(output_key, node_type)
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_1",
+                "params": node_params[node_type],
+                "i18n_keys": {
+                    "name": f"module.{module_id}.node.{node_id}.name",
+                    "description": f"module.{module_id}.node.{node_id}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: module_output, "module_output": output_key} if node_type == "module_output" else {},
+                "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True},
+            }
+        )
     return _module(
         module_id,
         str(spec["module_type"]),
@@ -210,6 +281,7 @@ def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
             "shell_version": "module_shell_v1",
             "nodes": nodes,
             "output_key": output_key,
+            "compile_time_only": True,
         },
         output_schema=[{"key": output_key, "type": "object", "required": True, "description": f"module.{module_id}.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
@@ -218,14 +290,15 @@ def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
             "description": f"module.{module_id}.description",
             "output": f"module.{module_id}.output",
         },
-        outputs={output_key: {"type": "object"}, "module_output": output_key},
+        outputs={output_key: module_output, "module_output": output_key},
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
-            "fields": fields,
+            "field_registry": field_registry,
             "edit_scope": "developer_only",
             "update_level": "versioned_core",
             "requires_recompile": True,
+            "compile_time_only": True,
         },
         mock_only=True,
         no_execution=True,
