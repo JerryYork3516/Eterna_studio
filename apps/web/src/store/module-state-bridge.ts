@@ -10,6 +10,116 @@ import { loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphS
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function schemaNodeRecord(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const data = isRecord(value.data) ? value.data : {};
+  if (isRecord(data.schemaNode)) {
+    return data.schemaNode;
+  }
+  return value;
+}
+
+function schemaDataRecord(schemaNode: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(schemaNode.data)) {
+    schemaNode.data = {};
+  }
+  return schemaNode.data as Record<string, unknown>;
+}
+
+function fieldsFromData(data: Record<string, unknown>): Record<string, unknown>[] {
+  if (Array.isArray(data.fields)) {
+    return data.fields.filter(isRecord);
+  }
+  const params = isRecord(data.params) ? data.params : {};
+  return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+}
+
+function mergeCatalogFields(seedFields: Record<string, unknown>[], existingFields: Record<string, unknown>[]) {
+  const existingById = new Map(existingFields.map((field) => [String(field.field_id || ""), field]));
+  return seedFields.map((seedField) => {
+    const fieldId = String(seedField.field_id || "");
+    const existingField = existingById.get(fieldId);
+    return {
+      ...cloneJson(seedField),
+      value: existingField && "value" in existingField ? existingField.value : seedField.value,
+    };
+  });
+}
+
+function mergeCatalogFieldSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (!initialNodes?.length || !graph.nodes?.length) {
+    return null;
+  }
+
+  const seedFieldNode = initialNodes
+    .map(schemaNodeRecord)
+    .find((node) => {
+      const data = node ? (isRecord(node.data) ? node.data : {}) : {};
+      return node && String(data.node_type || node.type) === "field_input";
+    });
+  if (!seedFieldNode) {
+    return null;
+  }
+
+  const seedData = schemaDataRecord(seedFieldNode);
+  const seedFields = fieldsFromData(seedData);
+  if (!seedFields.length) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    if (data.catalog_preconfigured !== true || String(data.node_type || schemaNode.type) !== "field_input") {
+      return nextNode;
+    }
+
+    const existingFields = fieldsFromData(data);
+    const existingIds = existingFields.map((field) => String(field.field_id || ""));
+    const seedIds = seedFields.map((field) => String(field.field_id || ""));
+    if (existingIds.join("\u0000") === seedIds.join("\u0000")) {
+      return nextNode;
+    }
+
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const mergedFields = mergeCatalogFields(seedFields, existingFields);
+    params.fields = mergedFields;
+    data.params = params;
+    data.fields = mergedFields;
+    changed = true;
+    return nextNode;
+  });
+
+  if (!changed) {
+    return null;
+  }
+
+  return {
+    ...graph,
+    nodes: nextNodes,
+    edges: graph.edges?.length ? graph.edges : initialEdges ?? [],
+  };
+}
+
 /**
  * 初始化 module state 水合
  * 
@@ -86,11 +196,31 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
   console.log("[P1-BRIDGE] ensureModuleGraphExists:", { moduleNodeId });
   
   const store = useCanvasStore.getState();
+  const hasInitialGraph = Boolean(initialNodes?.length || initialEdges?.length);
   
   // 1. 检查 store 中是否已存在
-  if (store.moduleGraphs[moduleNodeId]) {
+  const existingGraph = store.moduleGraphs[moduleNodeId];
+  if (existingGraph) {
+    const hasExistingGraph = Boolean(existingGraph.nodes?.length || existingGraph.edges?.length);
+    if (!hasExistingGraph && hasInitialGraph) {
+      const graph: ModuleGraph = {
+        moduleNodeId,
+        nodes: initialNodes ?? [],
+        edges: initialEdges ?? [],
+        viewport: existingGraph.viewport,
+      };
+      store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
+      console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced empty graph with catalog seed");
+      return graph;
+    }
+    const mergedGraph = mergeCatalogFieldSeed(existingGraph, initialNodes, initialEdges);
+    if (mergedGraph) {
+      store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
+      console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
+      return mergedGraph;
+    }
     console.log("[P1-BRIDGE] ensureModuleGraphExists: graph already in store");
-    return store.moduleGraphs[moduleNodeId];
+    return existingGraph;
   }
   
   // 2. 尝试从 localStorage 恢复（旧的单个 graph 存储）
@@ -102,8 +232,12 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       nodes: legacyGraph.nodes as WorkflowNode[],
       edges: legacyGraph.edges as WorkflowEdge[],
     };
-    store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges);
-    return graph;
+    const mergedGraph = mergeCatalogFieldSeed(graph, initialNodes, initialEdges) ?? graph;
+    store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
+    if (mergedGraph !== graph) {
+      console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");
+    }
+    return mergedGraph;
   }
   
   // 3. 创建新的空 graph
@@ -113,7 +247,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     edges: initialEdges ?? [],
   };
   store.updateModuleGraph(moduleNodeId, newGraph.nodes, newGraph.edges);
-  console.log("[P1-BRIDGE] ensureModuleGraphExists: created new empty graph");
+  console.log(hasInitialGraph ? "[P1-BRIDGE] ensureModuleGraphExists: created graph from catalog seed" : "[P1-BRIDGE] ensureModuleGraphExists: created new empty graph");
   
   return newGraph;
 }
@@ -175,7 +309,7 @@ export function ensureAllTabsHaveGraphs() {
 /**
  * 处理 tab 打开事件
  */
-export function handleTabOpened(moduleId: string) {
+export function handleTabOpened(moduleId: string, initialNodes?: WorkflowNode[], initialEdges?: WorkflowEdge[]) {
   console.log("[P1-BRIDGE] handleTabOpened:", { moduleId });
   
   const store = useCanvasStore.getState();
@@ -186,7 +320,7 @@ export function handleTabOpened(moduleId: string) {
   }
   
   // 2. 确保 graph 存在
-  ensureModuleGraphExists(moduleId);
+  ensureModuleGraphExists(moduleId, initialNodes, initialEdges);
   
   // 3. 设置为 active
   store.setActiveModuleTabId(moduleId);

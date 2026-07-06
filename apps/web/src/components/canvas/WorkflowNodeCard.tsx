@@ -27,6 +27,15 @@ const HIDDEN_PARAM_KEYS = new Set([
   "input_schema",
   "output_schema",
   "i18n_keys",
+  "catalog_preconfigured",
+  "catalog_module_id",
+  "catalog_node_id",
+  "module_instance_id",
+  "node_type",
+  "params",
+  "fields",
+  "outputs",
+  "metadata",
   "collapsed_sections",
   "ui_color",
   "memory_entries",
@@ -80,6 +89,32 @@ function parseJsonInput(value: string) {
   } catch {
     return value;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function fieldsFromNodeData(data: Record<string, unknown>): Record<string, unknown>[] {
+  if (Array.isArray(data.fields)) {
+    return data.fields.filter(isRecord);
+  }
+  const params = isRecord(data.params) ? data.params : {};
+  return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+}
+
+function paramsFromNodeData(data: Record<string, unknown>) {
+  return isRecord(data.params) ? data.params : {};
+}
+
+function localizedFieldText(field: Record<string, unknown>, key: "label" | "placeholder" | "help", language: Language, fallback: string) {
+  const i18n = isRecord(field.i18n_keys) ? field.i18n_keys : {};
+  const i18nKey = typeof i18n[key] === "string" ? i18n[key] : "";
+  return i18nKey ? translate(language, i18nKey, fallback) : fallback;
+}
+
+function updateFieldValue(fields: Record<string, unknown>[], index: number, value: unknown) {
+  return fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, value } : field));
 }
 
 // NodeInputRenderer is fully schema-driven from backend node-registry-v0.4.
@@ -283,6 +318,125 @@ function NodeInputRenderer({
       })}
     </div>
   );
+}
+
+function CompileTimeFieldInputRenderer({
+  fields,
+  params,
+  language,
+  onInput
+}: {
+  fields: Record<string, unknown>[];
+  params: Record<string, unknown>;
+  language: Language;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  if (!fields.length) {
+    return <div className="node-inputs__empty">{translate(language, "node.compileTime.fields.empty", "No fields configured")}</div>;
+  }
+
+  const commitFields = (nextFields: Record<string, unknown>[]) => {
+    onInput?.("fields", nextFields);
+    onInput?.("params", { ...params, fields: nextFields });
+  };
+
+  return (
+    <div className="node-inputs">
+      {fields.map((field, index) => {
+        const label = localizedFieldText(field, "label", language, translate(language, "field.identity.unknown", "Field"));
+        const placeholder = localizedFieldText(field, "placeholder", language, "");
+        const help = localizedFieldText(field, "help", language, "");
+        const value = field.value;
+        if (typeof value === "boolean") {
+          return (
+            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--toggle">
+              <span>{label}</span>
+              <input
+                className="nodrag"
+                type="checkbox"
+                checked={value}
+                onChange={(event) => commitFields(updateFieldValue(fields, index, event.target.checked))}
+              />
+              {help ? <em>{help}</em> : null}
+            </label>
+          );
+        }
+        if (Array.isArray(value) || isRecord(value)) {
+          return (
+            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block">
+              <span>{label}</span>
+              <textarea
+                className="nodrag"
+                rows={2}
+                value={prettyValue(value)}
+                placeholder={placeholder || "[]"}
+                onChange={(event) => commitFields(updateFieldValue(fields, index, parseJsonInput(event.target.value)))}
+              />
+              {help ? <em>{help}</em> : null}
+            </label>
+          );
+        }
+        return (
+          <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block">
+            <span>{label}</span>
+            <input
+              className="nodrag"
+              type="text"
+              value={value === null || value === undefined ? "" : String(value)}
+              placeholder={placeholder}
+              onChange={(event) => commitFields(updateFieldValue(fields, index, event.target.value))}
+            />
+            {help ? <em>{help}</em> : null}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompileTimeNodeSummary({
+  type,
+  data,
+  language
+}: {
+  type: string;
+  data: Record<string, unknown>;
+  language: Language;
+}) {
+  const params = paramsFromNodeData(data);
+  const outputs = isRecord(data.outputs) ? data.outputs : {};
+  if (type === "structure_normalize") {
+    const rules = Array.isArray(params.normalize_rules) ? params.normalize_rules : [];
+    return <p className="node-inputs__empty">{translate(language, "node.compileTime.summary.normalize", "Normalize rules: {count}").replace("{count}", String(rules.length))}</p>;
+  }
+  if (type === "validation") {
+    const required = Array.isArray(params.required_fields) ? params.required_fields : [];
+    const rules = Array.isArray(params.validation_rules) ? params.validation_rules : [];
+    return (
+      <p className="node-inputs__empty">
+        {translate(language, "node.compileTime.summary.validation", "Required fields: {required}; validation rules: {rules}")
+          .replace("{required}", String(required.length))
+          .replace("{rules}", String(rules.length))}
+      </p>
+    );
+  }
+  if (type === "update_rule") {
+    const rules = Array.isArray(params.update_rules) ? params.update_rules : [];
+    return <p className="node-inputs__empty">{translate(language, "node.compileTime.summary.updateRule", "Update rules: {count}").replace("{count}", String(rules.length))}</p>;
+  }
+  if (type === "module_output") {
+    const outputKey = typeof params.output_key === "string" ? params.output_key : "";
+    const output = outputKey && isRecord(outputs[outputKey]) ? (outputs[outputKey] as Record<string, unknown>) : {};
+    const outputFields = isRecord(output.fields) ? Object.keys(output.fields).length : 0;
+    return (
+      <p className="node-inputs__empty">
+        {translate(language, "node.compileTime.summary.moduleOutput", "Output: {output}; fields: {count}")
+          .replace("{output}", outputKey || translate(language, "common.unknown", "Unknown"))
+          .replace("{count}", String(outputFields))}
+      </p>
+    );
+  }
+  return <div className="node-inputs__empty">{translate(language, "node.inputs.empty", "No schema inputs")}</div>;
 }
 
 function normalizeNodeStatus(rawStatus: string | undefined, hasAiSlot: boolean, llmStatus?: "READY" | "MOCK" | "ERROR" | "UNPLANNED") {
@@ -605,6 +759,12 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const paramEntries = Object.entries(nodeData).filter(
     ([key]) => !key.startsWith("ui_") && !HIDDEN_PARAM_KEYS.has(key) && !inputKeys.has(key)
   );
+  const isCatalogPreconfigured = nodeData.catalog_preconfigured === true;
+  const compileTimeFields = fieldsFromNodeData(nodeData);
+  const compileTimeParams = paramsFromNodeData(nodeData);
+  const showCompileTimeFieldForm = isCatalogPreconfigured && String(effectiveType) === "field_input";
+  const showCompileTimeSummary =
+    isCatalogPreconfigured && ["structure_normalize", "validation", "update_rule", "module_output"].includes(String(effectiveType));
   const isEnabled = typeof nodeData.enabled === "boolean" ? nodeData.enabled : true;
   const sections = {
     core: collapsedSections.has("core"),
@@ -684,7 +844,11 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
       <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core}>
         <summary>{sectionTitle(language, "node.sections.core", "Core Params")}</summary>
         <div className="workflow-node__params-body">
-          {onInput ? (
+          {showCompileTimeFieldForm ? (
+            <CompileTimeFieldInputRenderer fields={compileTimeFields} params={compileTimeParams} language={language} onInput={onInput} />
+          ) : showCompileTimeSummary ? (
+            <CompileTimeNodeSummary type={String(effectiveType)} data={nodeData} language={language} />
+          ) : onInput ? (
             <NodeInputRenderer fields={inputSchema} data={nodeData} language={language} onInput={onInput} />
           ) : (
             <div className="node-inputs__empty">{translate(language, "node.inputs.readonly", "Read-only node")}</div>

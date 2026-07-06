@@ -116,6 +116,20 @@ def _slugify(text: str) -> str:
     return cleaned.strip("_") or "digital_resident"
 
 
+def _safe_filename_slug(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return _slugify(raw)
+
+
+def _simplified_codename(value: Any) -> str:
+    slug = _safe_filename_slug(value)
+    if not slug:
+        return ""
+    return slug.split("_", 1)[0] or slug
+
+
 def _secret_findings(value: Any, path: str) -> List[Dict[str, str]]:
     findings: List[Dict[str, str]] = []
     if isinstance(value, dict):
@@ -311,20 +325,48 @@ def _assemble_identity_core_outputs(
     fail_count = sum(1 for finding in findings if finding.get("status") == "FAIL")
     module_audit = {"ok": fail_count == 0, "findings": [finding for finding in findings if "IDENTITY_MODULE" in finding.get("code", "")]}
     layer_audit = {"ok": fail_count == 0, "findings": findings}
+    basic_identity_fields = module_outputs.get("basic_identity", {}).get("fields", {})
+    if not isinstance(basic_identity_fields, dict):
+        basic_identity_fields = {}
+
+    def _field_or_fallback(field_id: str, fallback: str | None = None) -> str | None:
+        value = basic_identity_fields.get(field_id)
+        if isinstance(value, str) and value.strip():
+            return value
+        return fallback
+
+    profile_resident_id = _field_or_fallback("resident_id", resident_id)
+    profile_name = _field_or_fallback("name", resident_name)
+    profile_codename = _field_or_fallback("codename")
+    profile_primary_language = _field_or_fallback("primary_language")
+    profile_display_alias = _field_or_fallback("display_alias")
+    profile_export_name = _field_or_fallback("export_name") or _simplified_codename(profile_codename)
     identity_summary = {
-        "resident_id": resident_id,
-        "name": resident_name,
+        "resident_id": profile_resident_id,
+        "name": profile_name,
+        "display_alias": profile_display_alias or "",
+        "export_name": profile_export_name or "",
         "source": "identity_core_aggregator",
     }
+    if profile_codename:
+        identity_summary["codename"] = profile_codename
+    if profile_primary_language:
+        identity_summary["primary_language"] = profile_primary_language
     identity_profile = {
-        "resident_id": resident_id,
-        "name": resident_name,
+        "resident_id": profile_resident_id,
+        "name": profile_name,
         **module_outputs,
         "locked_core_fields": sorted(set(locked_core_fields)),
         "versioned_core_fields": sorted(set(versioned_core_fields)),
         "update_rules": update_rules,
         "identity_summary": identity_summary,
+        "display_alias": profile_display_alias or "",
+        "export_name": profile_export_name or "",
     }
+    if profile_codename:
+        identity_profile["codename"] = profile_codename
+    if profile_primary_language:
+        identity_profile["primary_language"] = profile_primary_language
     aggregator = {
         "inputs": list(_IDENTITY_CORE_OUTPUTS.values()),
         "identity_profile": identity_profile,
@@ -802,20 +844,21 @@ def compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> D
 
 
 def dr_filename(dr: Dict[str, Any]) -> str:
-    """Return the download filename: <resident_id>.digital_resident."""
+    """Return the DR download filename from basic identity display config."""
     dr = dr or {}
-    resident = _as_dict(dr.get("resident"))
-    manifest = _as_dict(dr.get("manifest"))
     payload = _as_dict(dr.get("payload"))
-    legacy_blueprint = _as_dict(dr.get("legacy_blueprint"))
-    resident_id = (
-        manifest.get("resident_id")
-        or resident.get("resident_id")
-        or _as_dict(payload.get("resident_identity")).get("resident_id")
-        or legacy_blueprint.get("resident_id")
-        or "digital_resident"
-    )
-    return f"{resident_id}{FILE_SUFFIX}"
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+    layer_outputs = _as_dict(graph_snapshot.get("layer_outputs"))
+    identity_profile = _as_dict(layer_outputs.get("identity_profile"))
+    basic_identity = _as_dict(identity_profile.get("basic_identity"))
+    fields = _as_dict(basic_identity.get("fields"))
+
+    export_name = _safe_filename_slug(fields.get("export_name"))
+    codename = _safe_filename_slug(fields.get("codename"))
+    simplified_codename = _simplified_codename(fields.get("codename"))
+    name = _safe_filename_slug(fields.get("name"))
+    basename = export_name or simplified_codename or codename or name or "digital_resident"
+    return f"{basename}{FILE_SUFFIX}"
 
 
 # --- Stage 6.1 runtime mock load (read-only; does NOT execute) -------------

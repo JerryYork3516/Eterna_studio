@@ -21,8 +21,8 @@ import { translate, type Language } from "@/i18n";
 import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import { api } from "@/lib/api";
 import type { DRLoadResult, LLMProfileInput } from "@/lib/api";
-import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, ResidentInstanceV03, Workflow, WorkflowNode } from "@/lib/schema-types";
-import { safeSerialize } from "@/lib/safe-serialize";
+import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, ResidentInstanceV03, Workflow, WorkflowEdge, WorkflowNode } from "@/lib/schema-types";
+import { safeClone, safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow } from "@/lib/workflow";
 import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
@@ -413,6 +413,254 @@ const nodeTypes = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+const IDENTITY_COMPILE_NODE_ORDER = ["field_input", "structure_normalize", "validation", "update_rule", "module_output"];
+
+function cloneRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? safeClone(value) : {};
+}
+
+function cloneArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? safeClone(value) : [];
+}
+
+function readableNodeName(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function moduleGraphNodes(module: ModuleCatalogEntryV04): Record<string, unknown>[] {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const nodes = graph.nodes;
+  return Array.isArray(nodes) ? nodes.filter(isRecord) : [];
+}
+
+function moduleGraphOutputKey(module: ModuleCatalogEntryV04): string {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const outputs = isRecord(module.outputs) ? module.outputs : {};
+  return String(graph.output_key || outputs.module_output || "");
+}
+
+function catalogNodeType(node: Record<string, unknown>) {
+  return String(node.node_type || node.type || "transform");
+}
+
+function catalogNodeId(node: Record<string, unknown>, index: number) {
+  return String(node.node_id || node.id || `${catalogNodeType(node)}_${index + 1}`);
+}
+
+function flowNodeId(instanceId: string, catalogId: string) {
+  return `${instanceId}${MODULE_INSTANCE_SEPARATOR}${catalogId}`;
+}
+
+function buildCatalogModuleSeed(module: ModuleCatalogEntryV04, instanceId: string): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+  const catalogNodes = moduleGraphNodes(module);
+  const idByCatalogId = new Map<string, string>();
+  const nodes = catalogNodes.map((node, index) => {
+    const originalNodeId = catalogNodeId(node, index);
+    const nodeType = catalogNodeType(node);
+    const nodeId = flowNodeId(instanceId, originalNodeId);
+    idByCatalogId.set(originalNodeId, nodeId);
+    const params = cloneRecord(node.params);
+    const fields = cloneArray(params.fields);
+    const outputs = cloneRecord(node.outputs);
+    const metadata = cloneRecord(node.metadata);
+    const i18nKeys = cloneRecord(node.i18n_keys);
+    return ensurePorts({
+      node_id: nodeId,
+      type: nodeType,
+      category: "compile_time",
+      title_key: String(i18nKeys.name || `node.type.${nodeType}`),
+      title_fallback: readableNodeName(originalNodeId),
+      position: { x: 120 + index * 360, y: 100 },
+      lock_level: "editable",
+      locale: null,
+      data: {
+        parent_module: instanceId,
+        catalog_preconfigured: true,
+        module_instance_id: instanceId,
+        catalog_module_id: module.module_id,
+        catalog_node_id: originalNodeId,
+        node_type: nodeType,
+        params,
+        fields,
+        outputs,
+        metadata,
+        i18n_keys: i18nKeys,
+      },
+      input_schema: [],
+      output_schema: [],
+      ports: {
+        inputs: index === 0 ? [] : [{ port_id: "p_in", name: "in", direction: "in" }],
+        outputs: index === catalogNodes.length - 1 ? [] : [{ port_id: "p_out", name: "out", direction: "out" }],
+      },
+      validation: null,
+      layer_id: module.layer_id,
+      module_id: module.module_id,
+      i18n_keys: Object.fromEntries(Object.entries(i18nKeys).map(([key, value]) => [key, String(value)])),
+      collapsed_sections: ["advanced", "runtime"],
+    } as WorkflowNode);
+  });
+
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const catalogEdges = Array.isArray(graph.edges) ? graph.edges.filter(isRecord) : [];
+  const edges =
+    catalogEdges.length > 0
+      ? catalogEdges.map((edge, index) => {
+          const sourceRaw = String(edge.source || edge.source_node_id || "");
+          const targetRaw = String(edge.target || edge.target_node_id || "");
+          const source = idByCatalogId.get(sourceRaw) || sourceRaw;
+          const target = idByCatalogId.get(targetRaw) || targetRaw;
+          const edgeId = String(edge.edge_id || edge.id || `${source}_to_${target}_${index + 1}`);
+          return {
+            edge_id: edgeId,
+            id: edgeId,
+            source,
+            source_port: String(edge.source_port || edge.source_output || "p_out"),
+            sourceHandle: String(edge.source_port || edge.source_output || "p_out"),
+            target,
+            target_port: String(edge.target_port || edge.target_input || "p_in"),
+            targetHandle: String(edge.target_port || edge.target_input || "p_in"),
+            type: "smoothstep",
+          } as WorkflowEdge & Edge;
+        })
+      : IDENTITY_COMPILE_NODE_ORDER.slice(0, -1).flatMap((nodeType, index) => {
+          const sourceNode = nodes.find((candidate) => candidate.data?.node_type === nodeType);
+          const targetNode = nodes.find((candidate) => candidate.data?.node_type === IDENTITY_COMPILE_NODE_ORDER[index + 1]);
+          if (!sourceNode || !targetNode) {
+            return [];
+          }
+          const edgeId = `${sourceNode.node_id}_to_${targetNode.node_id}`;
+          return [
+            {
+              edge_id: edgeId,
+              id: edgeId,
+              source: sourceNode.node_id,
+              source_port: "p_out",
+              sourceHandle: "p_out",
+              target: targetNode.node_id,
+              target_port: "p_in",
+              targetHandle: "p_in",
+              type: "smoothstep",
+            } as WorkflowEdge & Edge,
+          ];
+        });
+
+  return { nodes, edges };
+}
+
+function schemaNodeFromModuleGraphNode(value: unknown): WorkflowNode | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const data = isRecord(value.data) ? value.data : {};
+  if (isRecord(data.schemaNode)) {
+    return data.schemaNode as unknown as WorkflowNode;
+  }
+  if (typeof value.node_id === "string" && typeof value.type === "string") {
+    return value as unknown as WorkflowNode;
+  }
+  return null;
+}
+
+function fieldInputFields(schemaNode: WorkflowNode): Record<string, unknown>[] {
+  const data = isRecord(schemaNode.data) ? schemaNode.data : {};
+  if (Array.isArray(data.fields)) {
+    return safeClone(data.fields.filter(isRecord));
+  }
+  const params = isRecord(data.params) ? data.params : {};
+  return Array.isArray(params.fields) ? safeClone(params.fields.filter(isRecord)) : [];
+}
+
+function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV04): Record<string, unknown> {
+  const data = isRecord(schemaNode.data) ? schemaNode.data : {};
+  const nodeType = String(data.node_type || schemaNode.type);
+  const params = cloneRecord(data.params);
+  if (nodeType === "field_input") {
+    params.fields = fieldInputFields(schemaNode);
+  }
+  return {
+    node_id: String(data.catalog_node_id || schemaNode.node_id),
+    node_type: nodeType,
+    module_id: module.module_id,
+    layer_id: module.layer_id,
+    params,
+    i18n_keys: cloneRecord(data.i18n_keys || schemaNode.i18n_keys),
+    outputs: cloneRecord(data.outputs),
+    metadata: cloneRecord(data.metadata),
+  };
+}
+
+function compileEdgesFromModuleGraph(nodes: unknown[], edges: unknown[]): Record<string, unknown>[] {
+  const idMap = new Map<string, string>();
+  for (const graphNode of nodes) {
+    const schemaNode = schemaNodeFromModuleGraphNode(graphNode);
+    if (!schemaNode) {
+      continue;
+    }
+    const data = isRecord(schemaNode.data) ? schemaNode.data : {};
+    idMap.set(schemaNode.node_id, String(data.catalog_node_id || schemaNode.node_id));
+  }
+  return edges.filter(isRecord).map((edge, index) => {
+    const source = String(edge.source || "");
+    const target = String(edge.target || "");
+    return {
+      edge_id: String(edge.edge_id || edge.id || `module_edge_${index + 1}`),
+      source: idMap.get(source) || source,
+      source_port: String(edge.source_port || edge.sourceHandle || "p_out"),
+      target: idMap.get(target) || target,
+      target_port: String(edge.target_port || edge.targetHandle || "p_in"),
+    };
+  });
+}
+
+function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unknown[], graphEdges: unknown[]): Record<string, unknown> {
+  const compiledNodes = graphNodes
+    .map((node) => {
+      const schemaNode = schemaNodeFromModuleGraphNode(node);
+      return schemaNode ? compileNodeRecord(schemaNode, module) : null;
+    })
+    .filter(isRecord);
+  const outputKey = moduleGraphOutputKey(module);
+  const fieldInput = compiledNodes.find((node) => node.node_type === "field_input");
+  const fieldParams = isRecord(fieldInput?.params) ? fieldInput.params : {};
+  const fields = Array.isArray(fieldParams.fields) ? fieldParams.fields.filter(isRecord) : [];
+  const fieldValues = Object.fromEntries(fields.map((field) => [String(field.field_id || ""), field.value]).filter(([key]) => key));
+  let outputValue: Record<string, unknown> | null = null;
+  for (const node of compiledNodes) {
+    if (node.node_type !== "module_output" || !outputKey) {
+      continue;
+    }
+    const outputs = isRecord(node.outputs) ? { ...node.outputs } : {};
+    const existing = isRecord(outputs[outputKey]) ? outputs[outputKey] : {};
+    outputValue = {
+      ...existing,
+      output_key: outputKey,
+      fields: fieldValues,
+      compile_time_only: true,
+    };
+    outputs[outputKey] = outputValue;
+    outputs.module_output = outputKey;
+    node.outputs = outputs;
+  }
+  const outputs = cloneRecord(module.outputs);
+  if (outputKey && outputValue) {
+    outputs[outputKey] = outputValue;
+    outputs.module_output = outputKey;
+  }
+  return {
+    ...safeClone(module),
+    outputs,
+    module_graph: {
+      ...cloneRecord(module.module_graph),
+      nodes: compiledNodes,
+      edges: compileEdgesFromModuleGraph(graphNodes, graphEdges),
+    },
+  };
 }
 
 function extractResidentInstance(value: unknown): ResidentInstance | null {
@@ -1911,8 +2159,9 @@ export function CanvasShell() {
       }
 
       console.log("[module-open] open module canvas", { moduleId, layerId: layerNodeId, tabId: moduleNodeId });
+      const seed = buildCatalogModuleSeed(mod, moduleNodeId);
       // P1-BRIDGE：使用 bridge 来确保 graph 也被创建
-      handleTabOpened(moduleNodeId);
+      handleTabOpened(moduleNodeId, seed.nodes, seed.edges);
       setModuleTabs((tabs) => (tabs.includes(moduleNodeId) ? tabs : [...tabs, moduleNodeId]));
       setActiveModuleTabId(moduleNodeId);
       setActiveDrawer(null);
@@ -1920,6 +2169,20 @@ export function CanvasShell() {
     },
     [appendLog, ensureModuleInstance, moduleCatalogById, moduleCatalog, t]
   );
+
+  useEffect(() => {
+    if (!moduleCatalog) {
+      return;
+    }
+    for (const instance of Object.values(moduleInstanceRegistry)) {
+      const mod = moduleCatalogById.get(instance.moduleId) ?? moduleCatalog.modules.find((module) => module.module_id === instance.moduleId);
+      if (!mod) {
+        continue;
+      }
+      const seed = buildCatalogModuleSeed(mod, instance.instanceId);
+      ensureModuleGraphExists(instance.instanceId, seed.nodes, seed.edges);
+    }
+  }, [moduleCatalog, moduleCatalogById, moduleInstanceRegistry]);
 
   const renameUiNode = useCallback(
     (nodeId: string, currentName: string) => {
@@ -2317,13 +2580,49 @@ export function CanvasShell() {
     return [...folderToLayerEdges, ...layerSpineEdges];
   }, [moduleCatalog]);
 
+  const workflowWithModuleGraphs = useCallback(
+    (baseWorkflow: Workflow): Workflow => {
+      if (!moduleCatalog) {
+        return baseWorkflow;
+      }
+      const storeGraphs = useCanvasStore.getState().moduleGraphs;
+      const overrides = new Map<string, Record<string, unknown>>();
+      for (const instance of Object.values(moduleInstanceRegistry)) {
+        const catalogModule = moduleCatalogById.get(instance.moduleId);
+        if (!catalogModule) {
+          continue;
+        }
+        const graph = storeGraphs[instance.instanceId] ?? loadModuleGraphState(instance.instanceId);
+        const graphNodes = graph?.nodes ?? [];
+        if (!graphNodes.length) {
+          continue;
+        }
+        overrides.set(instance.moduleId, moduleWithCompiledGraph(catalogModule, graphNodes, graph?.edges ?? []));
+      }
+      const modules: Workflow["modules"] = moduleCatalog.modules.map((module) => {
+        const compiled = overrides.get(module.module_id);
+        return {
+          ...(compiled ?? safeClone(module)),
+          module_id: module.module_id,
+          module_name: module.module_name,
+          layer_id: module.layer_id,
+        };
+      });
+      return {
+        ...baseWorkflow,
+        modules,
+      };
+    },
+    [moduleCatalog, moduleCatalogById, moduleInstanceRegistry]
+  );
+
   const requireWorkflow = useCallback(() => {
     if (!workflow) {
       appendLog(t("error.noWorkflow"), "warn");
       return null;
     }
-    return workflow;
-  }, [appendLog, t, workflow]);
+    return workflowWithModuleGraphs(workflow);
+  }, [appendLog, t, workflow, workflowWithModuleGraphs]);
 
   const handleSave = useCallback(() => {
     const currentWorkflow = requireWorkflow();
@@ -4332,6 +4631,48 @@ function ensurePorts(node: WorkflowNode): WorkflowNode {
   return { ...node, ports: { ...(node.ports ?? {}), inputs, outputs } } as unknown as WorkflowNode;
 }
 
+function normalizeModuleGraphNodes(nodes: unknown[]): Node[] {
+  return nodes.filter(isRecord).map((node, index) => {
+    const existingSchema = isRecord(node.data) && isRecord(node.data.schemaNode) ? (node.data.schemaNode as unknown as WorkflowNode) : null;
+    if (existingSchema) {
+      return {
+        ...node,
+        id: typeof node.id === "string" ? node.id : existingSchema.node_id,
+        type: typeof node.type === "string" ? node.type : "workflowNode",
+        position: isRecord(node.position)
+          ? { x: Number(node.position.x) || 0, y: Number(node.position.y) || 0 }
+          : existingSchema.position ?? { x: 120, y: 70 + index * 130 },
+        data: { ...(isRecord(node.data) ? node.data : {}), schemaNode: ensurePorts(existingSchema) },
+      } as Node;
+    }
+    const workflowNode = ensurePorts(node as unknown as WorkflowNode);
+    return {
+      id: workflowNode.node_id,
+      type: "workflowNode",
+      position: workflowNode.position ?? { x: 120, y: 70 + index * 130 },
+      deletable: true,
+      data: { schemaNode: workflowNode },
+    } as Node;
+  });
+}
+
+function normalizeModuleGraphEdges(edges: unknown[]): Edge[] {
+  return edges.filter(isRecord).map((edge, index) => {
+    const source = String(edge.source || edge.source_node_id || "");
+    const target = String(edge.target || edge.target_node_id || "");
+    const id = String(edge.id || edge.edge_id || `${source}_to_${target}_${index + 1}`);
+    return {
+      ...edge,
+      id,
+      source,
+      sourceHandle: typeof edge.sourceHandle === "string" ? edge.sourceHandle : String(edge.source_port || edge.source_output || "p_out"),
+      target,
+      targetHandle: typeof edge.targetHandle === "string" ? edge.targetHandle : String(edge.target_port || edge.target_input || "p_in"),
+      type: typeof edge.type === "string" ? edge.type : "smoothstep",
+    } as Edge;
+  });
+}
+
 function nodeWidth(node: Node) {
   return node.measured?.width ?? node.width ?? 364;
 }
@@ -4509,10 +4850,22 @@ function ModuleCanvasPanel({
   const moduleFlowRef = useRef<ReactFlowInstance | null>(null);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [copiedModuleNode, setCopiedModuleNode] = useState<WorkflowNode | null>(null);
+  const storedModuleGraph = useCanvasStore((state) => state.moduleGraphs[moduleNode.node_id]);
 
 	  // Seed module sub-canvas from the current v0.4 schema-derived view only.
 	  const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
 	    console.log("[NODE-E] initialGraph computing for moduleNode:", { moduleNodeId: moduleNode.node_id });
+      if (storedModuleGraph?.nodes?.length || storedModuleGraph?.edges?.length) {
+        console.log("[NODE-E-HYDRATE] moduleGraphs restored from store:", {
+          moduleId: moduleNode.node_id,
+          nodeCount: storedModuleGraph.nodes?.length ?? 0,
+          edgeCount: storedModuleGraph.edges?.length ?? 0
+        });
+        return {
+          nodes: normalizeModuleGraphNodes(storedModuleGraph.nodes ?? []),
+          edges: normalizeModuleGraphEdges(storedModuleGraph.edges ?? [])
+        };
+      }
 	    // 先尝试从 localStorage 恢复模块图
 	    const saved = loadModuleGraphState(moduleNode.node_id);
 	    if (saved) {
@@ -4522,8 +4875,8 @@ function ModuleCanvasPanel({
 	        edgeCount: saved.edges?.length ?? 0
 	      });
 	      return {
-	        nodes: (saved.nodes ?? []) as Node[],
-	        edges: (saved.edges ?? []) as Edge[]
+	        nodes: normalizeModuleGraphNodes(saved.nodes ?? []),
+	        edges: normalizeModuleGraphEdges(saved.edges ?? [])
 	      };
 	    }
 	    
@@ -4547,7 +4900,7 @@ function ModuleCanvasPanel({
       })),
       edges: []
     };
-  }, [moduleNode, initialSubnodes]);
+  }, [moduleNode, initialSubnodes, storedModuleGraph]);
 
   const [moduleNodes, setModuleNodes, onBaseModuleNodesChange] = useNodesState(initialGraph.nodes);
   const [moduleEdges, setModuleEdges, onModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
@@ -4704,6 +5057,7 @@ function ModuleCanvasPanel({
         edgeCount: moduleEdges.length
       });
       saveModuleGraphState(moduleNode.node_id, moduleNodes, moduleEdges);
+      useCanvasStore.getState().updateModuleGraph(moduleNode.node_id, moduleNodes as unknown as WorkflowNode[], moduleEdges as unknown as WorkflowEdge[]);
     }, 500);
     return () => clearTimeout(timer);
   }, [moduleNode.node_id, moduleNodes, moduleEdges]);

@@ -71,6 +71,37 @@ def test_filename_suffix_is_digital_resident():
     assert not name.endswith(".json")
 
 
+def test_v03_filename_prefers_basic_identity_export_name_and_codename_slug():
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    basic_identity = next(module for module in modules if module["module_id"] == "module_basic_identity")
+    field_input = next(node for node in basic_identity["module_graph"]["nodes"] if node["node_type"] == "field_input")
+    for field in field_input["params"]["fields"]:
+        if field["field_id"] == "name":
+            field["value"] = "林瑄"
+        if field["field_id"] == "codename":
+            field["value"] = "linxuan_hum_cn_xian_01"
+        if field["field_id"] == "resident_id":
+            field["value"] = "dr_eterna_hum_cn_xian_linxuan_0001"
+        if field["field_id"] == "export_name":
+            field["value"] = "linxuan"
+
+    fields_by_id = {field["field_id"]: field["value"] for field in field_input["params"]["fields"]}
+    module_output = next(node for node in basic_identity["module_graph"]["nodes"] if node["node_type"] == "module_output")
+    module_output["outputs"]["basic_identity"]["fields"] = fields_by_id
+    basic_identity["outputs"]["basic_identity"]["fields"] = fields_by_id
+
+    canvas = _canvas_13()
+    canvas["modules"] = modules
+    dr = compile_dr_v0_3(canvas)
+    assert dr_filename(dr) == "linxuan.digital_resident"
+
+    fields_by_id["export_name"] = ""
+    module_output["outputs"]["basic_identity"]["fields"] = fields_by_id
+    basic_identity["outputs"]["basic_identity"]["fields"] = fields_by_id
+    dr_without_export_name = compile_dr_v0_3(canvas)
+    assert dr_filename(dr_without_export_name) == "linxuan.digital_resident"
+
+
 # --- validation checks -------------------------------------------------------
 def test_duplicate_module_id_fails():
     canvas = _canvas_13()

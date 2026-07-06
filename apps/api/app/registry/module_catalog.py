@@ -100,10 +100,20 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_name": "Basic Identity",
         "output": "basic_identity",
         "fields": [
-            ("resident_id", "locked_core", "developer_only", True),
-            ("codename", "locked_core", "developer_only", True),
             ("name", "locked_core", "developer_only", True),
+            ("display_alias", "config", "user_editable", False, False),
+            ("codename", "locked_core", "developer_only", True),
+            ("resident_id", "locked_core", "developer_only", True),
+            ("gender", "versioned_core", "user_editable", True),
+            ("age_feel", "versioned_core", "user_editable", True),
+            ("apparent_age", "versioned_core", "user_editable", True),
+            ("birth_time", "versioned_core", "user_editable", True),
+            ("virtual_birth_time", "versioned_core", "user_editable", True),
+            ("life_stage", "versioned_core", "user_editable", True),
+            ("city", "versioned_core", "user_editable", True),
+            ("appearance_source", "versioned_core", "user_editable", True),
             ("primary_language", "versioned_core", "user_editable", True),
+            ("export_name", "config", "developer_only", True, False),
         ],
     },
     {
@@ -112,9 +122,17 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_name": "Growth Background",
         "output": "growth_background",
         "fields": [
-            ("origin_region", "versioned_core", "user_editable", True),
-            ("cultural_context", "versioned_core", "user_editable", True),
-            ("growth_notes", "versioned_core", "user_editable", True),
+            ("family_background", "versioned_core", "user_editable", True),
+            ("growth_environment", "versioned_core", "user_editable", True),
+            ("education_experience", "versioned_core", "user_editable", True),
+            ("life_experience", "versioned_core", "user_editable", True),
+            ("migration_experience", "versioned_core", "user_editable", True),
+            ("key_life_events", "versioned_core", "user_editable", True),
+            ("social_environment", "versioned_core", "user_editable", True),
+            ("cultural_environment", "versioned_core", "user_editable", True),
+            ("era_background", "versioned_core", "user_editable", True),
+            ("regional_background", "versioned_core", "user_editable", True),
+            ("growth_constraints", "versioned_core", "user_editable", True),
         ],
     },
     {
@@ -123,9 +141,18 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_name": "Career Identity",
         "output": "career_identity",
         "fields": [
-            ("career_domain", "versioned_core", "user_editable", True),
-            ("role_identity", "versioned_core", "user_editable", True),
-            ("expertise_summary", "versioned_core", "user_editable", True),
+            ("career_name", "versioned_core", "user_editable", True),
+            ("industry_direction", "versioned_core", "user_editable", True),
+            ("work_type", "versioned_core", "user_editable", True),
+            ("professional_level", "versioned_core", "user_editable", True),
+            ("career_rank", "versioned_core", "user_editable", True),
+            ("social_role", "versioned_core", "user_editable", True),
+            ("career_experience", "versioned_core", "user_editable", True),
+            ("representative_projects", "versioned_core", "user_editable", True),
+            ("career_goal", "versioned_core", "user_editable", True),
+            ("service_audience", "versioned_core", "user_editable", True),
+            ("value_output_mode", "versioned_core", "user_editable", True),
+            ("career_boundaries", "versioned_core", "user_editable", True),
         ],
     },
     {
@@ -134,9 +161,18 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_name": "Existence Mode",
         "output": "existence_mode",
         "fields": [
-            ("existence_mode", "locked_core", "developer_only", True),
-            ("local_only", "config", "developer_only", True),
-            ("cloud_enabled", "config", "developer_only", True),
+            ("digital_resident_type", "locked_core", "developer_only", True),
+            ("visible_form", "versioned_core", "user_editable", True),
+            ("invisible_form", "versioned_core", "user_editable", True),
+            ("local_existence", "versioned_core", "user_editable", True),
+            ("cloud_existence", "versioned_core", "user_editable", True),
+            ("hybrid_existence", "versioned_core", "user_editable", True),
+            ("personal_resident", "versioned_core", "user_editable", True),
+            ("enterprise_resident", "versioned_core", "user_editable", True),
+            ("public_service_resident", "versioned_core", "user_editable", True),
+            ("identity_stability", "locked_core", "developer_only", True),
+            ("identity_change_rules", "versioned_core", "user_editable", True),
+            ("version_inheritance", "versioned_core", "user_editable", True),
         ],
     },
     {
@@ -145,19 +181,20 @@ IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
         "module_name": "Identity Anchor",
         "output": "identity_anchor",
         "fields": [
-            ("identity_anchor", "locked_core", "developer_only", True),
-            ("locked_core_fields", "locked_core", "developer_only", True),
-            ("versioned_core_fields", "versioned_core", "developer_only", True),
+            ("identity_definition", "locked_core", "developer_only", True),
+            ("identity_keywords", "versioned_core", "user_editable", True),
+            ("representative_city", "versioned_core", "user_editable", True),
+            ("representative_domain", "versioned_core", "user_editable", True),
+            ("representative_value", "versioned_core", "user_editable", True),
+            ("representative_symbol", "versioned_core", "user_editable", True),
+            ("immutable_core_fields", "locked_core", "developer_only", True),
+            ("versioned_update_fields", "versioned_core", "developer_only", True),
         ],
     },
 ]
 
 
 def _identity_field_default(field_id: str) -> object:
-    if field_id in {"locked_core_fields", "versioned_core_fields"}:
-        return []
-    if field_id in {"local_only", "cloud_enabled"}:
-        return False
     return ""
 
 
@@ -175,22 +212,25 @@ def _identity_node_id(output_key: str, node_type: str) -> str:
 def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
     module_id = str(spec["module_id"])
     output_key = str(spec["output"])
-    fields = [
-        {
-            "field_id": field_id,
-            "value": _identity_field_default(str(field_id)),
-            "required": True,
-            "edit_scope": edit_scope,
-            "update_level": update_level,
-            "requires_recompile": requires_recompile,
-            "i18n_keys": {
-                "label": f"field.identity.{field_id}.label",
-                "placeholder": f"field.identity.{field_id}.placeholder",
-                "help": f"field.identity.{field_id}.help",
-            },
-        }
-        for field_id, update_level, edit_scope, requires_recompile in spec["fields"]  # type: ignore[misc]
-    ]
+    fields = []
+    for field_spec in spec["fields"]:  # type: ignore[union-attr]
+        field_id, update_level, edit_scope, requires_recompile, *rest = field_spec  # type: ignore[misc]
+        required = bool(rest[0]) if rest else True
+        fields.append(
+            {
+                "field_id": field_id,
+                "value": _identity_field_default(str(field_id)),
+                "required": required,
+                "edit_scope": edit_scope,
+                "update_level": update_level,
+                "requires_recompile": requires_recompile,
+                "i18n_keys": {
+                    "label": f"field.identity.{field_id}.label",
+                    "placeholder": f"field.identity.{field_id}.placeholder",
+                    "help": f"field.identity.{field_id}.help",
+                },
+            }
+        )
     field_input_node_id = _identity_node_id(output_key, "field_input")
     normalize_node_id = _identity_node_id(output_key, "structure_normalize")
     validation_node_id = _identity_node_id(output_key, "validation")
@@ -208,6 +248,8 @@ def _identity_core_module(spec: Dict[str, object]) -> ModuleV04:
             "edit_scope": field["edit_scope"],
             "update_level": field["update_level"],
             "requires_recompile": field["requires_recompile"],
+            "allow_empty": not bool(field.get("required")),
+            "optional_config": field.get("update_level") == "config",
         }
         for field in fields
     ]

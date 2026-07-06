@@ -115,6 +115,51 @@ def test_identity_profile_assembled_from_module_outputs():
         assert identity_profile[output_key] == module_output["outputs"][output_key]
 
 
+def test_compile_reads_user_filled_identity_field_values():
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    basic_identity = next(module for module in modules if module["module_id"] == "module_basic_identity")
+    field_input = next(node for node in basic_identity["module_graph"]["nodes"] if node["node_type"] == "field_input")
+    for field in field_input["params"]["fields"]:
+        if field["field_id"] == "name":
+            field["value"] = "Test Resident"
+        if field["field_id"] == "display_alias":
+            field["value"] = "Tester"
+        if field["field_id"] == "resident_id":
+            field["value"] = "test_resident_001"
+        if field["field_id"] == "codename":
+            field["value"] = "test_codename"
+        if field["field_id"] == "primary_language":
+            field["value"] = "cn"
+        if field["field_id"] == "export_name":
+            field["value"] = "test_export"
+        if field["field_id"] == "city":
+            field["value"] = "Test City"
+
+    fields_by_id = {field["field_id"]: field["value"] for field in field_input["params"]["fields"]}
+    module_output = next(node for node in basic_identity["module_graph"]["nodes"] if node["node_type"] == "module_output")
+    module_output["outputs"]["basic_identity"]["fields"] = fields_by_id
+    basic_identity["outputs"]["basic_identity"]["fields"] = fields_by_id
+
+    canvas = _canvas_13()
+    canvas["modules"] = modules
+    dr = compile_dr_v0_3(canvas)
+
+    identity_profile = dr["payload"]["graph_snapshot"]["layer_outputs"]["identity_profile"]
+    assert identity_profile["name"] == "Test Resident"
+    assert identity_profile["resident_id"] == "test_resident_001"
+    assert identity_profile["codename"] == "test_codename"
+    assert identity_profile["display_alias"] == "Tester"
+    assert identity_profile["primary_language"] == "cn"
+    assert identity_profile["export_name"] == "test_export"
+    assert identity_profile["basic_identity"]["fields"]["name"] == "Test Resident"
+    assert identity_profile["basic_identity"]["fields"]["city"] == "Test City"
+    assert "display_alias" not in identity_profile["locked_core_fields"]
+    assert "export_name" not in identity_profile["locked_core_fields"]
+    payload_module = next(module for module in dr["payload"]["modules"] if module["module_id"] == "module_basic_identity")
+    payload_field_input = next(node for node in payload_module["module_graph"]["nodes"] if node["node_type"] == "field_input")
+    assert {field["field_id"]: field["value"] for field in payload_field_input["params"]["fields"]}["name"] == "Test Resident"
+
+
 def test_identity_core_aggregator_outputs_exist():
     dr = compile_dr_v0_3(_canvas_13())
     aggregator = dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_1"]["identity_core_aggregator"]

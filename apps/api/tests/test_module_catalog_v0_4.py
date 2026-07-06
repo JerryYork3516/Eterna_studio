@@ -21,6 +21,75 @@ IDENTITY_CORE_MODULE_IDS = {
     "module_existence_mode": "existence_mode",
     "module_identity_anchor": "identity_anchor",
 }
+EXPECTED_IDENTITY_FIELDS = {
+    "module_basic_identity": [
+        "name",
+        "display_alias",
+        "codename",
+        "resident_id",
+        "gender",
+        "age_feel",
+        "apparent_age",
+        "birth_time",
+        "virtual_birth_time",
+        "life_stage",
+        "city",
+        "appearance_source",
+        "primary_language",
+        "export_name",
+    ],
+    "module_growth_background": [
+        "family_background",
+        "growth_environment",
+        "education_experience",
+        "life_experience",
+        "migration_experience",
+        "key_life_events",
+        "social_environment",
+        "cultural_environment",
+        "era_background",
+        "regional_background",
+        "growth_constraints",
+    ],
+    "module_career_identity": [
+        "career_name",
+        "industry_direction",
+        "work_type",
+        "professional_level",
+        "career_rank",
+        "social_role",
+        "career_experience",
+        "representative_projects",
+        "career_goal",
+        "service_audience",
+        "value_output_mode",
+        "career_boundaries",
+    ],
+    "module_existence_mode": [
+        "digital_resident_type",
+        "visible_form",
+        "invisible_form",
+        "local_existence",
+        "cloud_existence",
+        "hybrid_existence",
+        "personal_resident",
+        "enterprise_resident",
+        "public_service_resident",
+        "identity_stability",
+        "identity_change_rules",
+        "version_inheritance",
+    ],
+    "module_identity_anchor": [
+        "identity_definition",
+        "identity_keywords",
+        "representative_city",
+        "representative_domain",
+        "representative_value",
+        "representative_symbol",
+        "immutable_core_fields",
+        "versioned_update_fields",
+    ],
+}
 IDENTITY_CORE_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
 IDENTITY_CORE_COMPILE_TIME_NODE_TYPES = (*IDENTITY_CORE_NODE_TYPES, "layer_aggregator")
 
@@ -119,6 +188,7 @@ def test_identity_modules_have_field_input_nodes():
 
     for module_id, output_key in IDENTITY_CORE_MODULE_IDS.items():
         nodes = catalog_map[module_id].module_graph["nodes"]
+        assert len(nodes) == 5
         nodes_by_type = {node["node_type"]: node for node in nodes}
         assert set(nodes_by_type) == set(IDENTITY_CORE_NODE_TYPES)
         for node_type in IDENTITY_CORE_NODE_TYPES:
@@ -132,14 +202,36 @@ def test_identity_fields_live_under_field_input_params():
         module = catalog_map[module_id]
         field_input = next(node for node in module.module_graph["nodes"] if node["node_type"] == "field_input")
         fields = field_input["params"]["fields"]
-        assert fields
+        assert [field["field_id"] for field in fields] == EXPECTED_IDENTITY_FIELDS[module_id]
         assert "fields" not in module.config
         assert {field["field_id"] for field in fields} == {field["field_id"] for field in module.config["field_registry"]}
         for field in fields:
             assert "value" in field
+            assert field["value"] == ""
             assert field["i18n_keys"]["label"].startswith("field.identity.")
             assert field["i18n_keys"]["placeholder"].startswith("field.identity.")
             assert field["i18n_keys"]["help"].startswith("field.identity.")
+
+
+def test_basic_identity_display_alias_and_export_name_are_optional_config_fields():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    basic_identity = catalog_map["module_basic_identity"]
+    field_input = next(node for node in basic_identity.module_graph["nodes"] if node["node_type"] == "field_input")
+    fields = {field["field_id"]: field for field in field_input["params"]["fields"]}
+
+    assert fields["display_alias"]["required"] is False
+    assert fields["display_alias"]["edit_scope"] == "user_editable"
+    assert fields["display_alias"]["update_level"] == "config"
+    assert fields["display_alias"]["requires_recompile"] is False
+    assert fields["export_name"]["required"] is False
+    assert fields["export_name"]["edit_scope"] == "developer_only"
+    assert fields["export_name"]["update_level"] == "config"
+    assert fields["export_name"]["requires_recompile"] is True
+
+    update_rule = next(node for node in basic_identity.module_graph["nodes"] if node["node_type"] == "update_rule")
+    update_rules = {rule["field_id"]: rule for rule in update_rule["params"]["update_rules"]}
+    assert update_rules["display_alias"]["allow_empty"] is True
+    assert update_rules["display_alias"]["optional_config"] is True
 
 
 def test_identity_modules_have_no_slots():
@@ -236,13 +328,15 @@ def test_i18n_keys_present_for_layer1_identity_modules():
             node_id = _node_id(output_key, node_type)
             required.add(f"module.{module_id}.node.{node_id}.name")
             required.add(f"module.{module_id}.node.{node_id}.description")
+        for field_id in EXPECTED_IDENTITY_FIELDS[module_id]:
+            required.add(f"field.identity.{field_id}.label")
+            required.add(f"field.identity.{field_id}.placeholder")
+            required.add(f"field.identity.{field_id}.help")
     required.update(
         {
             "node.type.field_input",
             "node.field_input.description",
             "node.type.layer_aggregator",
-            "field.identity.resident_id.label",
-            "field.identity.identity_anchor.help",
             "audit.DR_IDENTITY_NODE_MISSING",
             "audit.DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING",
         }
