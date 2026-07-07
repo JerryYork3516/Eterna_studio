@@ -1,5 +1,16 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { useEffect, useState, type CSSProperties } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes
+} from "react";
 import { translate, type Language } from "@/i18n";
 import { aiSlotClass, aiSlotLabel, inferAiSlot } from "@/lib/ai-slot";
 import type { LLMProfileInput } from "@/lib/api";
@@ -12,6 +23,11 @@ type CanvasNodeData = {
   onRename?: (name: string) => void;
   onColor?: (color: string) => void;
   onInput?: (key: string, value: unknown) => void;
+  onFieldFocus?: (key: string) => void;
+};
+
+type FlowNodeLike = {
+  data?: unknown;
 };
 
 const HIDDEN_PARAM_KEYS = new Set([
@@ -95,6 +111,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+const ModuleWorkflowNodesContext = createContext<WorkflowNode[]>([]);
+
+export function WorkflowNodeCardModuleNodesProvider({ nodes, children }: { nodes: FlowNodeLike[]; children: ReactNode }) {
+  const schemaNodes = useMemo(
+    () =>
+      nodes
+        .map((node) => {
+          const data = isRecord(node.data) ? node.data : {};
+          return isRecord(data.schemaNode) ? (data.schemaNode as WorkflowNode) : null;
+        })
+        .filter((node): node is WorkflowNode => Boolean(node)),
+    [nodes]
+  );
+
+  return <ModuleWorkflowNodesContext.Provider value={schemaNodes}>{children}</ModuleWorkflowNodesContext.Provider>;
+}
+
+function useModuleWorkflowNodes() {
+  return useContext(ModuleWorkflowNodesContext);
+}
+
 function fieldsFromNodeData(data: Record<string, unknown>): Record<string, unknown>[] {
   if (Array.isArray(data.fields)) {
     return data.fields.filter(isRecord);
@@ -107,14 +144,476 @@ function paramsFromNodeData(data: Record<string, unknown>) {
   return isRecord(data.params) ? data.params : {};
 }
 
+function workflowNodeData(node: WorkflowNode): Record<string, unknown> {
+  return isRecord(node.data) ? node.data : {};
+}
+
+function workflowNodeType(node: WorkflowNode): string {
+  const data = workflowNodeData(node);
+  return String(data.node_type || node.type || "");
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function compactValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(compactValue).filter((item) => !isEmptyDisplayValue(item));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, item]) => [key, compactValue(item)] as const)
+        .filter(([, item]) => !isEmptyDisplayValue(item))
+    );
+  }
+  return value;
+}
+
+function isEmptyDisplayValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return value.trim() === "";
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+  if (isRecord(value)) {
+    return Object.keys(value).length === 0;
+  }
+  return false;
+}
+
+function moduleIdentity(data: Record<string, unknown>, node?: WorkflowNode) {
+  return {
+    instanceId: stringValue(data.module_instance_id) || stringValue(data.parent_module),
+    catalogModuleId: stringValue(data.catalog_module_id) || stringValue(node?.module_id) || stringValue(data.module_id),
+  };
+}
+
+function findSiblingModuleOutputNode(current: WorkflowNode, moduleNodes: WorkflowNode[]): WorkflowNode | null {
+  const currentData = workflowNodeData(current);
+  const currentIdentity = moduleIdentity(currentData, current);
+  return (
+    moduleNodes.find((candidate) => {
+      if (candidate.node_id === current.node_id || workflowNodeType(candidate) !== "module_output") {
+        return false;
+      }
+      const candidateData = workflowNodeData(candidate);
+      const candidateIdentity = moduleIdentity(candidateData, candidate);
+      if (currentIdentity.instanceId && candidateIdentity.instanceId && currentIdentity.instanceId !== candidateIdentity.instanceId) {
+        return false;
+      }
+      if (currentIdentity.catalogModuleId && candidateIdentity.catalogModuleId && currentIdentity.catalogModuleId !== candidateIdentity.catalogModuleId) {
+        return false;
+      }
+      return true;
+    }) ?? null
+  );
+}
+
+function moduleOutputValue(outputNode: WorkflowNode | null): { outputKey: string; output: Record<string, unknown> } {
+  if (!outputNode) {
+    return { outputKey: "", output: {} };
+  }
+  const data = workflowNodeData(outputNode);
+  const params = paramsFromNodeData(data);
+  const outputs = isRecord(data.outputs) ? data.outputs : {};
+  const outputKey = stringValue(params.output_key) || stringValue(outputs.module_output);
+  const output = outputKey && isRecord(outputs[outputKey]) ? outputs[outputKey] : {};
+  return { outputKey, output };
+}
+
+const NORMALIZATION_RESULT_KEYS = [
+  "normalized_result",
+  "normalized",
+  "normalization_result",
+  "output",
+  "outputs",
+  "policy",
+  "resident_identity",
+  "content_safety_policy",
+  "behavior_safety_policy",
+  "data_safety_policy",
+  "interaction_safety_policy",
+  "risk_policy",
+  "risk_signal_summary",
+  "risk_level_policy",
+  "risk_response_strategy",
+  "human_review_policy",
+  "hard_block_policy",
+  "audit_log_policy",
+  "safe_redirect_policy",
+];
+
+const POLICY_OUTPUT_KEYS = [
+  "content_safety_policy",
+  "behavior_safety_policy",
+  "data_safety_policy",
+  "interaction_safety_policy",
+  "risk_policy",
+];
+
+function firstRecordByKeys(sources: Record<string, unknown>[], keys: string[]): Record<string, unknown> {
+  for (const source of sources) {
+    for (const key of keys) {
+      if (isRecord(source[key])) {
+        return source[key];
+      }
+    }
+  }
+  return {};
+}
+
+function normalizedResultValue(data: Record<string, unknown>, siblingOutput: { outputKey: string; output: Record<string, unknown> }) {
+  const params = paramsFromNodeData(data);
+  const direct = firstRecordByKeys([data, params], NORMALIZATION_RESULT_KEYS);
+  if (!isEmptyDisplayValue(direct)) {
+    return displayObjectEntries(direct, new Set(["compile_time_only"]));
+  }
+  for (const key of POLICY_OUTPUT_KEYS) {
+    if (isRecord(siblingOutput.output[key])) {
+      return displayObjectEntries(siblingOutput.output[key], new Set(["compile_time_only"]));
+    }
+  }
+  if (isRecord(siblingOutput.output.fields)) {
+    return displayObjectEntries(siblingOutput.output.fields);
+  }
+  return displayObjectEntries(siblingOutput.output, new Set(["compile_time_only"]));
+}
+
+function valueByCandidateKeys(sources: Record<string, unknown>[], keys: string[]): unknown {
+  for (const source of sources) {
+    for (const key of keys) {
+      if (!isEmptyDisplayValue(source[key])) {
+        return source[key];
+      }
+    }
+  }
+  return undefined;
+}
+
+function displayObjectEntries(value: Record<string, unknown>, omittedKeys: Set<string> = new Set()) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !omittedKeys.has(key))
+      .map(([key, item]) => [key, compactValue(item)] as const)
+      .filter(([, item]) => !isEmptyDisplayValue(item))
+  );
+}
+
 function localizedFieldText(field: Record<string, unknown>, key: "label" | "placeholder" | "help", language: Language, fallback: string) {
   const i18n = isRecord(field.i18n_keys) ? field.i18n_keys : {};
   const i18nKey = typeof i18n[key] === "string" ? i18n[key] : "";
   return i18nKey ? translate(language, i18nKey, fallback) : fallback;
 }
 
+function translateIfPresent(language: Language, key: string): string {
+  const marker = `__missing_${key}__`;
+  const translated = translate(language, key, marker);
+  return translated === marker ? "" : translated;
+}
+
+function localizedCoreKey(language: Language, key: string) {
+  return (
+    translateIfPresent(language, `node.coreParams.key.${key}`) ||
+    translateIfPresent(language, `field.identity.${key}.label`) ||
+    key
+  );
+}
+
+function localizedCoreValue(language: Language, value: string) {
+  return (
+    translateIfPresent(language, `node.coreParams.value.${value}`) ||
+    translateIfPresent(language, `node.coreParams.key.${value}`) ||
+    translateIfPresent(language, `field.identity.${value}.label`) ||
+    value
+  );
+}
+
+type FieldReferenceType = "required" | "optional" | "forbidden";
+
+type FieldReferenceOption = {
+  value: string;
+  label_key?: string;
+  layer_id?: string;
+  module_id?: string;
+};
+
+type FieldReferenceEntry = {
+  reference_id?: string;
+  reference_type?: string;
+  layer_id?: string;
+  module_id?: string;
+  field_id?: string;
+  path?: string;
+  usage?: string;
+  usage_key?: string;
+  i18n_keys?: Record<string, unknown>;
+};
+
+type TextConfigChecklistOption = {
+  option_id: string;
+  default_selected?: boolean;
+  i18n_keys?: Record<string, unknown>;
+  label_key?: string;
+  description_key?: string;
+  help_key?: string;
+  tooltip_key?: string;
+  error_key?: string;
+};
+
+type TextConfigChecklist = {
+  raw: Record<string, unknown>;
+  presetId: string;
+  applyPresetLabelKey: string;
+  selectedOptions: string[];
+  defaultSelectedOptions: string[];
+  defaultOptions: TextConfigChecklistOption[];
+  optionalOptions: TextConfigChecklistOption[];
+  customText: string;
+};
+
+function asFieldReferenceEntries(value: unknown): FieldReferenceEntry[] {
+  return Array.isArray(value) ? value.filter(isRecord).map((item) => item as FieldReferenceEntry) : [];
+}
+
+function asFieldReferenceOptions(value: unknown): FieldReferenceOption[] {
+  return Array.isArray(value)
+    ? value
+        .filter(isRecord)
+        .map((item) => ({
+          value: String(item.value || ""),
+          label_key: typeof item.label_key === "string" ? item.label_key : undefined,
+          layer_id: typeof item.layer_id === "string" ? item.layer_id : undefined,
+          module_id: typeof item.module_id === "string" ? item.module_id : undefined,
+        }))
+        .filter((item) => item.value)
+    : [];
+}
+
+function referenceType(value: unknown): FieldReferenceType {
+  return value === "required" || value === "forbidden" ? value : "optional";
+}
+
+function referenceI18nLabel(reference: FieldReferenceEntry, key: "layer" | "module" | "field", language: Language) {
+  const i18n = isRecord(reference.i18n_keys) ? reference.i18n_keys : {};
+  const i18nKey = typeof i18n[key] === "string" ? i18n[key] : "";
+  const rawValue = key === "layer" ? reference.layer_id : key === "module" ? reference.module_id : reference.field_id;
+  return i18nKey ? translate(language, i18nKey, rawValue || i18nKey) : rawValue || translate(language, "common.notGenerated", "common.notGenerated");
+}
+
+function referenceOptionLabel(option: FieldReferenceOption, language: Language) {
+  return option.label_key ? translate(language, option.label_key, option.value) : option.value;
+}
+
+function referenceDisplayPath(reference: FieldReferenceEntry, language: Language) {
+  return [referenceI18nLabel(reference, "layer", language), referenceI18nLabel(reference, "module", language), referenceI18nLabel(reference, "field", language)].join(" / ");
+}
+
+function updateReferencePath(reference: FieldReferenceEntry) {
+  return {
+    ...reference,
+    path: [reference.layer_id, reference.module_id, reference.field_id].filter(Boolean).join("/"),
+  };
+}
+
+function i18nText(language: Language, key: string) {
+  return translate(language, key, key);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean) : [];
+}
+
+function asChecklistOptions(value: unknown): TextConfigChecklistOption[] {
+  return Array.isArray(value)
+    ? value
+        .filter(isRecord)
+        .map((item) => ({
+          option_id: String(item.option_id || ""),
+          default_selected: typeof item.default_selected === "boolean" ? item.default_selected : undefined,
+          i18n_keys: isRecord(item.i18n_keys) ? item.i18n_keys : undefined,
+          label_key: typeof item.label_key === "string" ? item.label_key : undefined,
+          description_key: typeof item.description_key === "string" ? item.description_key : undefined,
+          help_key: typeof item.help_key === "string" ? item.help_key : undefined,
+          tooltip_key: typeof item.tooltip_key === "string" ? item.tooltip_key : undefined,
+          error_key: typeof item.error_key === "string" ? item.error_key : undefined,
+        }))
+        .filter((item) => item.option_id)
+    : [];
+}
+
+function textConfigChecklistFromParams(params: Record<string, unknown>): TextConfigChecklist | null {
+  const raw = isRecord(params.checkbox_config)
+    ? params.checkbox_config
+    : isRecord(params.checklist_config)
+      ? params.checklist_config
+      : null;
+  if (!raw) {
+    return null;
+  }
+  const defaultOptions = asChecklistOptions(raw.default_options);
+  const optionalOptions = asChecklistOptions(raw.optional_options);
+  const fallbackOptions = defaultOptions.length || optionalOptions.length ? [] : asChecklistOptions(raw.options);
+  const effectiveDefaultOptions = defaultOptions.length ? defaultOptions : fallbackOptions.filter((option) => option.default_selected !== false);
+  const defaultSelectedOptions = stringArray(raw.default_selected_options);
+  const fallbackSelected = defaultSelectedOptions.length
+    ? defaultSelectedOptions
+    : effectiveDefaultOptions.filter((option) => option.default_selected !== false).map((option) => option.option_id);
+  return {
+    raw,
+    presetId: typeof raw.preset_id === "string" && raw.preset_id.trim() ? raw.preset_id.trim() : "human_empathy_cn_v0_1",
+    applyPresetLabelKey:
+      typeof raw.apply_preset_label_key === "string" && raw.apply_preset_label_key.trim()
+        ? raw.apply_preset_label_key.trim()
+        : "node.checklist.applyHumanEmpathyCnTemplate",
+    selectedOptions: Array.isArray(raw.selected_options) ? stringArray(raw.selected_options) : fallbackSelected,
+    defaultSelectedOptions: fallbackSelected,
+    defaultOptions: defaultOptions.length ? defaultOptions : effectiveDefaultOptions,
+    optionalOptions,
+    customText: typeof raw.custom_text === "string" ? raw.custom_text : "",
+  };
+}
+
+function checklistOptionLabel(option: TextConfigChecklistOption, language: Language) {
+  const i18n = isRecord(option.i18n_keys) ? option.i18n_keys : {};
+  const key = typeof i18n.label === "string" ? i18n.label : option.label_key || "";
+  return key ? translate(language, key, option.option_id) : option.option_id;
+}
+
+function checklistOptionText(option: TextConfigChecklistOption, language: Language, keyName: "description" | "help" | "tooltip" | "error") {
+  const i18n = isRecord(option.i18n_keys) ? option.i18n_keys : {};
+  const directKey = typeof i18n[keyName] === "string" ? i18n[keyName] : "";
+  const fallbackKey =
+    keyName === "description"
+      ? option.description_key
+      : keyName === "help"
+        ? option.help_key
+        : keyName === "tooltip"
+          ? option.tooltip_key
+          : option.error_key;
+  const key = directKey || fallbackKey || "";
+  return key ? translateIfPresent(language, key) : "";
+}
+
 function updateFieldValue(fields: Record<string, unknown>[], index: number, value: unknown) {
   return fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, value } : field));
+}
+
+function compileTimeFieldKey(field: Record<string, unknown>, index: number) {
+  return String(field.field_id || field.key || field.name || field.id || `field_${index + 1}`);
+}
+
+function stopInputEventPropagation(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
+}
+
+type NodeTextInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  value: string;
+  onValueChange: (value: string) => void;
+};
+
+function NodeTextInput({ value, onValueChange, className, onCompositionStart, onCompositionEnd, onBlur, ...props }: NodeTextInputProps) {
+  const [draft, setDraft] = useState(value);
+  const [isComposing, setIsComposing] = useState(false);
+  const composingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isComposing) {
+      setDraft(value);
+    }
+  }, [isComposing, value]);
+
+  return (
+    <input
+      {...props}
+      className={className ?? "nodrag"}
+      value={draft}
+      onPointerDown={stopInputEventPropagation}
+      onKeyDown={stopInputEventPropagation}
+      onCompositionStart={(event) => {
+        composingRef.current = true;
+        setIsComposing(true);
+        onCompositionStart?.(event);
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        setIsComposing(false);
+        setDraft(event.currentTarget.value);
+        onValueChange(event.currentTarget.value);
+        onCompositionEnd?.(event);
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (!composingRef.current) {
+          onValueChange(next);
+        }
+      }}
+      onBlur={(event) => {
+        const next = event.currentTarget.value;
+        setDraft(next);
+        onValueChange(next);
+        onBlur?.(event);
+      }}
+    />
+  );
+}
+
+type NodeTextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
+  value: string;
+  onValueChange: (value: string) => void;
+};
+
+function NodeTextarea({ value, onValueChange, className, onCompositionStart, onCompositionEnd, onBlur, ...props }: NodeTextareaProps) {
+  const [draft, setDraft] = useState(value);
+  const [isComposing, setIsComposing] = useState(false);
+  const composingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isComposing) {
+      setDraft(value);
+    }
+  }, [isComposing, value]);
+
+  return (
+    <textarea
+      {...props}
+      className={className ?? "nodrag"}
+      value={draft}
+      onPointerDown={stopInputEventPropagation}
+      onKeyDown={stopInputEventPropagation}
+      onCompositionStart={(event) => {
+        composingRef.current = true;
+        setIsComposing(true);
+        onCompositionStart?.(event);
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        setIsComposing(false);
+        setDraft(event.currentTarget.value);
+        onValueChange(event.currentTarget.value);
+        onCompositionEnd?.(event);
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (!composingRef.current) {
+          onValueChange(next);
+        }
+      }}
+      onBlur={(event) => {
+        const next = event.currentTarget.value;
+        setDraft(next);
+        onValueChange(next);
+        onBlur?.(event);
+      }}
+    />
+  );
 }
 
 // NodeInputRenderer is fully schema-driven from backend node-registry-v0.4.
@@ -122,11 +621,13 @@ function NodeInputRenderer({
   fields,
   data,
   language,
+  onFieldFocus,
   onInput
 }: {
   fields: NodeInputField[];
   data: Record<string, unknown>;
   language: Language;
+  onFieldFocus?: (key: string) => void;
   onInput: (key: string, value: unknown) => void;
 }) {
   if (!fields.length) {
@@ -140,23 +641,23 @@ function NodeInputRenderer({
         const raw = data[field.key];
         if (field.type === "textarea") {
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <textarea
+              <NodeTextarea
                 className="nodrag"
                 rows={2}
                 value={typeof raw === "string" ? raw : ""}
                 placeholder={inputPlaceholder(field, language)}
-                onChange={(event) => onInput(field.key, event.target.value)}
+                onValueChange={(value) => onInput(field.key, value)}
               />
             </label>
           );
         }
         if (field.type === "select") {
           return (
-            <label key={field.key} className="node-inputs__row">
+            <label key={field.key} className="node-inputs__row" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <select className="nodrag" value={typeof raw === "string" ? raw : ""} onChange={(event) => onInput(field.key, event.target.value)}>
+              <select className="nodrag" value={typeof raw === "string" ? raw : ""} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => onInput(field.key, event.target.value)}>
                 <option value="">{translate(language, "node.option.none", "None")}</option>
                 {(field.options ?? []).map((option) => (
                   <option key={option.value} value={option.value}>
@@ -170,12 +671,14 @@ function NodeInputRenderer({
         if (field.type === "multi_select") {
           const selected = Array.isArray(raw) ? raw.map(String) : [];
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
               <select
                 className="nodrag"
                 multiple
                 value={selected}
+                onPointerDown={stopInputEventPropagation}
+                onKeyDown={stopInputEventPropagation}
                 onChange={(event) =>
                   onInput(
                     field.key,
@@ -195,7 +698,7 @@ function NodeInputRenderer({
         if (field.type === "slider") {
           const numeric = typeof raw === "number" ? raw : Number(raw) || field.min || 0;
           return (
-            <label key={field.key} className="node-inputs__row">
+            <label key={field.key} className="node-inputs__row" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
               <span className="node-inputs__slider">
                 <input
@@ -205,6 +708,8 @@ function NodeInputRenderer({
                   max={field.max ?? undefined}
                   step={field.step ?? undefined}
                   value={numeric}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
                   onChange={(event) => onInput(field.key, Number(event.target.value))}
                 />
                 <em>{numeric}</em>
@@ -214,30 +719,30 @@ function NodeInputRenderer({
         }
         if (field.type === "boolean") {
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--toggle">
+            <label key={field.key} className="node-inputs__row node-inputs__row--toggle" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <input className="nodrag" type="checkbox" checked={Boolean(raw)} onChange={(event) => onInput(field.key, event.target.checked)} />
+              <input className="nodrag" type="checkbox" checked={Boolean(raw)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => onInput(field.key, event.target.checked)} />
             </label>
           );
         }
         if (field.type === "color") {
           return (
-            <label key={field.key} className="node-inputs__row">
+            <label key={field.key} className="node-inputs__row" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <input className="nodrag" type="color" value={typeof raw === "string" ? raw : "#4f8cff"} onChange={(event) => onInput(field.key, event.target.value)} />
+              <input className="nodrag" type="color" value={typeof raw === "string" ? raw : "#4f8cff"} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => onInput(field.key, event.target.value)} />
             </label>
           );
         }
         if (field.type === "json") {
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <textarea
+              <NodeTextarea
                 className="nodrag"
                 rows={3}
                 value={typeof raw === "string" ? raw : raw === undefined || raw === null ? "" : JSON.stringify(raw, null, 2)}
                 placeholder={inputPlaceholder(field, language, "{}")}
-                onChange={(event) => onInput(field.key, parseJsonInput(event.target.value))}
+                onValueChange={(value) => onInput(field.key, parseJsonInput(value))}
               />
             </label>
           );
@@ -245,17 +750,17 @@ function NodeInputRenderer({
         if (field.type === "tags") {
           const text = Array.isArray(raw) ? raw.join(", ") : typeof raw === "string" ? raw : "";
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <input
+              <NodeTextInput
                 className="nodrag"
                 type="text"
                 value={text}
                 placeholder={inputPlaceholder(field, language, translate(language, "node.placeholder.tags", "tag, tag"))}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   onInput(
                     field.key,
-                    event.target.value
+                    value
                       .split(",")
                       .map((item) => item.trim())
                       .filter(Boolean)
@@ -268,27 +773,29 @@ function NodeInputRenderer({
         if (field.type === "key_value") {
           const text = raw && typeof raw === "object" && !Array.isArray(raw) ? JSON.stringify(raw, null, 2) : "";
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
-              <textarea
+              <NodeTextarea
                 className="nodrag"
                 rows={3}
                 value={text}
                 placeholder={inputPlaceholder(field, language, translate(language, "node.placeholder.keyValue", "{\"key\":\"value\"}"))}
-                onChange={(event) => onInput(field.key, parseJsonInput(event.target.value))}
+                onValueChange={(value) => onInput(field.key, parseJsonInput(value))}
               />
             </label>
           );
         }
         if (field.type === "file") {
           return (
-            <label key={field.key} className="node-inputs__row node-inputs__row--block">
+            <label key={field.key} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(field.key)}>
               <span>{label}</span>
               <input
                 className="nodrag"
                 type="file"
                 accept={field.accept?.join(",")}
                 multiple={field.multiple}
+                onPointerDown={stopInputEventPropagation}
+                onKeyDown={stopInputEventPropagation}
                 onChange={(event) =>
                   onInput(
                     field.key,
@@ -301,9 +808,9 @@ function NodeInputRenderer({
         }
         // text / number
         return (
-          <label key={field.key} className="node-inputs__row">
+          <label key={field.key} className="node-inputs__row" onFocusCapture={() => onFieldFocus?.(field.key)}>
             <span>{label}</span>
-            <input
+            <NodeTextInput
               className="nodrag"
               type={field.type === "number" ? "number" : "text"}
               min={field.min ?? undefined}
@@ -311,7 +818,7 @@ function NodeInputRenderer({
               step={field.step ?? undefined}
               value={raw === null || raw === undefined ? "" : String(raw)}
               placeholder={inputPlaceholder(field, language)}
-              onChange={(event) => onInput(field.key, field.type === "number" ? Number(event.target.value) : event.target.value)}
+              onValueChange={(value) => onInput(field.key, field.type === "number" ? Number(value) : value)}
             />
           </label>
         );
@@ -324,11 +831,13 @@ function CompileTimeFieldInputRenderer({
   fields,
   params,
   language,
+  onFieldFocus,
   onInput
 }: {
   fields: Record<string, unknown>[];
   params: Record<string, unknown>;
   language: Language;
+  onFieldFocus?: (key: string) => void;
   onInput?: (key: string, value: unknown) => void;
 }) {
   if (!fields.length) {
@@ -349,12 +858,14 @@ function CompileTimeFieldInputRenderer({
         const value = field.value;
         if (typeof value === "boolean") {
           return (
-            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--toggle">
+            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--toggle" onFocusCapture={() => onFieldFocus?.(compileTimeFieldKey(field, index))}>
               <span>{label}</span>
               <input
                 className="nodrag"
                 type="checkbox"
                 checked={value}
+                onPointerDown={stopInputEventPropagation}
+                onKeyDown={stopInputEventPropagation}
                 onChange={(event) => commitFields(updateFieldValue(fields, index, event.target.checked))}
               />
               {help ? <em>{help}</em> : null}
@@ -363,28 +874,28 @@ function CompileTimeFieldInputRenderer({
         }
         if (Array.isArray(value) || isRecord(value)) {
           return (
-            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block">
+            <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(compileTimeFieldKey(field, index))}>
               <span>{label}</span>
-              <textarea
+              <NodeTextarea
                 className="nodrag"
                 rows={2}
                 value={prettyValue(value)}
                 placeholder={placeholder || "[]"}
-                onChange={(event) => commitFields(updateFieldValue(fields, index, parseJsonInput(event.target.value)))}
+                onValueChange={(next) => commitFields(updateFieldValue(fields, index, parseJsonInput(next)))}
               />
               {help ? <em>{help}</em> : null}
             </label>
           );
         }
         return (
-          <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block">
+          <label key={`${label}-${index}`} className="node-inputs__row node-inputs__row--block" onFocusCapture={() => onFieldFocus?.(compileTimeFieldKey(field, index))}>
             <span>{label}</span>
-            <input
+            <NodeTextInput
               className="nodrag"
               type="text"
               value={value === null || value === undefined ? "" : String(value)}
               placeholder={placeholder}
-              onChange={(event) => commitFields(updateFieldValue(fields, index, event.target.value))}
+              onValueChange={(next) => commitFields(updateFieldValue(fields, index, next))}
             />
             {help ? <em>{help}</em> : null}
           </label>
@@ -392,6 +903,680 @@ function CompileTimeFieldInputRenderer({
       })}
     </div>
   );
+}
+
+function FieldReferenceRenderer({
+  data,
+  language,
+  onInput
+}: {
+  data: Record<string, unknown>;
+  language: Language;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const params = paramsFromNodeData(data);
+  const outputs = isRecord(data.outputs) ? data.outputs : {};
+  const references = asFieldReferenceEntries(params.references);
+  const recommended = asFieldReferenceEntries(params.recommended_references);
+  const options = isRecord(params.reference_options) ? params.reference_options : {};
+  const layerOptions = asFieldReferenceOptions(options.layers);
+  const moduleOptions = asFieldReferenceOptions(options.modules);
+  const fieldOptions = asFieldReferenceOptions(options.fields);
+  const activeByType = {
+    required: references.filter((reference) => referenceType(reference.reference_type) === "required"),
+    optional: references.filter((reference) => referenceType(reference.reference_type) === "optional"),
+    forbidden: references.filter((reference) => referenceType(reference.reference_type) === "forbidden"),
+  };
+  const recommendedByType = {
+    required: recommended.filter((reference) => referenceType(reference.reference_type) === "required"),
+    optional: recommended.filter((reference) => referenceType(reference.reference_type) === "optional"),
+    forbidden: recommended.filter((reference) => referenceType(reference.reference_type) === "forbidden"),
+  };
+
+  const commitReferences = (nextReferences: FieldReferenceEntry[]) => {
+    const nextParams = { ...params, references: nextReferences };
+    onInput?.("params", nextParams);
+    onInput?.("references", nextReferences);
+    onInput?.("outputs", { ...outputs, field_references: nextReferences });
+  };
+  const useRecommendedReferences = () => {
+    commitReferences(recommended.filter((reference) => referenceType(reference.reference_type) !== "forbidden").map(updateReferencePath));
+  };
+  const addReference = () => {
+    const layerId = layerOptions[0]?.value || "";
+    const moduleId = moduleOptions.find((option) => option.layer_id === layerId)?.value || "";
+    const fieldId = fieldOptions.find((option) => option.module_id === moduleId)?.value || "";
+    commitReferences([
+      ...references,
+      updateReferencePath({
+        reference_id: `custom_${Date.now()}`,
+        reference_type: "optional",
+        layer_id: layerId,
+        module_id: moduleId,
+        field_id: fieldId,
+        usage: "",
+        i18n_keys: {},
+      }),
+    ]);
+  };
+  const patchReference = (target: FieldReferenceEntry, patch: Partial<FieldReferenceEntry>) => {
+    const targetId = target.reference_id || target.path || `${target.layer_id}/${target.module_id}/${target.field_id}`;
+    commitReferences(
+      references.map((reference) => {
+        const referenceId = reference.reference_id || reference.path || `${reference.layer_id}/${reference.module_id}/${reference.field_id}`;
+        return referenceId === targetId ? updateReferencePath({ ...reference, ...patch }) : reference;
+      })
+    );
+  };
+  const removeReference = (target: FieldReferenceEntry) => {
+    const targetId = target.reference_id || target.path || `${target.layer_id}/${target.module_id}/${target.field_id}`;
+    commitReferences(references.filter((reference) => (reference.reference_id || reference.path || `${reference.layer_id}/${reference.module_id}/${reference.field_id}`) !== targetId));
+  };
+  const renderReferenceCard = (reference: FieldReferenceEntry, editable: boolean) => {
+    const selectedLayer = reference.layer_id || "";
+    const moduleChoices = moduleOptions.filter((option) => !selectedLayer || option.layer_id === selectedLayer);
+    const selectedModule = reference.module_id || "";
+    const fieldChoices = fieldOptions.filter((option) => !selectedModule || option.module_id === selectedModule);
+    const usageKey = typeof reference.usage_key === "string" ? reference.usage_key : "";
+    const usagePlaceholder = usageKey ? translate(language, usageKey, usageKey) : "";
+    if (!editable) {
+      return (
+        <article key={reference.reference_id || reference.path || referenceDisplayPath(reference, language)} className="field-reference__card">
+          <strong>{referenceDisplayPath(reference, language)}</strong>
+          <span>{usagePlaceholder || i18nText(language, "common.notGenerated")}</span>
+        </article>
+      );
+    }
+    return (
+      <article key={reference.reference_id || reference.path || referenceDisplayPath(reference, language)} className="field-reference__card is-editable">
+        <label>
+          <span>{i18nText(language, "node.fieldReference.referenceType")}</span>
+          <select
+            className="nodrag"
+            value={referenceType(reference.reference_type)}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => patchReference(reference, { reference_type: event.target.value })}
+          >
+            {(["required", "optional", "forbidden"] as FieldReferenceType[]).map((type) => (
+              <option key={type} value={type}>
+                {i18nText(language, `node.fieldReference.type.${type}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{i18nText(language, "node.fieldReference.sourceLayer")}</span>
+          <select
+            className="nodrag"
+            value={selectedLayer}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => {
+              const nextLayer = event.target.value;
+              const nextModule = moduleOptions.find((option) => option.layer_id === nextLayer)?.value || "";
+              const nextField = fieldOptions.find((option) => option.module_id === nextModule)?.value || "";
+              patchReference(reference, { layer_id: nextLayer, module_id: nextModule, field_id: nextField });
+            }}
+          >
+            <option value="">{i18nText(language, "common.notGenerated")}</option>
+            {layerOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {referenceOptionLabel(option, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{i18nText(language, "node.fieldReference.sourceModule")}</span>
+          <select
+            className="nodrag"
+            value={selectedModule}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => {
+              const nextModule = event.target.value;
+              const nextField = fieldOptions.find((option) => option.module_id === nextModule)?.value || "";
+              patchReference(reference, { module_id: nextModule, field_id: nextField });
+            }}
+          >
+            <option value="">{i18nText(language, "common.notGenerated")}</option>
+            {moduleChoices.map((option) => (
+              <option key={option.value} value={option.value}>
+                {referenceOptionLabel(option, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{i18nText(language, "node.fieldReference.sourceField")}</span>
+          <select
+            className="nodrag"
+            value={reference.field_id || ""}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => patchReference(reference, { field_id: event.target.value })}
+          >
+            <option value="">{i18nText(language, "common.notGenerated")}</option>
+            {fieldChoices.map((option) => (
+              <option key={option.value} value={option.value}>
+                {referenceOptionLabel(option, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field-reference__usage">
+          <span>{i18nText(language, "node.fieldReference.usage")}</span>
+          <NodeTextarea
+            className="nodrag"
+            rows={2}
+            value={typeof reference.usage === "string" ? reference.usage : ""}
+            placeholder={usagePlaceholder}
+            onValueChange={(value) => patchReference(reference, { usage: value })}
+          />
+        </label>
+        <button className="field-reference__remove nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => removeReference(reference)}>
+          {i18nText(language, "node.fieldReference.removeReference")}
+        </button>
+      </article>
+    );
+  };
+  const renderReferenceSection = (type: FieldReferenceType) => {
+    const active = activeByType[type];
+    const fallback = recommendedByType[type];
+    const items = active.length ? active : fallback;
+    const editable = active.length > 0 && type !== "forbidden";
+    return (
+      <section className={`field-reference__section is-${type}`}>
+        <h5>{i18nText(language, `node.fieldReference.${type}List`)}</h5>
+        {items.length ? (
+          <div className="field-reference__cards">{items.map((reference) => renderReferenceCard(reference, editable))}</div>
+        ) : (
+          <div className="node-inputs__empty">{i18nText(language, "common.empty")}</div>
+        )}
+      </section>
+    );
+  };
+
+  return (
+    <div className="field-reference">
+      <div className="field-reference__actions">
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={useRecommendedReferences} disabled={!onInput || recommended.length === 0}>
+          {i18nText(language, "node.fieldReference.useRecommended")}
+        </button>
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={addReference} disabled={!onInput}>
+          {i18nText(language, "node.fieldReference.addReference")}
+        </button>
+      </div>
+      <div className="field-reference__path-format">
+        <span>{i18nText(language, "node.fieldReference.pathFormat")}</span>
+        <strong>{String(params.path_format || "Layer / Module / Field")}</strong>
+      </div>
+      {renderReferenceSection("required")}
+      {renderReferenceSection("optional")}
+      {renderReferenceSection("forbidden")}
+    </div>
+  );
+}
+
+function ChecklistTextConfigRenderer({
+  fields,
+  params,
+  language,
+  onFieldFocus,
+  onInput,
+}: {
+  fields: Record<string, unknown>[];
+  params: Record<string, unknown>;
+  language: Language;
+  onFieldFocus?: (key: string) => void;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const config = textConfigChecklistFromParams(params);
+  if (!config) {
+    return <CompileTimeFieldInputRenderer fields={fields} params={params} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />;
+  }
+
+  const selected = new Set(config.selectedOptions);
+  const commitConfig = (nextConfig: Record<string, unknown>) => {
+    onInput?.("params", { ...params, checkbox_config: nextConfig });
+  };
+  const commitSelectedOptions = (nextSelectedOptions: string[]) => {
+    commitConfig({ ...config.raw, preset_id: config.presetId, selected_options: nextSelectedOptions, custom_text: config.customText });
+  };
+  const toggleOption = (optionId: string, checked: boolean) => {
+    const nextSelected = new Set(config.selectedOptions);
+    if (checked) {
+      nextSelected.add(optionId);
+    } else {
+      nextSelected.delete(optionId);
+    }
+    commitSelectedOptions([...nextSelected]);
+  };
+  const applyTemplate = () => {
+    commitConfig({
+      ...config.raw,
+      preset_id: config.presetId,
+      selected_options: config.defaultSelectedOptions,
+      custom_text: "",
+    });
+  };
+  const restoreDefaults = () => {
+    commitSelectedOptions(config.defaultSelectedOptions);
+  };
+  const commitCustomText = (customText: string) => {
+    commitConfig({ ...config.raw, preset_id: config.presetId, selected_options: config.selectedOptions, custom_text: customText });
+  };
+  const renderOptionGroup = (titleKey: string, options: TextConfigChecklistOption[]) => {
+    if (!options.length) {
+      return null;
+    }
+    return (
+      <section className="text-config-checklist__group">
+        <h5>{i18nText(language, titleKey)}</h5>
+        <div className="text-config-checklist__options">
+          {options.map((option) => {
+            const description = checklistOptionText(option, language, "description");
+            const help = checklistOptionText(option, language, "help");
+            const tooltip = checklistOptionText(option, language, "tooltip");
+            const error = checklistOptionText(option, language, "error");
+            return (
+              <label key={option.option_id} className="text-config-checklist__option" title={tooltip || undefined}>
+                <input
+                  className="nodrag"
+                  type="checkbox"
+                  checked={selected.has(option.option_id)}
+                  disabled={!onInput}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) => toggleOption(option.option_id, event.target.checked)}
+                />
+                <span>
+                  <span>{checklistOptionLabel(option, language)}</span>
+                  {description ? <small>{description}</small> : null}
+                  {help ? <small>{help}</small> : null}
+                  {error ? <small className="text-config-checklist__option-error">{error}</small> : null}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div className="text-config-checklist">
+      <div className="text-config-checklist__actions">
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={applyTemplate} disabled={!onInput}>
+          {i18nText(language, config.applyPresetLabelKey)}
+        </button>
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={restoreDefaults} disabled={!onInput}>
+          {i18nText(language, "node.checklist.restoreDefaults")}
+        </button>
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => setAdvancedOpen((open) => !open)}>
+          {i18nText(language, advancedOpen ? "node.checklist.collapseAdvancedFields" : "node.checklist.expandAdvancedFields")}
+        </button>
+      </div>
+      <div className="text-config-checklist__preset">
+        <span>{i18nText(language, "node.checklist.preset")}</span>
+        <strong>{config.presetId}</strong>
+      </div>
+      {renderOptionGroup("node.checklist.defaultOptions", config.defaultOptions)}
+      {renderOptionGroup("node.checklist.optionalOptions", config.optionalOptions)}
+      {advancedOpen ? (
+        <section className="text-config-checklist__advanced">
+          <label className="text-config-checklist__custom">
+            <span>{i18nText(language, "node.checklist.customText")}</span>
+            <NodeTextarea
+              className="nodrag"
+              rows={3}
+              value={config.customText}
+              placeholder={i18nText(language, "node.checklist.customText.placeholder")}
+              onFocus={() => onFieldFocus?.("custom_text")}
+              onValueChange={commitCustomText}
+            />
+          </label>
+          {fields.length ? (
+            <div className="text-config-checklist__legacy-fields">
+              <h5>{i18nText(language, "node.checklist.advancedFields")}</h5>
+              <CompileTimeFieldInputRenderer fields={fields} params={params} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function CoreParamValue({ value, language, depth = 0 }: { value: unknown; language: Language; depth?: number }) {
+  if (isEmptyDisplayValue(value)) {
+    return <span className="core-params__empty">{translate(language, Array.isArray(value) ? "common.empty" : "common.notGenerated", Array.isArray(value) ? "Empty" : "Not generated")}</span>;
+  }
+  if (typeof value === "boolean") {
+    return <span>{translate(language, value ? "common.yes" : "common.no", value ? "Yes" : "No")}</span>;
+  }
+  if (typeof value === "number") {
+    return <span>{String(value)}</span>;
+  }
+  if (typeof value === "string") {
+    return <span>{localizedCoreValue(language, value)}</span>;
+  }
+  if (Array.isArray(value)) {
+    return (
+      <ul className="core-params__list">
+        {value.length ? (
+          value.map((item, index) => (
+            <li key={`${index}-${String(typeof item === "object" ? index : item)}`}>
+              <CoreParamValue value={item} language={language} depth={depth + 1} />
+            </li>
+          ))
+        ) : (
+          <li>
+            <CoreParamValue value={[]} language={language} depth={depth + 1} />
+          </li>
+        )}
+      </ul>
+    );
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value).filter(([, item]) => !isEmptyDisplayValue(item));
+    if (!entries.length) {
+      return <CoreParamValue value={null} language={language} />;
+    }
+    if (depth >= 2) {
+      return (
+        <details className="core-params__nested">
+          <summary>{translate(language, "node.coreParams.expand", "Expand")}</summary>
+          <CoreParamValue value={value} language={language} depth={0} />
+        </details>
+      );
+    }
+    return (
+      <dl className="core-params__object">
+        {entries.map(([key, item]) => (
+          <div key={key} className="core-params__object-row">
+            <dt>{localizedCoreKey(language, key)}</dt>
+            <dd>
+              <CoreParamValue value={item} language={language} depth={depth + 1} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+  return <span>{String(value)}</span>;
+}
+
+function CoreParamSection({
+  titleKey,
+  titleFallback,
+  value,
+  language,
+  tone = "default"
+}: {
+  titleKey: string;
+  titleFallback: string;
+  value: unknown;
+  language: Language;
+  tone?: "default" | "warning";
+}) {
+  return (
+    <section className={`core-params__section is-${tone}`}>
+      <h5>{translate(language, titleKey, titleFallback)}</h5>
+      <CoreParamValue value={value} language={language} />
+    </section>
+  );
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean))];
+}
+
+function pickOutputValues(output: Record<string, unknown>, keys: string[]) {
+  const picked = Object.fromEntries(keys.filter((key) => key in output).map((key) => [key, output[key]]));
+  return displayObjectEntries(picked);
+}
+
+function validationFailureReasons(validation: unknown): unknown[] {
+  const data = isRecord(validation) ? validation : {};
+  const direct = Array.isArray(data.failure_reasons) ? data.failure_reasons : Array.isArray(data.errors) ? data.errors : [];
+  const findings = Array.isArray(data.findings) ? data.findings : [];
+  const reasonItems = direct.length ? direct : findings;
+  return reasonItems
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (isRecord(item)) {
+        return item.message || item.reason || item.code || item.status || "";
+      }
+      return "";
+    })
+    .filter((item) => typeof item === "string" && item.trim());
+}
+
+function validationPassed(params: Record<string, unknown>, output: Record<string, unknown>, validation: unknown): boolean {
+  const validationData = isRecord(validation) ? validation : {};
+  const explicitStatus = stringValue(validationData.status).toLowerCase();
+  if (["fail", "failed", "invalid", "error"].includes(explicitStatus)) {
+    return false;
+  }
+  if (["pass", "passed", "valid", "ok", "success"].includes(explicitStatus)) {
+    return true;
+  }
+  const compileStatus = stringValue(output.compile_validation_status).toLowerCase();
+  if (compileStatus === "invalid") {
+    return false;
+  }
+  if (compileStatus === "valid") {
+    return true;
+  }
+  const required = Array.isArray(params.required_fields) ? params.required_fields : [];
+  const rules = Array.isArray(params.validation_rules) ? params.validation_rules : [];
+  return required.length > 0 || rules.length > 0;
+}
+
+function updateRuleDisplayName(rule: Record<string, unknown>): string {
+  return stringValue(rule.field_id) || stringValue(rule.rule_id) || stringValue(rule.name) || stringValue(rule.id);
+}
+
+function updateRuleUserEditable(rule: Record<string, unknown>): boolean {
+  const editScope = stringValue(rule.edit_scope);
+  return editScope === "user_editable" || editScope === "runtime_editable" || editScope === "plugin_editable";
+}
+
+function UpdateRuleCards({ rules, language }: { rules: Record<string, unknown>[]; language: Language }) {
+  if (!rules.length) {
+    return <CoreParamValue value={[]} language={language} />;
+  }
+  return (
+    <div className="core-params__rule-list">
+      {rules.map((rule, index) => {
+        const name = updateRuleDisplayName(rule) || `${translate(language, "common.field", "Field")} ${index + 1}`;
+        const displayName = localizedCoreValue(language, name);
+        return (
+          <article key={`${name}-${index}`} className="core-params__rule-card">
+            <h6>{displayName}</h6>
+            <dl>
+              <div>
+                <dt>{translate(language, "common.field", "Field")}</dt>
+                <dd>
+                  <CoreParamValue value={name} language={language} />
+                </dd>
+              </div>
+              <div>
+                <dt>{translate(language, "node.updateRules.updateLevel", "Update level")}</dt>
+                <dd>
+                  <CoreParamValue value={rule.update_level} language={language} />
+                </dd>
+              </div>
+              <div>
+                <dt>{translate(language, "node.updateRules.editScope", "Edit scope")}</dt>
+                <dd>
+                  <CoreParamValue value={rule.edit_scope} language={language} />
+                </dd>
+              </div>
+              <div>
+                <dt>{translate(language, "node.updateRules.requiresRecompile", "Requires recompile")}</dt>
+                <dd>
+                  <CoreParamValue value={rule.requires_recompile} language={language} />
+                </dd>
+              </div>
+              <div>
+                <dt>{translate(language, "node.updateRules.userEditable", "User editable")}</dt>
+                <dd>
+                  <CoreParamValue value={updateRuleUserEditable(rule)} language={language} />
+                </dd>
+              </div>
+            </dl>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function CoreParamsPanel({
+  type,
+  data,
+  language,
+  siblingOutput,
+  validation
+}: {
+  type: string;
+  data: Record<string, unknown>;
+  language: Language;
+  siblingOutput: { outputKey: string; output: Record<string, unknown> };
+  validation: unknown;
+}) {
+  const params = paramsFromNodeData(data);
+  if (type === "layer_aggregator") {
+    const inputPolicies = valueByCandidateKeys([data, params], ["input_policy_keys", "inputs"]);
+    const signalSummary = firstRecordByKeys([data, params, siblingOutput.output], ["risk_signal_summary"]);
+    const derivedOutputs = valueByCandidateKeys([data, params], ["outputs"]);
+    return (
+      <div className="core-params-panel">
+        <CoreParamSection titleKey="node.riskResponse.inputPolicies" titleFallback="Input policies" value={inputPolicies} language={language} />
+        <CoreParamSection titleKey="node.riskResponse.signalSummary" titleFallback="Risk signal summary" value={signalSummary} language={language} />
+        <CoreParamSection titleKey="node.riskResponse.derivedOutputs" titleFallback="Derived outputs" value={derivedOutputs} language={language} />
+      </div>
+    );
+  }
+  if (type === "structure_normalize") {
+    const rules = Array.isArray(valueByCandidateKeys([data, params], ["normalize_rules", "rules"])) ? (valueByCandidateKeys([data, params], ["normalize_rules", "rules"]) as unknown[]) : [];
+    const normalizedOutput = normalizedResultValue(data, siblingOutput);
+    const outputKeys = Array.isArray(params.outputs)
+      ? uniqueStrings(params.outputs)
+      : uniqueStrings(Object.keys(normalizedOutput));
+    const expandedOutputKeys = uniqueStrings([...outputKeys, "decision_modes", "default_mode", "identity_context_ref"]);
+    const normalizedFields = expandedOutputKeys.length ? pickOutputValues(normalizedOutput, expandedOutputKeys) : normalizedOutput;
+    return (
+      <div className="core-params-panel">
+        <CoreParamSection titleKey="node.normalization.outputKey" titleFallback="Output key" value={siblingOutput.outputKey} language={language} />
+        <CoreParamSection titleKey="node.normalization.defaultMode" titleFallback="Default mode" value={normalizedOutput.default_mode} language={language} />
+        <CoreParamSection titleKey="node.normalization.decisionModes" titleFallback="Decision modes" value={normalizedOutput.decision_modes} language={language} />
+        <CoreParamSection titleKey="node.normalization.resultTitle" titleFallback="Normalization result" value={normalizedFields} language={language} />
+        <CoreParamSection titleKey="node.normalization.fields" titleFallback="Normalized fields" value={outputKeys} language={language} />
+        <CoreParamSection titleKey="node.normalization.rules" titleFallback="Normalization rules" value={rules} language={language} />
+      </div>
+    );
+  }
+  if (type === "validation") {
+    const validationData = isRecord(valueByCandidateKeys([data, params], ["validation_result", "validation", "result"]))
+      ? (valueByCandidateKeys([data, params], ["validation_result", "validation", "result"]) as Record<string, unknown>)
+      : {};
+    const riskLevelPolicy = firstRecordByKeys([data, params, siblingOutput.output], ["risk_level_policy"]);
+    const requiredValue = valueByCandidateKeys([validationData, data, params], ["required_fields", "scope", "validation_scope"]);
+    const rulesValue = valueByCandidateKeys([validationData, data, params], ["validation_rules", "rules"]);
+    const required = Array.isArray(requiredValue) ? requiredValue : [];
+    const rules = Array.isArray(rulesValue) ? rulesValue : [];
+    const readonlyRefs = isRecord(params.readonly_refs) ? params.readonly_refs : {};
+    const passed = validationPassed(params, siblingOutput.output, validationData);
+    const reasons = validationFailureReasons(validationData);
+    return (
+      <div className="core-params-panel">
+        {!isEmptyDisplayValue(riskLevelPolicy) ? (
+          <CoreParamSection titleKey="node.riskResponse.levelPolicy" titleFallback="Risk level policy" value={riskLevelPolicy} language={language} />
+        ) : null}
+        <CoreParamSection
+          titleKey="node.validation.resultTitle"
+          titleFallback="Validation result"
+          value={translate(language, passed ? "node.validation.pass" : "node.validation.fail", passed ? "Pass" : "Fail")}
+          language={language}
+        />
+        <CoreParamSection
+          titleKey="node.validation.scopeTitle"
+          titleFallback="Validation scope"
+          value={displayObjectEntries({ required_fields: required, readonly_refs: readonlyRefs, input: params.input })}
+          language={language}
+        />
+        <CoreParamSection titleKey="node.validation.rulesTitle" titleFallback="Validation rules" value={rules} language={language} />
+        <CoreParamSection
+          titleKey="node.validation.failureReasons"
+          titleFallback="Failure reasons"
+          value={reasons.length ? reasons : translate(language, "node.validation.none", "None")}
+          language={language}
+          tone={!passed && reasons.length ? "warning" : "default"}
+        />
+      </div>
+    );
+  }
+  if (type === "update_rule") {
+    const updatePolicy = isRecord(valueByCandidateKeys([data, params], ["update_policy"])) ? (valueByCandidateKeys([data, params], ["update_policy"]) as Record<string, unknown>) : {};
+    const derivedPolicy = firstRecordByKeys(
+      [data, params, siblingOutput.output],
+      ["risk_response_strategy", "human_review_policy", "hard_block_policy", "audit_log_policy", "safe_redirect_policy"]
+    );
+    const rulesValue = valueByCandidateKeys([data, params], ["update_rules", "rules"]);
+    const updateRules = (Array.isArray(rulesValue) ? rulesValue : []).filter(isRecord);
+    const updatableFields = uniqueStrings(
+      [
+        ...(Array.isArray(valueByCandidateKeys([data, params], ["updatable_fields"])) ? (valueByCandidateKeys([data, params], ["updatable_fields"]) as unknown[]) : []),
+        ...updateRules.filter((rule) => rule.locked !== true && rule.update_level !== "locked_core").map(updateRuleDisplayName),
+      ]
+    );
+    const lockedFields = uniqueStrings(
+      [
+        ...(Array.isArray(valueByCandidateKeys([data, params], ["locked_fields"])) ? (valueByCandidateKeys([data, params], ["locked_fields"]) as unknown[]) : []),
+        ...updateRules.filter((rule) => rule.locked === true || rule.update_level === "locked_core").map(updateRuleDisplayName),
+      ]
+    );
+    const coreLockedFields = uniqueStrings(updateRules.filter((rule) => rule.update_level === "locked_core").map(updateRuleDisplayName));
+    const requiresRevalidation =
+      Boolean(valueByCandidateKeys([updatePolicy, data, params], ["requires_revalidation", "requires_revalidation_after_update"])) ||
+      updateRules.some((rule) => Boolean(rule.requires_recompile) || String(rule.rule_id || "").includes("revalidation"));
+    const requiresReason =
+      Boolean(updatePolicy.requires_update_reason) ||
+      Boolean(updatePolicy.requires_update_reason_time_impact_scope) ||
+      updateRules.some((rule) => String(rule.rule_id || "").includes("reason"));
+    return (
+      <div className="core-params-panel">
+        {updateRules.length ? (
+          <section className="core-params__section">
+            <h5>{translate(language, "node.updateRules.title", "Update rules")}</h5>
+            <UpdateRuleCards rules={updateRules} language={language} />
+          </section>
+        ) : (
+          <CoreParamSection titleKey="node.riskResponse.derivedPolicy" titleFallback="Derived policy" value={derivedPolicy} language={language} />
+        )}
+        <CoreParamSection titleKey="node.updateRules.updatableFields" titleFallback="Updatable fields" value={updatableFields} language={language} />
+        <CoreParamSection titleKey="node.updateRules.lockedFields" titleFallback="Locked fields" value={lockedFields} language={language} />
+        <CoreParamSection titleKey="node.updateRules.coreLockedFields" titleFallback="Core locked fields" value={coreLockedFields} language={language} />
+        <CoreParamSection titleKey="node.updateRules.constraints" titleFallback="Constraints" value={updatePolicy} language={language} />
+        <CoreParamSection
+          titleKey="node.updateRules.requiresRecompile"
+          titleFallback="Requires recompile"
+          value={updateRules.some((rule) => Boolean(rule.requires_recompile))}
+          language={language}
+        />
+        <CoreParamSection titleKey="node.updateRules.requiresRevalidation" titleFallback="Requires revalidation" value={requiresRevalidation} language={language} />
+        <CoreParamSection titleKey="node.updateRules.requiresAuditReason" titleFallback="Requires audit reason" value={requiresReason} language={language} />
+      </div>
+    );
+  }
+  return <div className="node-inputs__empty">{translate(language, "node.inputs.empty", "No schema inputs")}</div>;
 }
 
 function CompileTimeNodeSummary({
@@ -405,29 +1590,12 @@ function CompileTimeNodeSummary({
 }) {
   const params = paramsFromNodeData(data);
   const outputs = isRecord(data.outputs) ? data.outputs : {};
-  if (type === "structure_normalize") {
-    const rules = Array.isArray(params.normalize_rules) ? params.normalize_rules : [];
-    return <p className="node-inputs__empty">{translate(language, "node.compileTime.summary.normalize", "Normalize rules: {count}").replace("{count}", String(rules.length))}</p>;
-  }
-  if (type === "validation") {
-    const required = Array.isArray(params.required_fields) ? params.required_fields : [];
-    const rules = Array.isArray(params.validation_rules) ? params.validation_rules : [];
-    return (
-      <p className="node-inputs__empty">
-        {translate(language, "node.compileTime.summary.validation", "Required fields: {required}; validation rules: {rules}")
-          .replace("{required}", String(required.length))
-          .replace("{rules}", String(rules.length))}
-      </p>
-    );
-  }
-  if (type === "update_rule") {
-    const rules = Array.isArray(params.update_rules) ? params.update_rules : [];
-    return <p className="node-inputs__empty">{translate(language, "node.compileTime.summary.updateRule", "Update rules: {count}").replace("{count}", String(rules.length))}</p>;
-  }
   if (type === "module_output") {
     const outputKey = typeof params.output_key === "string" ? params.output_key : "";
     const output = outputKey && isRecord(outputs[outputKey]) ? (outputs[outputKey] as Record<string, unknown>) : {};
-    const outputFields = isRecord(output.fields) ? Object.keys(output.fields).length : 0;
+    const outputFields = isRecord(output.fields) && Object.keys(output.fields).length
+      ? Object.keys(output.fields).length
+      : Object.keys(displayObjectEntries(output, new Set(["compile_time_only", "output_key"]))).length;
     return (
       <p className="node-inputs__empty">
         {translate(language, "node.compileTime.summary.moduleOutput", "Output: {output}; fields: {count}")
@@ -522,6 +1690,8 @@ export function BrainConfigSection({
         <select
           className="nodrag"
           value={profileId}
+          onPointerDown={stopInputEventPropagation}
+          onKeyDown={stopInputEventPropagation}
           onChange={(event) => {
             const next = event.target.value;
             setProfileId(next);
@@ -537,12 +1707,11 @@ export function BrainConfigSection({
       </label>
       <label className="node-inputs__row node-inputs__row--block">
         <span>{translate(language, "field.systemPrompt", "System Prompt")}</span>
-        <textarea
+        <NodeTextarea
           className="nodrag"
           value={systemPrompt}
           rows={3}
-          onChange={(event) => {
-            const next = event.target.value;
+          onValueChange={(next) => {
             setSystemPrompt(next);
             commit({ system_prompt: next });
           }}
@@ -557,6 +1726,8 @@ export function BrainConfigSection({
           max={2}
           step={0.1}
           value={temperature}
+          onPointerDown={stopInputEventPropagation}
+          onKeyDown={stopInputEventPropagation}
           onChange={(event) => {
             const next = event.target.value;
             setTemperature(next);
@@ -572,6 +1743,8 @@ export function BrainConfigSection({
           min={1}
           step={1}
           value={maxTokens}
+          onPointerDown={stopInputEventPropagation}
+          onKeyDown={stopInputEventPropagation}
           onChange={(event) => {
             const next = event.target.value;
             setMaxTokens(next);
@@ -581,11 +1754,10 @@ export function BrainConfigSection({
       </label>
       <label className="node-inputs__row node-inputs__row--block">
         <span>{translate(language, "field.modelOverride", "Model Override")}</span>
-        <input
+        <NodeTextInput
           className="nodrag"
           value={modelOverride}
-          onChange={(event) => {
-            const next = event.target.value;
+          onValueChange={(next) => {
             setModelOverride(next);
             commit({ model_override: next });
           }}
@@ -711,7 +1883,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
   const llmProfiles = useCanvasStore((state) => state.llmProfiles);
   const llmTestStatus = useCanvasStore((state) => state.llmTestStatus);
-  const { schemaNode, onRename, onColor, onInput } = data as CanvasNodeData;
+  const moduleWorkflowNodes = useModuleWorkflowNodes();
+  const { schemaNode, onRename, onColor, onInput, onFieldFocus } = data as CanvasNodeData;
   const nodeData = (schemaNode.data ?? {}) as Record<string, unknown>;
   const customName = typeof nodeData.ui_name === "string" ? nodeData.ui_name : "";
   const baseLabel = translate(language, schemaNode.title_key, schemaNode.title_fallback);
@@ -734,6 +1907,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const normalizedStatus = normalizeNodeStatus(nodeDefinition?.status, aiSlot !== "none", llmStatus);
   const statusKey = normalizedStatus.toLowerCase();
   const stateLabel = translate(language, `node.status.${normalizedStatus}`, normalizedStatus);
+  const aiSlotText = aiSlot === "none" ? translate(language, "module.slot.unplanned", aiSlotLabel(aiSlot)) : aiSlotLabel(aiSlot);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   // Runtime output written back by a module-canvas run (output node only).
   const isOutputNode = String(effectiveType) === "output";
@@ -762,9 +1936,12 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const isCatalogPreconfigured = nodeData.catalog_preconfigured === true;
   const compileTimeFields = fieldsFromNodeData(nodeData);
   const compileTimeParams = paramsFromNodeData(nodeData);
-  const showCompileTimeFieldForm = isCatalogPreconfigured && String(effectiveType) === "field_input";
-  const showCompileTimeSummary =
-    isCatalogPreconfigured && ["structure_normalize", "validation", "update_rule", "module_output"].includes(String(effectiveType));
+  const showCompileTimeFieldForm = isCatalogPreconfigured && ["field_input", "text_config"].includes(String(effectiveType));
+  const showChecklistTextConfig = showCompileTimeFieldForm && String(effectiveType) === "text_config" && Boolean(textConfigChecklistFromParams(compileTimeParams));
+  const showFieldReferenceForm = isCatalogPreconfigured && String(effectiveType) === "field_reference";
+  const showCoreParamsPanel = isCatalogPreconfigured && ["layer_aggregator", "structure_normalize", "validation", "update_rule"].includes(String(effectiveType));
+  const showModuleOutputSummary = isCatalogPreconfigured && String(effectiveType) === "module_output";
+  const siblingOutput = moduleOutputValue(findSiblingModuleOutputNode(schemaNode, moduleWorkflowNodes));
   const isEnabled = typeof nodeData.enabled === "boolean" ? nodeData.enabled : true;
   const sections = {
     core: collapsedSections.has("core"),
@@ -786,17 +1963,17 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           <div className="workflow-node__topline">
             <div className="workflow-node__type">{typeLabel}</div>
             <span className="workflow-node__badges-inline">
-              <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotLabel(aiSlot)}</span>
+              <span className={`ai-slot-badge ${aiSlotClass(aiSlot)}`}>{aiSlotText}</span>
               <span className={`workflow-node__state-badge is-${statusKey}`}>{stateLabel}</span>
             </span>
           </div>
           {onRename ? (
             <label className="workflow-node__name-field">
               <span>{translate(language, "node.header.name", "Name")}</span>
-              <input
+              <NodeTextInput
                 className="nodrag"
                 value={label}
-                onChange={(event) => onRename(event.target.value)}
+                onValueChange={(value) => onRename(value)}
                 aria-label={translate(language, "node.header.name", "Name")}
               />
             </label>
@@ -810,6 +1987,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
             type="checkbox"
             checked={isEnabled}
             disabled={!onInput}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
             onChange={(event) => onInput?.("enabled", event.target.checked)}
             aria-label={translate(language, "node.header.toggle", "Enabled")}
           />
@@ -820,6 +1999,8 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
             <input
               type="color"
               value={uiColor || "#4f8cff"}
+              onPointerDown={stopInputEventPropagation}
+              onKeyDown={stopInputEventPropagation}
               onChange={(event) => onColor(event.target.value)}
               aria-label={translate(language, "node.header.color", "Color")}
             />
@@ -841,15 +2022,27 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         </div>
       ) : null}
 
-      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core}>
-        <summary>{sectionTitle(language, "node.sections.core", "Core Params")}</summary>
+      <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core && !isCatalogPreconfigured}>
+        <summary>{sectionTitle(language, "node.coreParams.title", "Core Params")}</summary>
         <div className="workflow-node__params-body">
-          {showCompileTimeFieldForm ? (
-            <CompileTimeFieldInputRenderer fields={compileTimeFields} params={compileTimeParams} language={language} onInput={onInput} />
-          ) : showCompileTimeSummary ? (
+          {showFieldReferenceForm ? (
+            <FieldReferenceRenderer data={nodeData} language={language} onInput={onInput} />
+          ) : showChecklistTextConfig ? (
+            <ChecklistTextConfigRenderer fields={compileTimeFields} params={compileTimeParams} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+          ) : showCompileTimeFieldForm ? (
+            <CompileTimeFieldInputRenderer fields={compileTimeFields} params={compileTimeParams} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+          ) : showCoreParamsPanel ? (
+            <CoreParamsPanel
+              type={String(effectiveType)}
+              data={nodeData}
+              language={language}
+              siblingOutput={siblingOutput}
+              validation={schemaNode.validation ?? null}
+            />
+          ) : showModuleOutputSummary ? (
             <CompileTimeNodeSummary type={String(effectiveType)} data={nodeData} language={language} />
           ) : onInput ? (
-            <NodeInputRenderer fields={inputSchema} data={nodeData} language={language} onInput={onInput} />
+            <NodeInputRenderer fields={inputSchema} data={nodeData} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
           ) : (
             <div className="node-inputs__empty">{translate(language, "node.inputs.readonly", "Read-only node")}</div>
           )}

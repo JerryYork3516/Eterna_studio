@@ -46,6 +46,111 @@ export type CanvasState = {
 
 const CANVAS_STATE_KEY = "eterna_canvas_v4";
 const EXPORT_FILE_PREFIX = "eterna_canvas_";
+const MODULE_GRAPH_KEY_PREFIX = "module_graph_";
+const MODULE_GRAPH_BACKUP_KEY_PREFIX = "module_graph_backup_";
+
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
+  );
+}
+
+function removeModuleGraphBackups(): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const keys: string[] = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith(MODULE_GRAPH_BACKUP_KEY_PREFIX)) {
+      keys.push(key);
+    }
+  }
+
+  for (const key of keys) {
+    window.localStorage.removeItem(key);
+  }
+
+  return keys.length;
+}
+
+function removeModuleGraphBackupsForModule(moduleId: string): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const prefix = `${MODULE_GRAPH_BACKUP_KEY_PREFIX}${moduleId}_`;
+  const keys: string[] = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith(prefix)) {
+      keys.push(key);
+    }
+  }
+
+  for (const key of keys) {
+    window.localStorage.removeItem(key);
+  }
+
+  return keys.length;
+}
+
+function compactLegacyCanvasState(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const existing = window.localStorage.getItem(CANVAS_STATE_KEY);
+  if (!existing) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(existing) as Partial<CanvasState>;
+    if (!parsed.moduleGraphs || Object.keys(parsed.moduleGraphs).length === 0) {
+      return false;
+    }
+
+    window.localStorage.setItem(
+      CANVAS_STATE_KEY,
+      JSON.stringify({
+        ...parsed,
+        moduleGraphs: {},
+        timestamp: new Date().toISOString(),
+      })
+    );
+    return true;
+  } catch (error) {
+    console.warn("Failed to compact legacy canvas state:", error);
+    return false;
+  }
+}
+
+function setLocalStorageWithBackupPrune(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    if (!isQuotaExceededError(error)) {
+      throw error;
+    }
+
+    const removed = removeModuleGraphBackups();
+    if (removed > 0) {
+      window.localStorage.setItem(key, value);
+      return true;
+    }
+
+    if (compactLegacyCanvasState()) {
+      window.localStorage.setItem(key, value);
+      return true;
+    }
+
+    throw error;
+  }
+}
 
 /**
  * 创建空的 Canvas 状态
@@ -143,7 +248,7 @@ export function saveCanvasStateToLocalStorage(state: CanvasState): boolean {
   }
 
   try {
-    window.localStorage.setItem(CANVAS_STATE_KEY, JSON.stringify(state));
+    setLocalStorageWithBackupPrune(CANVAS_STATE_KEY, JSON.stringify(state));
     return true;
   } catch (error) {
     console.error("Failed to save canvas state to localStorage:", error);
@@ -284,11 +389,10 @@ export function saveModuleGraphState(moduleId: string, nodes: unknown[], edges: 
   }
 
   try {
-    const key = `module_graph_${moduleId}`;
-    window.localStorage.setItem(
-      key,
-      JSON.stringify({ moduleId, nodes, edges })
-    );
+    const key = `${MODULE_GRAPH_KEY_PREFIX}${moduleId}`;
+    const nextValue = JSON.stringify({ moduleId, nodes, edges });
+    setLocalStorageWithBackupPrune(key, nextValue);
+    removeModuleGraphBackupsForModule(moduleId);
     return true;
   } catch (error) {
     console.error(`Failed to save module graph for ${moduleId}:`, error);
@@ -305,7 +409,7 @@ export function loadModuleGraphState(moduleId: string): ModuleGraphState | null 
   }
 
   try {
-    const key = `module_graph_${moduleId}`;
+    const key = `${MODULE_GRAPH_KEY_PREFIX}${moduleId}`;
     const stored = window.localStorage.getItem(key);
     if (!stored) {
       return null;

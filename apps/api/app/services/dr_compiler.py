@@ -56,7 +56,28 @@ from ..models.v0_4 import (
     SlotType,
 )
 from ..registry.engine_registry import get_engine_registry
-from ..registry.module_catalog import IDENTITY_CORE_MODULE_SPECS, get_module_catalog
+from ..registry.module_catalog import (
+    BEHAVIOR_SAFETY_MODULE_ID,
+    BEHAVIOR_SAFETY_OUTPUT_KEY,
+    CONTENT_SAFETY_MODULE_ID,
+    CONTENT_SAFETY_OUTPUT_KEY,
+    DATA_SAFETY_MODULE_ID,
+    DATA_SAFETY_OUTPUT_KEY,
+    IDENTITY_CORE_MODULE_SPECS,
+    INTERACTION_SAFETY_MODULE_ID,
+    INTERACTION_SAFETY_OUTPUT_KEY,
+    AUDIT_LOG_POLICY_OUTPUT_KEY,
+    HARD_BLOCK_POLICY_OUTPUT_KEY,
+    LAYER3_CATALOG_ONLY_MODULE_IDS,
+    LAYER3_SAFETY_POLICY_MODULES,
+    LAYER3_RISK_RESPONSE_OUTPUT_KEYS,
+    HUMAN_REVIEW_POLICY_OUTPUT_KEY,
+    RISK_POLICY_OUTPUT_KEY,
+    RISK_RESPONSE_MODULE_ID,
+    RISK_RESPONSE_NODE_IDS,
+    SAFE_REDIRECT_POLICY_OUTPUT_KEY,
+    get_module_catalog,
+)
 from ..registry.slot_catalog import get_slot_catalog
 
 DR_VERSION = "0.1"
@@ -89,6 +110,188 @@ _SECRET_REF_KEYS = {"key_ref", "secret_ref", "credential_ref", "api_key_ref"}
 _IDENTITY_CORE_OUTPUTS = {str(spec["module_id"]): str(spec["output"]) for spec in IDENTITY_CORE_MODULE_SPECS}
 _IDENTITY_CORE_IDS = set(_IDENTITY_CORE_OUTPUTS)
 _IDENTITY_CORE_REQUIRED_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
+_CONTENT_SAFETY_POLICY_KEYS = (
+    "allowed_scope",
+    "cautious_scope",
+    "forbidden_scope",
+    "sensitive_handling",
+    "refusal_style",
+    "high_risk_action",
+    "decision_modes",
+    "default_mode",
+    "update_policy",
+    "compile_validation_status",
+    "identity_context_ref",
+)
+_BEHAVIOR_SAFETY_POLICY_KEYS = (
+    "allowed_behaviors",
+    "cautious_behaviors",
+    "forbidden_behaviors",
+    "auto_action_limits",
+    "real_world_decision_limits",
+    "tool_action_limits",
+    "proactive_behavior_limits",
+    "relationship_progression_limits",
+    "high_risk_behavior_action",
+    "refusal_style",
+    "decision_modes",
+    "default_mode",
+    "update_policy",
+    "compile_validation_status",
+    "identity_context_ref",
+)
+_DATA_SAFETY_POLICY_KEYS = (
+    "allowed_data_read",
+    "forbidden_data_read",
+    "allowed_memory_write",
+    "forbidden_memory_write",
+    "sensitive_data_handling",
+    "privacy_protection_rules",
+    "memory_delete_update_rules",
+    "cross_resident_memory_isolation",
+    "fictional_memory_boundary",
+    "fictional_experience_labeling",
+    "decision_modes",
+    "default_mode",
+    "update_policy",
+    "compile_validation_status",
+    "identity_context_ref",
+)
+_INTERACTION_SAFETY_POLICY_KEYS = (
+    "allowed_interactions",
+    "cautious_interactions",
+    "forbidden_interactions",
+    "intimacy_expression_boundary",
+    "dependency_protection_rules",
+    "non_romantic_default_boundary",
+    "therapy_replacement_limits",
+    "identity_disclosure_policy",
+    "authority_impersonation_protection",
+    "emotional_manipulation_protection",
+    "decision_modes",
+    "default_mode",
+    "update_policy",
+    "compile_validation_status",
+    "identity_context_ref",
+)
+_RISK_POLICY_KEYS = (
+    "risk_signal_summary",
+    "risk_level_policy",
+    "risk_response_strategy",
+    "human_review_policy",
+    "hard_block_policy",
+    "audit_log_policy",
+    "safe_redirect_policy",
+    "default_risk_mode",
+    "decision_modes",
+    "compile_validation_status",
+    "identity_context_ref",
+)
+_RISK_POLICY_REQUIRED_KEYS = (
+    "risk_signal_summary",
+    "risk_level_policy",
+    "risk_response_strategy",
+    "human_review_policy",
+    "hard_block_policy",
+    "audit_log_policy",
+    "safe_redirect_policy",
+    "default_risk_mode",
+    "decision_modes",
+    "identity_context_ref",
+)
+_LAYER3_SAFETY_TOP_LEVEL_OUTPUT_KEYS = tuple(output_key for _module_id, output_key in LAYER3_SAFETY_POLICY_MODULES) + tuple(
+    LAYER3_RISK_RESPONSE_OUTPUT_KEYS
+)
+_LAYER3_SAFETY_POLICY_CONFIGS = {
+    CONTENT_SAFETY_MODULE_ID: {
+        "output_key": CONTENT_SAFETY_OUTPUT_KEY,
+        "policy_keys": _CONTENT_SAFETY_POLICY_KEYS,
+        "defaults": {
+            "decision_modes": ["allow", "soften", "refuse", "block"],
+            "default_mode": "soften",
+            "high_risk_action": "block",
+            "identity_context_ref": "layer_1.resident_identity",
+        },
+        "field_fallbacks": {
+            "allowed_scope": "allowed_content_scope",
+            "cautious_scope": "cautious_content_scope",
+            "forbidden_scope": "forbidden_content_scope",
+            "sensitive_handling": "sensitive_content_handling",
+            "refusal_style": "refusal_style",
+            "high_risk_action": "high_risk_content_handling",
+        },
+        "required_policy_keys": ("forbidden_scope", "refusal_style", "high_risk_action"),
+    },
+    BEHAVIOR_SAFETY_MODULE_ID: {
+        "output_key": BEHAVIOR_SAFETY_OUTPUT_KEY,
+        "policy_keys": _BEHAVIOR_SAFETY_POLICY_KEYS,
+        "defaults": {
+            "decision_modes": ["allow", "soften", "refuse", "block"],
+            "default_mode": "soften",
+            "high_risk_behavior_action": "block",
+            "identity_context_ref": "layer_1.resident_identity",
+        },
+        "field_fallbacks": {
+            "allowed_behaviors": "allowed_behaviors",
+            "cautious_behaviors": "cautious_behaviors",
+            "forbidden_behaviors": "forbidden_behaviors",
+            "auto_action_limits": "auto_action_limits",
+            "real_world_decision_limits": "real_world_decision_limits",
+            "tool_action_limits": "tool_action_limits",
+            "proactive_behavior_limits": "proactive_behavior_limits",
+            "relationship_progression_limits": "relationship_progression_limits",
+            "high_risk_behavior_action": "high_risk_behavior_action",
+            "refusal_style": "refusal_style",
+        },
+        "required_policy_keys": ("forbidden_behaviors", "auto_action_limits", "real_world_decision_limits", "high_risk_behavior_action"),
+    },
+    DATA_SAFETY_MODULE_ID: {
+        "output_key": DATA_SAFETY_OUTPUT_KEY,
+        "policy_keys": _DATA_SAFETY_POLICY_KEYS,
+        "defaults": {
+            "decision_modes": ["allow", "soften", "refuse", "block"],
+            "default_mode": "refuse",
+            "sensitive_data_handling": "refuse_or_minimize",
+            "identity_context_ref": "layer_1.resident_identity",
+        },
+        "field_fallbacks": {
+            "allowed_data_read": "allowed_data_read",
+            "forbidden_data_read": "forbidden_data_read",
+            "allowed_memory_write": "allowed_memory_write",
+            "forbidden_memory_write": "forbidden_memory_write",
+            "sensitive_data_handling": "sensitive_data_handling",
+            "privacy_protection_rules": "privacy_protection_rules",
+            "memory_delete_update_rules": "memory_delete_update_rules",
+            "cross_resident_memory_isolation": "cross_resident_memory_isolation",
+            "fictional_memory_boundary": "fictional_memory_boundary",
+            "fictional_experience_labeling": "fictional_experience_labeling",
+        },
+        "required_policy_keys": ("forbidden_data_read", "forbidden_memory_write", "sensitive_data_handling"),
+    },
+    INTERACTION_SAFETY_MODULE_ID: {
+        "output_key": INTERACTION_SAFETY_OUTPUT_KEY,
+        "policy_keys": _INTERACTION_SAFETY_POLICY_KEYS,
+        "defaults": {
+            "decision_modes": ["allow", "soften", "refuse", "block"],
+            "default_mode": "soften",
+            "non_romantic_default_boundary": "companion_default",
+            "identity_context_ref": "layer_1.resident_identity",
+        },
+        "field_fallbacks": {
+            "allowed_interactions": "allowed_interactions",
+            "cautious_interactions": "cautious_interactions",
+            "forbidden_interactions": "forbidden_interactions",
+            "intimacy_expression_boundary": "intimacy_expression_boundary",
+            "dependency_protection_rules": "dependency_protection_rules",
+            "non_romantic_default_boundary": "non_romantic_default_boundary",
+            "therapy_replacement_limits": "therapy_replacement_limits",
+            "identity_disclosure_policy": "identity_disclosure_policy",
+            "authority_impersonation_protection": "authority_impersonation_protection",
+            "emotional_manipulation_protection": "emotional_manipulation_protection",
+        },
+        "required_policy_keys": ("forbidden_interactions", "non_romantic_default_boundary", "dependency_protection_rules"),
+    },
+}
 _STAGE_7_4_1_COMPILE_TIME_NODE_TYPES = frozenset(
     {"field_input", "structure_normalize", "validation", "update_rule", "module_output", "layer_aggregator"}
 )
@@ -340,8 +543,10 @@ def _normalize_basic_identity_language_in_module(module: Dict[str, Any]) -> None
 
 def _legacy_module_output_fallback_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
     findings: List[Dict[str, str]] = []
+    allowed_output_only_modules = {RISK_RESPONSE_MODULE_ID}
     for index, module in enumerate(collection.get("modules", [])):
-        if not isinstance(module, dict) or module.get("module_id") in _IDENTITY_CORE_IDS:
+        module_id = module.get("module_id") if isinstance(module, dict) else None
+        if not isinstance(module, dict) or module_id in _IDENTITY_CORE_IDS or module_id in allowed_output_only_modules:
             continue
         outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
         has_module_output = bool(outputs.get("module_output"))
@@ -546,6 +751,288 @@ def _assemble_identity_core_outputs(
             "identity_profile": identity_profile,
         },
     }
+
+
+def _module_field_values(module: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        str(field.get("field_id")): field.get("value")
+        for field in _module_fields_from_field_input(module)
+        if field.get("field_id")
+    }
+
+
+def _is_catalog_only_module(module: Dict[str, Any]) -> bool:
+    module_id = module.get("module_id")
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    ui_config = module.get("ui_config") if isinstance(module.get("ui_config"), dict) else {}
+    return module_id in LAYER3_CATALOG_ONLY_MODULE_IDS or config.get("catalog_only") is True or ui_config.get("catalog_only") is True
+
+
+def _layer3_safety_module_policy(collection: Dict[str, Any], module_id: str) -> Dict[str, Any]:
+    config = _LAYER3_SAFETY_POLICY_CONFIGS.get(module_id)
+    if not config:
+        return {}
+    output_key = str(config["output_key"])
+    modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
+    module = modules.get(module_id)
+    if not isinstance(module, dict):
+        return {}
+    node_output = _module_output_node_value(module, output_key)
+    outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    raw_policy = node_output if isinstance(node_output, dict) else outputs.get(output_key)
+    policy = _as_dict(raw_policy)
+    if not policy:
+        return {}
+
+    # The module_output node is authoritative, but older UI saves may only carry
+    # edited field values. Keep the config declarative and compile-time only.
+    fields = _as_dict(policy.get("fields"))
+    field_input_values = _module_field_values(module)
+    field_fallbacks = _as_dict(config.get("field_fallbacks"))
+    defaults = _as_dict(config.get("defaults"))
+    normalized: Dict[str, Any] = {}
+    for key in config["policy_keys"]:  # type: ignore[union-attr]
+        if key == "compile_validation_status":
+            continue
+        fallback_field_id = field_fallbacks.get(key)
+        fallback_value = defaults.get(key, [] if str(key).endswith("s") else "")
+        if fallback_field_id:
+            fallback_value = fields.get(fallback_field_id, field_input_values.get(fallback_field_id, fallback_value))
+        normalized[str(key)] = policy.get(key, fallback_value)
+    normalized["identity_context_ref"] = normalized.get("identity_context_ref") or "layer_1.resident_identity"
+    normalized["update_policy"] = _as_dict(normalized.get("update_policy"))
+    has_required_boundary = all(bool(normalized.get(key)) for key in config["required_policy_keys"])  # type: ignore[union-attr]
+    normalized["compile_validation_status"] = "valid" if has_required_boundary else "invalid"
+    return {str(key): normalized.get(str(key)) for key in config["policy_keys"]}  # type: ignore[union-attr]
+
+
+def _content_safety_module_policy(collection: Dict[str, Any]) -> Dict[str, Any]:
+    return _layer3_safety_module_policy(collection, CONTENT_SAFETY_MODULE_ID)
+
+
+def _module_node_by_id(module: Dict[str, Any], node_id: str) -> Dict[str, Any] | None:
+    for node in _module_graph_nodes(module):
+        if node.get("node_id") == node_id:
+            return node
+    return None
+
+
+def _risk_node_params(module: Dict[str, Any], node_key: str) -> Dict[str, Any]:
+    node_id = RISK_RESPONSE_NODE_IDS.get(node_key, "")
+    node = _module_node_by_id(module, node_id) if node_id else None
+    return node.get("params") if isinstance(node, dict) and isinstance(node.get("params"), dict) else {}
+
+
+def _risk_node_output(module: Dict[str, Any], node_key: str, output_key: str) -> Dict[str, Any]:
+    node_id = RISK_RESPONSE_NODE_IDS.get(node_key, "")
+    node = _module_node_by_id(module, node_id) if node_id else None
+    outputs = node.get("outputs") if isinstance(node, dict) and isinstance(node.get("outputs"), dict) else {}
+    return _as_dict(outputs.get(output_key))
+
+
+def _risk_response_derived_outputs(module: Dict[str, Any]) -> Dict[str, Any]:
+    signal_params = _risk_node_params(module, "signal_summary")
+    level_params = _risk_node_params(module, "level_decision")
+    strategy_params = _risk_node_params(module, "strategy_selection")
+    human_review_params = _risk_node_params(module, "human_review")
+    hard_block_params = _risk_node_params(module, "hard_block")
+
+    input_policies = signal_params.get("input_policy_keys")
+    if not isinstance(input_policies, list) or not input_policies:
+        input_policies = [
+            CONTENT_SAFETY_OUTPUT_KEY,
+            BEHAVIOR_SAFETY_OUTPUT_KEY,
+            DATA_SAFETY_OUTPUT_KEY,
+            INTERACTION_SAFETY_OUTPUT_KEY,
+        ]
+    risk_signal_summary = _risk_node_output(module, "signal_summary", "risk_signal_summary") or {
+        "input_policies": input_policies,
+        "content_risk_source": CONTENT_SAFETY_OUTPUT_KEY,
+        "behavior_risk_source": BEHAVIOR_SAFETY_OUTPUT_KEY,
+        "data_risk_source": DATA_SAFETY_OUTPUT_KEY,
+        "interaction_risk_source": INTERACTION_SAFETY_OUTPUT_KEY,
+        "aggregated_risk_signals": ["content_high_risk", "behavior_boundary_violation", "sensitive_data_risk", "interaction_dependency_risk"],
+        "identity_context_ref": "layer_1.resident_identity",
+    }
+    risk_level_policy = _risk_node_output(module, "level_decision", "risk_level_policy") or _as_dict(level_params.get("risk_level_policy")) or {
+        "risk_levels": level_params.get("risk_levels") if isinstance(level_params.get("risk_levels"), list) else ["allow", "soften", "refuse", "review", "block"],
+        "default_risk_level": level_params.get("default_risk_level") or "review",
+        "content_risk_rules": ["high_risk_content_defaults_to_block"],
+        "behavior_risk_rules": ["major_real_world_action_defaults_to_review_or_block"],
+        "data_risk_rules": ["sensitive_privacy_defaults_to_refuse_or_block"],
+        "interaction_risk_rules": ["relationship_boundary_risk_defaults_to_soften_or_refuse"],
+        "uncertain_risk_action": "review",
+        "highest_risk_priority": ["block", "review", "refuse", "soften", "allow"],
+    }
+    risk_response_strategy = _risk_node_output(module, "strategy_selection", "risk_response_strategy") or _as_dict(strategy_params.get("risk_response_strategy"))
+    safe_redirect_policy = _as_dict(risk_response_strategy.get(SAFE_REDIRECT_POLICY_OUTPUT_KEY)) or {
+        "redirect_modes": ["safe_companionship", "clarify_limits", "encourage_real_support", "provide_general_safe_info"],
+        "style": "warm_brief_non_preachy",
+        "no_professional_conclusion": True,
+    }
+    if not risk_response_strategy:
+        risk_response_strategy = {
+            "allow_action": "normal_response",
+            "soften_action": ["de_escalate", "clarify", "reduce_commitment", "safe_companionship"],
+            "refuse_action": ["warm_brief_non_preachy_refusal", "safe_alternative"],
+            "review_action": ["pause_auto_action", "enter_user_or_developer_review"],
+            "block_action": ["block_response", "no_dangerous_content", "no_related_action"],
+            "safe_redirect_policy": safe_redirect_policy,
+            "refusal_style": "warm_brief_non_preachy_safe_redirect",
+            "degraded_response_style": "de_escalated_clear_bounded_companionship",
+        }
+    human_review_policy = _risk_node_output(module, "human_review", HUMAN_REVIEW_POLICY_OUTPUT_KEY) or _as_dict(human_review_params.get(HUMAN_REVIEW_POLICY_OUTPUT_KEY)) or {
+        "human_review_triggers": [
+            "external_platform_operation",
+            "act_on_behalf_publish_delete_comment_dm_follow_repost",
+            "major_real_world_decision",
+            "gray_zone_safety_risk",
+            "privacy_or_cross_resident_memory",
+            "uncertain_risk_level",
+            "conflict_among_layer3_policies",
+        ],
+        "user_confirmation_required": ["external_action", "privacy_sensitive_action"],
+        "developer_review_required": ["policy_conflict", "uncertain_high_risk"],
+        "pause_before_review": True,
+        "allow_after_review": "explicit_approval_only",
+        "review_failure_handling": "refuse_or_block_with_safe_redirect",
+        "review_log_requirements": ["reason", "time", "impact_scope", "decision"],
+        "compile_time_only": True,
+    }
+    hard_block_policy = _risk_node_output(module, "hard_block", HARD_BLOCK_POLICY_OUTPUT_KEY) or _as_dict(hard_block_params.get(HARD_BLOCK_POLICY_OUTPUT_KEY)) or {
+        "hard_block_triggers": [
+            "self_harm_method",
+            "illegal_instruction",
+            "violent_harm_instruction",
+            "adult_sexual_content",
+            "dependency_induction",
+            "manipulate_others",
+            "medical_legal_financial_conclusion",
+            "impersonated_real_human_experience",
+            "default_romantic_or_girlfriend_relationship",
+            "unauthorized_external_action",
+            "unauthorized_sensitive_privacy_read_or_save",
+            "cross_resident_private_memory_sharing",
+        ],
+        "non_authorizable_content": ["self_harm_method", "illegal_instruction", "adult_sexual_content"],
+        "non_authorizable_behaviors": ["unauthorized_external_action", "manipulate_others"],
+        "non_writable_memory": ["sensitive_privacy_without_consent", "cross_resident_private_memory"],
+        "non_allowed_interactions": ["dependency_induction", "default_romantic_relationship"],
+        "block_response_style": "warm_brief_no_dangerous_detail_safe_redirect",
+        "block_log_requirements": ["trigger", "reason", "policy_key", "time"],
+        "compile_time_only": True,
+    }
+    audit_log_policy = {
+        "enabled": True,
+        "log_scope": ["risk_level_decision", "human_review", "hard_block", "safe_redirect"],
+        "required_fields": ["reason", "time", "impact_scope", "decision"],
+        "no_social_platform_audit_implementation": True,
+        "no_tool_call_audit_implementation": True,
+        "compile_time_only": True,
+    }
+    risk_policy = {
+        "risk_signal_summary": risk_signal_summary,
+        "risk_level_policy": risk_level_policy,
+        "risk_response_strategy": risk_response_strategy,
+        HUMAN_REVIEW_POLICY_OUTPUT_KEY: human_review_policy,
+        HARD_BLOCK_POLICY_OUTPUT_KEY: hard_block_policy,
+        AUDIT_LOG_POLICY_OUTPUT_KEY: audit_log_policy,
+        SAFE_REDIRECT_POLICY_OUTPUT_KEY: safe_redirect_policy,
+        "default_risk_mode": "review",
+        "decision_modes": ["allow", "soften", "refuse", "review", "block"],
+        "compile_validation_status": "valid",
+        "identity_context_ref": "layer_1.resident_identity",
+        "compile_time_only": True,
+    }
+    return {
+        RISK_POLICY_OUTPUT_KEY: risk_policy,
+        HARD_BLOCK_POLICY_OUTPUT_KEY: hard_block_policy,
+        HUMAN_REVIEW_POLICY_OUTPUT_KEY: human_review_policy,
+        AUDIT_LOG_POLICY_OUTPUT_KEY: audit_log_policy,
+        SAFE_REDIRECT_POLICY_OUTPUT_KEY: safe_redirect_policy,
+    }
+
+
+def _risk_response_module_outputs(collection: Dict[str, Any]) -> Dict[str, Any]:
+    modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
+    module = modules.get(RISK_RESPONSE_MODULE_ID)
+    if not isinstance(module, dict):
+        return {}
+
+    outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    module_output_node = _module_node_by_type(module, "module_output")
+    node_outputs = module_output_node.get("outputs") if isinstance(module_output_node, dict) and isinstance(module_output_node.get("outputs"), dict) else {}
+    combined_outputs = {**outputs, **node_outputs}
+    derived_outputs = _risk_response_derived_outputs(module)
+
+    raw_risk_policy = combined_outputs.get(RISK_POLICY_OUTPUT_KEY)
+    risk_policy = _as_dict(raw_risk_policy)
+    if not risk_policy:
+        risk_policy = _as_dict(derived_outputs.get(RISK_POLICY_OUTPUT_KEY))
+    else:
+        derived_risk_policy = _as_dict(derived_outputs.get(RISK_POLICY_OUTPUT_KEY))
+        risk_policy = {**derived_risk_policy, **risk_policy}
+
+    for key in (HUMAN_REVIEW_POLICY_OUTPUT_KEY, HARD_BLOCK_POLICY_OUTPUT_KEY, AUDIT_LOG_POLICY_OUTPUT_KEY, SAFE_REDIRECT_POLICY_OUTPUT_KEY):
+        nested_value = _as_dict(risk_policy.get(key))
+        if not nested_value:
+            nested_value = _as_dict(combined_outputs.get(key))
+        if not nested_value:
+            nested_value = _as_dict(derived_outputs.get(key))
+        if nested_value:
+            risk_policy[key] = nested_value
+
+    risk_policy["identity_context_ref"] = risk_policy.get("identity_context_ref") or "layer_1.resident_identity"
+    risk_policy["decision_modes"] = risk_policy.get("decision_modes") or ["allow", "soften", "refuse", "review", "block"]
+    risk_policy["default_risk_mode"] = risk_policy.get("default_risk_mode") or "review"
+    has_required_policy = all(bool(risk_policy.get(key)) for key in _RISK_POLICY_REQUIRED_KEYS)
+    risk_policy["compile_validation_status"] = "valid" if has_required_policy else "invalid"
+
+    normalized_risk_policy = {key: risk_policy.get(key) for key in _RISK_POLICY_KEYS}
+    normalized_outputs: Dict[str, Any] = {RISK_POLICY_OUTPUT_KEY: normalized_risk_policy}
+    for output_key in (
+        HARD_BLOCK_POLICY_OUTPUT_KEY,
+        HUMAN_REVIEW_POLICY_OUTPUT_KEY,
+        AUDIT_LOG_POLICY_OUTPUT_KEY,
+        SAFE_REDIRECT_POLICY_OUTPUT_KEY,
+    ):
+        policy = _as_dict(risk_policy.get(output_key)) or _as_dict(combined_outputs.get(output_key)) or _as_dict(derived_outputs.get(output_key))
+        if policy:
+            normalized_outputs[output_key] = policy
+    return normalized_outputs
+
+
+def _assemble_layer3_safety_outputs(collection: Dict[str, Any]) -> Dict[str, Any]:
+    layer_3 = {}
+    for module_id, output_key in LAYER3_SAFETY_POLICY_MODULES:
+        policy = _layer3_safety_module_policy(collection, module_id)
+        if policy:
+            layer_3[output_key] = policy
+    layer_3.update(_risk_response_module_outputs(collection))
+    if not layer_3:
+        return {}
+    return {
+        "layer_3": layer_3,
+    }
+
+
+def _merge_layer3_safety_into_safety_policy(payload: Dict[str, Any]) -> None:
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+    layer_outputs = _as_dict(graph_snapshot.get("layer_outputs"))
+    layer_3 = _as_dict(layer_outputs.get("layer_3"))
+    layer3_policies = {output_key: _as_dict(layer_3.get(output_key)) for output_key in _LAYER3_SAFETY_TOP_LEVEL_OUTPUT_KEYS if _as_dict(layer_3.get(output_key))}
+    if not layer3_policies:
+        return
+    safety_policy = _as_dict(payload.get("safety_policy"))
+    safety_policy.update(
+        {
+            "no_secret_in_dr": safety_policy.get("no_secret_in_dr", True),
+            "no_direct_provider_binding": safety_policy.get("no_direct_provider_binding", True),
+            "not_executable": safety_policy.get("not_executable", True),
+        }
+    )
+    safety_policy.update(layer3_policies)
+    payload["safety_policy"] = safety_policy
 
 
 def _v3_identity_sync_from_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -771,6 +1258,7 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
         modules = [_as_dict(m) for m in raw_modules]
     else:
         modules = [m.model_dump(mode="json") for m in get_module_catalog()]
+    modules = [module for module in modules if not _is_catalog_only_module(module)]
 
     # Slots: prefer canvas-supplied, else the catalog.
     raw_slots = canvas.get("slots") or workflow.get("slots")
@@ -1459,6 +1947,8 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         resident_name_final,
         findings,
     )
+    payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer3_safety_outputs(collection))
+    _merge_layer3_safety_into_safety_policy(payload)
     identity_sync = _v3_identity_sync_from_profile(payload)
     if identity_sync.get("resident_id"):
         resident_id = identity_sync["resident_id"]

@@ -12,9 +12,109 @@ from fastapi.testclient import TestClient
 from app.services import dr_compiler
 from app.main import app
 from app.services.dr_compiler import compile_dr_result_v0_3, compile_dr_v0_3, mock_load_dr_v0_3
-from app.registry.module_catalog import get_module_catalog
+from app.registry.module_catalog import (
+    BEHAVIOR_SAFETY_MODULE_ID,
+    BEHAVIOR_SAFETY_OUTPUT_KEY,
+    CONTENT_SAFETY_MODULE_ID,
+    CONTENT_SAFETY_OUTPUT_KEY,
+    DATA_SAFETY_MODULE_ID,
+    DATA_SAFETY_OUTPUT_KEY,
+    AUDIT_LOG_POLICY_OUTPUT_KEY,
+    HARD_BLOCK_POLICY_OUTPUT_KEY,
+    HUMAN_REVIEW_POLICY_OUTPUT_KEY,
+    INTERACTION_SAFETY_MODULE_ID,
+    INTERACTION_SAFETY_OUTPUT_KEY,
+    LAYER2_CATALOG_ONLY_MODULE_IDS,
+    LAYER2_PERSONALITY_FORMAL_MODULE_IDS,
+    LAYER3_CATALOG_ONLY_MODULE_IDS,
+    LAYER3_FORMAL_SAFETY_MODULE_IDS,
+    RISK_POLICY_OUTPUT_KEY,
+    RISK_RESPONSE_MODULE_ID,
+    SAFE_REDIRECT_POLICY_OUTPUT_KEY,
+    get_module_catalog,
+)
 
 client = TestClient(app)
+
+LAYER3_SAFETY_POLICY_KEYS = {
+    CONTENT_SAFETY_OUTPUT_KEY: (
+        "allowed_scope",
+        "cautious_scope",
+        "forbidden_scope",
+        "sensitive_handling",
+        "refusal_style",
+        "high_risk_action",
+        "decision_modes",
+        "default_mode",
+        "update_policy",
+        "compile_validation_status",
+        "identity_context_ref",
+    ),
+    BEHAVIOR_SAFETY_OUTPUT_KEY: (
+        "allowed_behaviors",
+        "cautious_behaviors",
+        "forbidden_behaviors",
+        "auto_action_limits",
+        "real_world_decision_limits",
+        "tool_action_limits",
+        "proactive_behavior_limits",
+        "relationship_progression_limits",
+        "high_risk_behavior_action",
+        "refusal_style",
+        "decision_modes",
+        "default_mode",
+        "update_policy",
+        "compile_validation_status",
+        "identity_context_ref",
+    ),
+    DATA_SAFETY_OUTPUT_KEY: (
+        "allowed_data_read",
+        "forbidden_data_read",
+        "allowed_memory_write",
+        "forbidden_memory_write",
+        "sensitive_data_handling",
+        "privacy_protection_rules",
+        "memory_delete_update_rules",
+        "cross_resident_memory_isolation",
+        "fictional_memory_boundary",
+        "fictional_experience_labeling",
+        "decision_modes",
+        "default_mode",
+        "update_policy",
+        "compile_validation_status",
+        "identity_context_ref",
+    ),
+    INTERACTION_SAFETY_OUTPUT_KEY: (
+        "allowed_interactions",
+        "cautious_interactions",
+        "forbidden_interactions",
+        "intimacy_expression_boundary",
+        "dependency_protection_rules",
+        "non_romantic_default_boundary",
+        "therapy_replacement_limits",
+        "identity_disclosure_policy",
+        "authority_impersonation_protection",
+        "emotional_manipulation_protection",
+        "decision_modes",
+        "default_mode",
+        "update_policy",
+        "compile_validation_status",
+        "identity_context_ref",
+    ),
+    RISK_POLICY_OUTPUT_KEY: (
+        "risk_signal_summary",
+        "risk_level_policy",
+        "risk_response_strategy",
+        "human_review_policy",
+        "hard_block_policy",
+        "audit_log_policy",
+        "safe_redirect_policy",
+        "default_risk_mode",
+        "decision_modes",
+        "compile_validation_status",
+        "identity_context_ref",
+    ),
+}
 
 
 def _canvas_13() -> dict:
@@ -183,6 +283,142 @@ def test_identity_profile_assembled_from_module_outputs():
             node for node in modules[module_id]["module_graph"]["nodes"] if node["node_type"] == "module_output"
         )
         assert identity_profile[output_key] == module_output["outputs"][output_key]
+
+
+def test_layer3_safety_policies_assembled_into_layer3_and_top_safety_policy():
+    dr = compile_dr_v0_3(_canvas_13())
+    layer_outputs = dr["payload"]["graph_snapshot"]["layer_outputs"]
+    layer_3 = layer_outputs["layer_3"]
+
+    assert set(LAYER3_SAFETY_POLICY_KEYS).issubset(layer_3)
+    for output_key, required_keys in LAYER3_SAFETY_POLICY_KEYS.items():
+        policy = layer_3[output_key]
+        for key in required_keys:
+            assert key in policy
+        expected_decision_modes = ["allow", "soften", "refuse", "review", "block"] if output_key == RISK_POLICY_OUTPUT_KEY else ["allow", "soften", "refuse", "block"]
+        assert policy["decision_modes"] == expected_decision_modes
+        assert policy["compile_validation_status"] == "valid"
+        assert policy["identity_context_ref"] == "layer_1.resident_identity"
+        assert dr["payload"]["safety_policy"][output_key] == policy
+        assert dr["safety_policy"][output_key] == policy
+    content_safety_policy = layer_3[CONTENT_SAFETY_OUTPUT_KEY]
+    assert content_safety_policy["decision_modes"] == ["allow", "soften", "refuse", "block"]
+    assert content_safety_policy["default_mode"] == "soften"
+    assert content_safety_policy["high_risk_action"] == "block"
+    assert layer_3[BEHAVIOR_SAFETY_OUTPUT_KEY]["default_mode"] == "soften"
+    assert layer_3[BEHAVIOR_SAFETY_OUTPUT_KEY]["high_risk_behavior_action"] == "block"
+    assert layer_3[DATA_SAFETY_OUTPUT_KEY]["default_mode"] == "refuse"
+    assert layer_3[DATA_SAFETY_OUTPUT_KEY]["sensitive_data_handling"] == "refuse_or_minimize"
+    assert layer_3[INTERACTION_SAFETY_OUTPUT_KEY]["default_mode"] == "soften"
+    assert layer_3[INTERACTION_SAFETY_OUTPUT_KEY]["non_romantic_default_boundary"] == "companion_default"
+    risk_policy = layer_3[RISK_POLICY_OUTPUT_KEY]
+    assert risk_policy["default_risk_mode"] == "review"
+    assert risk_policy["decision_modes"] == ["allow", "soften", "refuse", "review", "block"]
+    assert risk_policy["compile_validation_status"] == "valid"
+    assert layer_3[HARD_BLOCK_POLICY_OUTPUT_KEY] == risk_policy["hard_block_policy"]
+    assert layer_3[HUMAN_REVIEW_POLICY_OUTPUT_KEY] == risk_policy["human_review_policy"]
+    assert layer_3[AUDIT_LOG_POLICY_OUTPUT_KEY] == risk_policy["audit_log_policy"]
+    assert layer_3[SAFE_REDIRECT_POLICY_OUTPUT_KEY] == risk_policy["safe_redirect_policy"]
+    for output_key in (HARD_BLOCK_POLICY_OUTPUT_KEY, HUMAN_REVIEW_POLICY_OUTPUT_KEY, AUDIT_LOG_POLICY_OUTPUT_KEY, SAFE_REDIRECT_POLICY_OUTPUT_KEY):
+        assert dr["payload"]["safety_policy"][output_key] == layer_3[output_key]
+        assert dr["safety_policy"][output_key] == layer_3[output_key]
+    assert dr["payload"]["safety_policy"]["no_secret_in_dr"] is True
+    assert dr["payload"]["safety_policy"]["no_direct_provider_binding"] is True
+    assert dr["payload"]["safety_policy"]["not_executable"] is True
+
+
+def test_layer3_formal_module_ids_exclude_catalog_only_legacy_modules():
+    dr = compile_dr_v0_3(_canvas_13())
+    layer_snapshot = next(layer for layer in dr["payload"]["13_layers_snapshot"] if layer["layer_id"] == "layer_3")
+    graph_layer = next(layer for layer in dr["payload"]["graph_snapshot"]["layers"] if layer["layer_id"] == "layer_3")
+    payload_module_ids = {module["module_id"] for module in dr["payload"]["modules"]}
+
+    assert layer_snapshot["module_ids"] == list(LAYER3_FORMAL_SAFETY_MODULE_IDS)
+    assert graph_layer["module_ids"] == list(LAYER3_FORMAL_SAFETY_MODULE_IDS)
+    for module_id in LAYER3_CATALOG_ONLY_MODULE_IDS:
+        assert module_id not in layer_snapshot["module_ids"]
+        assert module_id not in graph_layer["module_ids"]
+        assert module_id not in payload_module_ids
+
+
+def test_layer2_formal_module_ids_are_five_text_config_modules():
+    dr = compile_dr_v0_3(_canvas_13())
+    layer_snapshot = next(layer for layer in dr["payload"]["13_layers_snapshot"] if layer["layer_id"] == "layer_2")
+    graph_layer = next(layer for layer in dr["payload"]["graph_snapshot"]["layers"] if layer["layer_id"] == "layer_2")
+    payload_modules = {module["module_id"]: module for module in dr["payload"]["modules"]}
+
+    assert layer_snapshot["module_ids"] == list(LAYER2_PERSONALITY_FORMAL_MODULE_IDS)
+    assert graph_layer["module_ids"] == list(LAYER2_PERSONALITY_FORMAL_MODULE_IDS)
+    for module_id in LAYER2_PERSONALITY_FORMAL_MODULE_IDS:
+        module = payload_modules[module_id]
+        assert module["slot_type"] is None
+        assert module["runtime_enabled"] is False
+        assert module["no_execution"] is True
+        assert module["config"]["text_config_only"] is True
+        assert len(module["module_graph"]["nodes"]) == 5
+    for module_id in LAYER2_CATALOG_ONLY_MODULE_IDS:
+        assert module_id not in payload_modules
+        assert module_id not in layer_snapshot["module_ids"]
+
+
+def test_layer3_safety_compile_does_not_change_layer1_identity():
+    base = compile_dr_v0_3(_linxuan_canvas())
+    canvas = _linxuan_canvas()
+    module = next(module for module in canvas["modules"] if module["module_id"] == CONTENT_SAFETY_MODULE_ID)
+    output_node = next(node for node in module["module_graph"]["nodes"] if node["node_type"] == "module_output")
+    policy = output_node["outputs"][CONTENT_SAFETY_OUTPUT_KEY]
+    policy["allowed_scope"] = ["humanistic_dialogue"]
+    policy["cautious_scope"] = ["sensitive_emotion"]
+    policy["forbidden_scope"] = ["adult_content", "medical_legal_financial_conclusion"]
+    policy["high_risk_action"] = "block"
+    module["outputs"][CONTENT_SAFETY_OUTPUT_KEY] = policy
+
+    behavior = next(module for module in canvas["modules"] if module["module_id"] == BEHAVIOR_SAFETY_MODULE_ID)
+    behavior_output = next(node for node in behavior["module_graph"]["nodes"] if node["node_type"] == "module_output")
+    behavior_policy = behavior_output["outputs"][BEHAVIOR_SAFETY_OUTPUT_KEY]
+    behavior_policy["forbidden_behaviors"] = ["autonomous_external_action"]
+    behavior["outputs"][BEHAVIOR_SAFETY_OUTPUT_KEY] = behavior_policy
+
+    dr = compile_dr_v0_3(canvas)
+
+    assert dr["payload"]["resident_identity"] == base["payload"]["resident_identity"]
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["identity_profile"] == base["payload"]["graph_snapshot"]["layer_outputs"]["identity_profile"]
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_1"] == base["payload"]["graph_snapshot"]["layer_outputs"]["layer_1"]
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_3"][CONTENT_SAFETY_OUTPUT_KEY]["allowed_scope"] == ["humanistic_dialogue"]
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_3"][CONTENT_SAFETY_OUTPUT_KEY]["compile_validation_status"] == "valid"
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_3"][BEHAVIOR_SAFETY_OUTPUT_KEY]["forbidden_behaviors"] == ["autonomous_external_action"]
+    assert dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_3"][BEHAVIOR_SAFETY_OUTPUT_KEY]["compile_validation_status"] == "valid"
+
+
+def test_risk_response_derives_policy_when_saved_output_has_no_fields():
+    canvas = _canvas_13()
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    risk_module = next(module for module in modules if module["module_id"] == RISK_RESPONSE_MODULE_ID)
+    output_node = next(node for node in risk_module["module_graph"]["nodes"] if node["node_type"] == "module_output")
+    output_node["outputs"][RISK_POLICY_OUTPUT_KEY] = {"output_key": RISK_POLICY_OUTPUT_KEY, "fields": {}, "compile_time_only": True}
+    risk_module["outputs"][RISK_POLICY_OUTPUT_KEY] = {"output_key": RISK_POLICY_OUTPUT_KEY, "fields": {}, "compile_time_only": True}
+    canvas["modules"] = modules
+
+    dr = compile_dr_v0_3(canvas)
+    layer_3 = dr["payload"]["graph_snapshot"]["layer_outputs"]["layer_3"]
+    risk_policy = layer_3[RISK_POLICY_OUTPUT_KEY]
+
+    assert risk_policy["compile_validation_status"] == "valid"
+    assert risk_policy["decision_modes"] == ["allow", "soften", "refuse", "review", "block"]
+    assert risk_policy["default_risk_mode"] == "review"
+    assert risk_policy["risk_signal_summary"]["input_policies"] == [
+        CONTENT_SAFETY_OUTPUT_KEY,
+        BEHAVIOR_SAFETY_OUTPUT_KEY,
+        DATA_SAFETY_OUTPUT_KEY,
+        INTERACTION_SAFETY_OUTPUT_KEY,
+    ]
+    assert risk_policy["risk_level_policy"]["default_risk_level"] == "review"
+    assert risk_policy["risk_response_strategy"]["block_action"]
+    assert risk_policy[HUMAN_REVIEW_POLICY_OUTPUT_KEY]["human_review_triggers"]
+    assert risk_policy[HARD_BLOCK_POLICY_OUTPUT_KEY]["hard_block_triggers"]
+    assert layer_3[HARD_BLOCK_POLICY_OUTPUT_KEY] == risk_policy[HARD_BLOCK_POLICY_OUTPUT_KEY]
+    assert dr["payload"]["safety_policy"][RISK_POLICY_OUTPUT_KEY] == risk_policy
+    assert dr["safety_policy"][RISK_POLICY_OUTPUT_KEY] == risk_policy
 
 
 def test_compile_reads_user_filled_identity_field_values():
@@ -457,6 +693,16 @@ def test_identity_compile_time_nodes_not_in_runtime_plan():
 
     for node_type in ("field_input", "structure_normalize", "validation", "update_rule", "module_output", "layer_aggregator"):
         assert node_type not in runtime_steps
+
+
+def test_default_catalog_has_no_legacy_field_input_warning():
+    body = compile_dr_result_v0_3(_canvas_13())
+
+    assert body["valid"] is True
+    assert not any(
+        finding["code"] == "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING"
+        for finding in body["warnings"]
+    )
 
 
 def test_legacy_module_output_fallback_warning():

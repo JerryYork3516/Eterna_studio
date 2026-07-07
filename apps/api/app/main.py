@@ -11,7 +11,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models.v0_4 import PROTOCOL_VERSION_V0_4
-from .routers import dr, health, memory, protocol_v0_4, resident, runtime, runtime_config, schema, templates, workflow
+from .routers import (
+    dr,
+    health,
+    memory,
+    protocol_v0_4,
+    resident,
+    runtime,
+    runtime_config,
+    schema,
+    studio_assistant,
+    templates,
+    workflow,
+)
 from .schema_version import SCHEMA_VERSION
 
 app = FastAPI(
@@ -40,6 +52,7 @@ app.include_router(runtime.router)
 app.include_router(runtime_config.router)
 app.include_router(memory.router)
 app.include_router(dr.router)
+app.include_router(studio_assistant.router)
 
 
 @app.get("/", tags=["health"])

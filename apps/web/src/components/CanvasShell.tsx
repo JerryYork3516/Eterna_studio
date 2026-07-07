@@ -25,10 +25,13 @@ import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, Residen
 import { safeClone, safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow } from "@/lib/workflow";
 import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
+import { AssistantFloatingButton } from "@/components/assistant/AssistantFloatingButton";
+import { StudioAssistantPanel } from "@/components/assistant/StudioAssistantPanel";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
-import { WorkflowNodeCard } from "@/components/canvas/WorkflowNodeCard";
+import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
+import type { StudioAssistantPatch, StudioAssistantRequest } from "@/lib/studioAssistantApi";
 import {
   type CanvasState,
   type ModuleInstance as PersistenceModuleInstance,
@@ -149,8 +152,12 @@ function mixedOrSingle(values: string[], emptyValue: string) {
   return unique.length === 1 ? unique[0] : "mixed";
 }
 
+function isHiddenCatalogModule(module: ModuleCatalogEntryV04) {
+  return module.ui_config?.hidden_in_module_library === true || module.config?.hidden_in_module_library === true || module.ui_config?.catalog_only === true || module.config?.catalog_only === true;
+}
+
 function modulesForLayer(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04) {
-  return moduleCatalog.modules.filter((module) => module.layer_id === layer.layer_id);
+  return moduleCatalog.modules.filter((module) => module.layer_id === layer.layer_id && !isHiddenCatalogModule(module));
 }
 
 function getLayerDisplayMeta(layer: CatalogLayerInput, t: (key: string, fallback?: string) => string) {
@@ -316,7 +323,7 @@ function getCollapsedLabel(type: ModuleNodeType, language: Language): string {
 }
 
 type BottomTab = "logs" | "artifacts" | "preview";
-type DrawerId = "layers" | "residentPreview" | "settings" | BottomTab;
+type DrawerId = "layers" | "residentPreview" | "settings" | "assistant" | BottomTab;
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 type RunWorkflowStatus = "idle" | "running" | "success" | "error";
 type AlignAction = "left" | "right" | "top" | "bottom" | "center-x" | "center-y";
@@ -384,7 +391,10 @@ function moduleCatalogName(module: ModuleCatalogEntryV04, t: (key: string, fallb
 }
 
 function moduleCatalogSlot(module: ModuleCatalogEntryV04) {
-  return module.slot_type || "unplanned";
+  if (module.slot_type) {
+    return module.slot_type;
+  }
+  return moduleCatalogClass(module) === "core" ? "core" : "unplanned";
 }
 
 function moduleCatalogClass(module: ModuleCatalogEntryV04) {
@@ -397,6 +407,194 @@ function moduleCatalogClass(module: ModuleCatalogEntryV04) {
     return moduleClass;
   }
   return module.category || "plugin";
+}
+
+function moduleDisplayLayerId(module: ModuleCatalogEntryV04, storedLayerId: string) {
+  return module.layer_id === "general" ? storedLayerId : module.layer_id;
+}
+
+function moduleIdsForDisplayLayer(layerModules: Record<string, string[]>, layerId: string, moduleCatalogById: Map<string, ModuleCatalogEntryV04>) {
+  const ids: string[] = [];
+  for (const [storedLayerId, moduleIds] of Object.entries(layerModules)) {
+    for (const moduleId of moduleIds) {
+      if (ids.includes(moduleId)) {
+        continue;
+      }
+      const module = moduleCatalogById.get(moduleId);
+      if (!module || isHiddenCatalogModule(module)) {
+        continue;
+      }
+      if (moduleDisplayLayerId(module, storedLayerId) === layerId) {
+        ids.push(moduleId);
+      }
+    }
+  }
+  return ids;
+}
+
+function storedLayerIdForModule(layerModules: Record<string, string[]>, moduleId: string, fallbackLayerId: string) {
+  return Object.entries(layerModules).find(([, moduleIds]) => moduleIds.includes(moduleId))?.[0] ?? fallbackLayerId;
+}
+
+function moduleIdFromInstanceId(instanceId: string) {
+  return instanceId.split(MODULE_INSTANCE_SEPARATOR).slice(1).join(MODULE_INSTANCE_SEPARATOR);
+}
+
+function layerIdFromInstanceId(instanceId: string) {
+  return instanceId.split(MODULE_INSTANCE_SEPARATOR)[0] ?? "";
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasMeaningfulValue);
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasMeaningfulValue);
+  }
+  return true;
+}
+
+function moduleGraphUserContentScore(graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  let score = 0;
+  for (const node of nodes) {
+    if (!isRecord(node)) {
+      continue;
+    }
+    const data = isRecord(node.data) ? node.data : {};
+    const params = isRecord(data.params) ? data.params : {};
+    for (const fieldList of [params.fields, data.fields]) {
+      if (!Array.isArray(fieldList)) {
+        continue;
+      }
+      for (const field of fieldList) {
+        if (isRecord(field) && hasMeaningfulValue(field.value)) {
+          score += 1;
+        }
+      }
+    }
+  }
+  return score;
+}
+
+function fieldInputFieldsFromCatalogModule(module: ModuleCatalogEntryV04) {
+  const inputNode = moduleGraphNodes(module).find((node) => catalogNodeType(node) === "field_input");
+  const params = isRecord(inputNode?.params) ? inputNode.params : {};
+  return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+}
+
+function fieldValuesById(fields: Record<string, unknown>[]) {
+  return new Map(fields.map((field) => [String(field.field_id || ""), field.value]));
+}
+
+function stableJson(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
+
+function moduleGraphChangedFieldScore(
+  graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined,
+  module: ModuleCatalogEntryV04 | null | undefined
+) {
+  if (!module) {
+    return moduleGraphUserContentScore(graph);
+  }
+  const defaults = fieldValuesById(fieldInputFieldsFromCatalogModule(module));
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  let changedScore = 0;
+  for (const node of nodes) {
+    if (!isRecord(node)) {
+      continue;
+    }
+    const data = isRecord(node.data) ? node.data : {};
+    const params = isRecord(data.params) ? data.params : {};
+    for (const fieldList of [params.fields, data.fields]) {
+      if (!Array.isArray(fieldList)) {
+        continue;
+      }
+      for (const field of fieldList) {
+        if (!isRecord(field)) {
+          continue;
+        }
+        const fieldId = String(field.field_id || "");
+        const value = field.value;
+        if (!hasMeaningfulValue(value)) {
+          continue;
+        }
+        if (!defaults.has(fieldId) || stableJson(defaults.get(fieldId)) !== stableJson(value)) {
+          changedScore += stableJson(value).length + 1;
+        }
+      }
+    }
+  }
+  return changedScore;
+}
+
+function localStorageModuleGraphCandidatesForModule(moduleId: string) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  const candidates: Array<{ id: string; graph?: { nodes?: unknown[]; edges?: unknown[] } | null; backupKey?: string; isBackup?: boolean }> = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith("module_graph_backup_")) {
+      const rawId = key.slice("module_graph_backup_".length).replace(/_\d+$/, "");
+      if (moduleIdFromInstanceId(rawId) === moduleId) {
+        try {
+          const parsed = JSON.parse(window.localStorage.getItem(key) ?? "{}") as { nodes?: unknown[]; edges?: unknown[] };
+          candidates.push({ id: rawId, graph: parsed, backupKey: key, isBackup: true });
+        } catch {
+          // Ignore malformed recovery candidates.
+        }
+      }
+      continue;
+    }
+    if (!key?.startsWith("module_graph_")) {
+      continue;
+    }
+    const id = key.slice("module_graph_".length);
+    if (moduleIdFromInstanceId(id) === moduleId) {
+      candidates.push({ id, graph: loadModuleGraphState(id), isBackup: false });
+    }
+  }
+  return candidates;
+}
+
+function bestModuleGraphId(
+  moduleId: string,
+  preferredInstanceId: string,
+  storeGraphs: Record<string, { nodes?: unknown[]; edges?: unknown[] } | undefined>,
+  module?: ModuleCatalogEntryV04 | null
+) {
+  const candidates: Array<{ id: string; graph?: { nodes?: unknown[]; edges?: unknown[] } | null; backupKey?: string; isBackup?: boolean }> = [
+    ...Object.keys(storeGraphs)
+      .filter((id) => id === preferredInstanceId || moduleIdFromInstanceId(id) === moduleId)
+      .map((id) => ({ id, graph: storeGraphs[id] ?? loadModuleGraphState(id), isBackup: false })),
+    ...localStorageModuleGraphCandidatesForModule(moduleId)
+  ];
+  if (!candidates.some((candidate) => candidate.id === preferredInstanceId)) {
+    candidates.unshift({ id: preferredInstanceId, graph: storeGraphs[preferredInstanceId] ?? loadModuleGraphState(preferredInstanceId), isBackup: false });
+  }
+  const candidatePool = candidates.some((candidate) => !candidate.isBackup && moduleGraphChangedFieldScore(candidate.graph, module) > 0)
+    ? candidates.filter((candidate) => !candidate.isBackup)
+    : candidates;
+  let bestId = preferredInstanceId;
+  let bestScore = -1;
+  let bestBackupGraph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined = null;
+  for (const candidate of candidatePool) {
+    const score = moduleGraphChangedFieldScore(candidate.graph, module);
+    if (score > bestScore || (score === bestScore && candidate.id === preferredInstanceId)) {
+      bestId = candidate.id;
+      bestScore = score;
+      bestBackupGraph = candidate.backupKey ? candidate.graph : null;
+    }
+  }
+  if (bestBackupGraph) {
+    saveModuleGraphState(bestId, bestBackupGraph.nodes ?? [], bestBackupGraph.edges ?? []);
+  }
+  return bestId;
 }
 
 type PendingModuleAdd = {
@@ -470,13 +668,16 @@ function buildCatalogModuleSeed(module: ModuleCatalogEntryV04, instanceId: strin
     const outputs = cloneRecord(node.outputs);
     const metadata = cloneRecord(node.metadata);
     const i18nKeys = cloneRecord(node.i18n_keys);
+    const catalogPosition = isRecord(node.position) ? node.position : {};
+    const positionX = typeof catalogPosition.x === "number" ? catalogPosition.x : 120 + index * 360;
+    const positionY = typeof catalogPosition.y === "number" ? catalogPosition.y : 100;
     return ensurePorts({
       node_id: nodeId,
       type: nodeType,
       category: "compile_time",
       title_key: String(i18nKeys.name || `node.type.${nodeType}`),
       title_fallback: readableNodeName(originalNodeId),
-      position: { x: 120 + index * 360, y: 100 },
+      position: { x: positionX, y: positionY },
       lock_level: "editable",
       locale: null,
       data: {
@@ -576,11 +777,42 @@ function fieldInputFields(schemaNode: WorkflowNode): Record<string, unknown>[] {
   return Array.isArray(params.fields) ? safeClone(params.fields.filter(isRecord)) : [];
 }
 
+function fieldsFromNodeData(data: Record<string, unknown>): Record<string, unknown>[] {
+  if (Array.isArray(data.fields)) {
+    return data.fields.filter(isRecord);
+  }
+  const params = isRecord(data.params) ? data.params : {};
+  return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+}
+
+function paramsFromNodeData(data: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(data.params) ? data.params : {};
+}
+
+function compileTimeFieldKey(field: Record<string, unknown>, index: number) {
+  return String(field.field_id || field.key || field.name || field.id || `field_${index + 1}`);
+}
+
+function compileTimeFieldMatches(field: Record<string, unknown>, index: number, key: string) {
+  const candidates = [
+    compileTimeFieldKey(field, index),
+    field.field_id,
+    field.key,
+    field.name,
+    field.id,
+  ].map((value) => String(value || ""));
+  return candidates.includes(key);
+}
+
+function updateFieldValue(fields: Record<string, unknown>[], index: number, value: unknown) {
+  return fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, value } : field));
+}
+
 function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV04): Record<string, unknown> {
   const data = isRecord(schemaNode.data) ? schemaNode.data : {};
   const nodeType = String(data.node_type || schemaNode.type);
   const params = cloneRecord(data.params);
-  if (nodeType === "field_input") {
+  if (nodeType === "field_input" || nodeType === "text_config") {
     params.fields = fieldInputFields(schemaNode);
   }
   return {
@@ -640,9 +872,11 @@ function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unkn
     outputValue = {
       ...existing,
       output_key: outputKey,
-      fields: fieldValues,
       compile_time_only: true,
     };
+    if (fields.length > 0) {
+      outputValue.fields = fieldValues;
+    }
     outputs[outputKey] = outputValue;
     outputs.module_output = outputKey;
     node.outputs = outputs;
@@ -1445,6 +1679,9 @@ export function CanvasShell() {
   const modulesByCatalogLayerId = useMemo(() => {
     const grouped = new Map<string, ModuleCatalogEntryV04[]>();
     for (const module of moduleCatalog?.modules ?? []) {
+      if (isHiddenCatalogModule(module)) {
+        continue;
+      }
       grouped.set(module.layer_id, [...(grouped.get(module.layer_id) ?? []), module]);
     }
     return grouped;
@@ -1462,33 +1699,57 @@ export function CanvasShell() {
     });
     return instance;
   }, []);
+  const findModuleInstance = useCallback(
+    (moduleId: string, layerId: string): ModuleInstance | null => {
+      const preferredId = `${layerId}${MODULE_INSTANCE_SEPARATOR}${moduleId}`;
+      const storeGraphs = useCanvasStore.getState().moduleGraphs;
+      const module = moduleCatalogById.get(moduleId);
+      const registryCandidates = Object.values(moduleInstanceRegistry).filter((instance) => instance.moduleId === moduleId);
+      const bestGraphId = bestModuleGraphId(moduleId, preferredId, storeGraphs, module);
+      const graphInstance =
+        bestGraphId && moduleIdFromInstanceId(bestGraphId) === moduleId
+          ? {
+              instanceId: bestGraphId,
+              moduleId,
+              layerId: layerIdFromInstanceId(bestGraphId) || layerId
+            }
+          : null;
+      return graphInstance ?? moduleInstanceRegistry[preferredId] ?? registryCandidates[0] ?? null;
+    },
+    [moduleCatalogById, moduleInstanceRegistry]
+  );
   const addModuleToLayer = useCallback(
     (layerNodeId: string, moduleId: string) => {
       console.log("[NODE-C-DEDUP] addModuleToLayer called:", { layerNodeId, moduleId });
-      if (!moduleCatalogById.has(moduleId)) {
+      const module = moduleCatalogById.get(moduleId);
+      if (!module) {
         console.warn("[NODE-C-DEDUP] moduleId not found in catalog:", moduleId);
         return;
       }
+      if (isHiddenCatalogModule(module)) {
+        return;
+      }
+      const targetLayerId = moduleDisplayLayerId(module, layerNodeId);
       
       // Pre-check: verify moduleId is not already in this layer
-      const existingBefore = layerModules[layerNodeId] ?? [];
-      if (existingBefore.includes(moduleId)) {
-        console.warn("[NODE-C-DEDUP] DUPLICATE PREVENTED: moduleId already in this layer:", { layerNodeId, moduleId });
+      const existingStoredLayerId = storedLayerIdForModule(layerModules, moduleId, "");
+      if (existingStoredLayerId) {
+        console.warn("[NODE-C-DEDUP] DUPLICATE PREVENTED: moduleId already attached:", { storedLayerId: existingStoredLayerId, moduleId });
         return;
       }
       
       // 1. Ensure instance is created and registered (dedup at instance level)
-      ensureModuleInstance(moduleId, layerNodeId);
+      ensureModuleInstance(moduleId, targetLayerId);
       
       // 2. Add to layer modules list (with dedup check)
       setLayerModules((current) => {
-        const existing = current[layerNodeId] ?? [];
+        const existing = current[targetLayerId] ?? [];
         if (existing.includes(moduleId)) {
-          console.warn("[NODE-C-DEDUP] DUPLICATE in setLayerModules (race condition prevented):", { layerNodeId, moduleId });
+          console.warn("[NODE-C-DEDUP] DUPLICATE in setLayerModules (race condition prevented):", { layerNodeId: targetLayerId, moduleId });
           return current;
         }
-        const updated = { ...current, [layerNodeId]: [...existing, moduleId] };
-        console.log("[NODE-C-DEDUP] module successfully added to layer:", { layerNodeId, moduleId, totalInLayer: updated[layerNodeId].length });
+        const updated = { ...current, [targetLayerId]: [...existing, moduleId] };
+        console.log("[NODE-C-DEDUP] module successfully added to layer:", { layerNodeId: targetLayerId, moduleId, totalInLayer: updated[targetLayerId].length });
         return updated;
       });
       
@@ -1497,15 +1758,22 @@ export function CanvasShell() {
     },
     [ensureModuleInstance, moduleCatalogById, layerModules]
   );
+
   const removeModuleFromLayer = useCallback((layerNodeId: string, moduleId: string) => {
-    setLayerModules((current) => ({ ...current, [layerNodeId]: (current[layerNodeId] ?? []).filter((id) => id !== moduleId) }));
+    setLayerModules((current) => {
+      const module = moduleCatalogById.get(moduleId);
+      if (module?.layer_id === "general") {
+        return { ...current, [layerNodeId]: (current[layerNodeId] ?? []).filter((id) => id !== moduleId) };
+      }
+      return Object.fromEntries(Object.entries(current).map(([id, moduleIds]) => [id, moduleIds.filter((currentModuleId) => currentModuleId !== moduleId)]));
+    });
     setSelectedLayerModuleKeys((current) => {
       const next = new Set(current);
       next.delete(`${layerNodeId}:${moduleId}`);
       return next;
     });
     setSaveStatus("dirty");
-  }, []);
+  }, [moduleCatalogById]);
   const removeAllModulesFromLayer = useCallback((layerNodeId: string) => {
     setLayerModules((current) => ({ ...current, [layerNodeId]: [] }));
     setSelectedLayerModuleKeys((current) => {
@@ -2139,8 +2407,6 @@ export function CanvasShell() {
   const openCatalogModuleCanvas = useCallback(
     (layerNodeId: string, moduleId: string) => {
       console.log("[P1-SYNC] openCatalogModuleCanvas: using bridge to open tab");
-      const moduleInstance = ensureModuleInstance(moduleId, layerNodeId);
-      const moduleNodeId = moduleInstance.instanceId;
       let mod = moduleCatalogById.get(moduleId);
 
       if (!mod && moduleCatalog) {
@@ -2157,6 +2423,9 @@ export function CanvasShell() {
         appendLog(`模块未找到: ${moduleId}`, "error");
         return;
       }
+      const targetLayerId = moduleDisplayLayerId(mod, layerNodeId);
+      const moduleInstance = findModuleInstance(moduleId, targetLayerId) ?? ensureModuleInstance(moduleId, targetLayerId);
+      const moduleNodeId = moduleInstance.instanceId;
 
       console.log("[module-open] open module canvas", { moduleId, layerId: layerNodeId, tabId: moduleNodeId });
       const seed = buildCatalogModuleSeed(mod, moduleNodeId);
@@ -2167,7 +2436,7 @@ export function CanvasShell() {
       setActiveDrawer(null);
       appendLog(`${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))}`);
     },
-    [appendLog, ensureModuleInstance, moduleCatalogById, moduleCatalog, t]
+    [appendLog, ensureModuleInstance, findModuleInstance, moduleCatalogById, moduleCatalog, t]
   );
 
   useEffect(() => {
@@ -2486,7 +2755,7 @@ export function CanvasShell() {
     const folderNodes = catalogLayersForRender.map((layer) => {
       const layerId = layer.layer_id;
       const subnodes: WorkflowNode[] = [];
-      const attachedModuleIds = layerModules[layerId] ?? [];
+      const attachedModuleIds = moduleIdsForDisplayLayer(layerModules, layerId, moduleCatalogById);
 
       const attachedModules = attachedModuleIds
         .map((id) => {
@@ -2498,7 +2767,12 @@ export function CanvasShell() {
           return mod;
         })
         .filter((module): module is ModuleCatalogEntryV04 => Boolean(module));
-      const attachedModuleColors = Object.fromEntries(attachedModuleIds.map((id) => [id, moduleUiColors[`${layerId}:${id}`] ?? ""]));
+      const attachedModuleColors = Object.fromEntries(
+        attachedModuleIds.map((id) => {
+          const storedLayerId = storedLayerIdForModule(layerModules, id, layerId);
+          return [id, moduleUiColors[`${layerId}:${id}`] ?? moduleUiColors[`${storedLayerId}:${id}`] ?? ""];
+        })
+      );
       const frame = stackFrames.get(layerId);
       if (!frame) {
         throw new Error(`Missing v0.4 module-catalog layer frame: ${layerId}`);
@@ -2587,17 +2861,16 @@ export function CanvasShell() {
       }
       const storeGraphs = useCanvasStore.getState().moduleGraphs;
       const overrides = new Map<string, Record<string, unknown>>();
-      for (const instance of Object.values(moduleInstanceRegistry)) {
-        const catalogModule = moduleCatalogById.get(instance.moduleId);
-        if (!catalogModule) {
-          continue;
-        }
-        const graph = storeGraphs[instance.instanceId] ?? loadModuleGraphState(instance.instanceId);
+      for (const catalogModule of moduleCatalog.modules) {
+        const registryInstance = Object.values(moduleInstanceRegistry).find((instance) => instance.moduleId === catalogModule.module_id);
+        const preferredInstanceId = registryInstance?.instanceId ?? `${catalogModule.layer_id}${MODULE_INSTANCE_SEPARATOR}${catalogModule.module_id}`;
+        const graphId = bestModuleGraphId(catalogModule.module_id, preferredInstanceId, storeGraphs, catalogModule);
+        const graph = storeGraphs[graphId] ?? loadModuleGraphState(graphId);
         const graphNodes = graph?.nodes ?? [];
         if (!graphNodes.length) {
           continue;
         }
-        overrides.set(instance.moduleId, moduleWithCompiledGraph(catalogModule, graphNodes, graph?.edges ?? []));
+        overrides.set(catalogModule.module_id, moduleWithCompiledGraph(catalogModule, graphNodes, graph?.edges ?? []));
       }
       const modules: Workflow["modules"] = moduleCatalog.modules.map((module) => {
         const compiled = overrides.get(module.module_id);
@@ -3262,6 +3535,71 @@ export function CanvasShell() {
 	    ]
 	  );
 
+  const selectedLayerModuleKey = useMemo(() => [...selectedLayerModuleKeys][0] ?? "", [selectedLayerModuleKeys]);
+  const selectedLayerModule = useMemo(() => {
+    if (!selectedLayerModuleKey) {
+      return null;
+    }
+    const separatorIndex = selectedLayerModuleKey.indexOf(":");
+    if (separatorIndex < 0) {
+      return null;
+    }
+    const layerId = selectedLayerModuleKey.slice(0, separatorIndex);
+    const moduleId = selectedLayerModuleKey.slice(separatorIndex + 1);
+    return {
+      layerId,
+      moduleId,
+      module: moduleCatalogById.get(moduleId) ?? null,
+    };
+  }, [moduleCatalogById, selectedLayerModuleKey]);
+
+  const mainAssistantRequest = useMemo<StudioAssistantRequest>(() => {
+    const layerId =
+      selectedLayerModule?.layerId ??
+      activeLayer?.layer_id ??
+      (selectedNodeId && layerById.has(selectedNodeId) ? selectedNodeId : undefined);
+    const neighborModules = layerId
+      ? moduleIdsForDisplayLayer(layerModules, layerId, moduleCatalogById)
+          .map((moduleId) => moduleCatalogById.get(moduleId))
+          .filter((module): module is ModuleCatalogEntryV04 => Boolean(module))
+      : [];
+    return {
+      canvas_id: workflow?.template_type ?? "schema_v04",
+      layer_id: layerId,
+      module_id: selectedLayerModule?.moduleId,
+      node_id: selectedNode?.node_id ?? selectedNodeId ?? undefined,
+      field_key: undefined,
+      selected_text: "",
+      mode: "explain",
+      context: {
+        resident_identity: {
+          source_layer: "layer_1",
+        },
+        current_layer: layerId ? layerById.get(layerId) ?? null : null,
+        current_module: selectedLayerModule?.module ?? null,
+        current_node: selectedNode,
+        field_references: [],
+        neighbor_modules: neighborModules,
+      },
+    };
+  }, [
+    activeLayer,
+    layerById,
+    layerModules,
+    moduleCatalogById,
+    selectedLayerModule,
+    selectedNode,
+    selectedNodeId,
+    workflow?.template_type,
+  ]);
+
+  const handleMainAssistantPatch = useCallback(
+    (_patch: StudioAssistantPatch) => {
+      appendLog(t("assistant.status.noEditableField", "Open a module field before applying assistant suggestions."), "warn");
+    },
+    [appendLog, t]
+  );
+
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
   const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
@@ -3616,8 +3954,10 @@ export function CanvasShell() {
                     libraryNodeTypes={libraryNodeTypes}
                     language={language}
                     t={t}
+                    assistantOpen={activeDrawer === "assistant"}
                     onRenameModule={(id, name) => setModuleNames((current) => ({ ...current, [id]: name }))}
                     onExecutionResult={setResidentPreviewOutput}
+                    onCloseAssistant={() => setActiveDrawer(null)}
                     onClose={() => closeModuleTab(activeModuleNode.node_id)}
                   />
                 ) : null}
@@ -3677,13 +4017,25 @@ export function CanvasShell() {
         </section>
       </section>
 
-      {focusLayerId ? (
+      {focusLayerId ? (() => {
+        const focusModuleIds = moduleIdsForDisplayLayer(layerModules, focusLayerId, moduleCatalogById);
+        return (
         <ModuleFocusPanel
           layerLabel={moduleCatalog ? translate(language, `layer.${focusLayerId}`, moduleCatalog.layers.find((l) => l.layer_id === focusLayerId)?.layer_name ?? "") : ""}
-          moduleIds={layerModules[focusLayerId] ?? []}
+          moduleIds={focusModuleIds}
           moduleCatalogById={moduleCatalogById}
-          moduleColors={Object.fromEntries((layerModules[focusLayerId] ?? []).map((id) => [id, moduleUiColors[`${focusLayerId}:${id}`] ?? ""]))}
-          selectedModuleIds={new Set((layerModules[focusLayerId] ?? []).filter((id) => selectedLayerModuleKeys.has(`${focusLayerId}:${id}`)))}
+          moduleColors={Object.fromEntries(
+            focusModuleIds.map((id) => {
+              const storedLayerId = storedLayerIdForModule(layerModules, id, focusLayerId);
+              return [id, moduleUiColors[`${focusLayerId}:${id}`] ?? moduleUiColors[`${storedLayerId}:${id}`] ?? ""];
+            })
+          )}
+          selectedModuleIds={new Set(
+            focusModuleIds.filter((id) => {
+              const storedLayerId = storedLayerIdForModule(layerModules, id, focusLayerId);
+              return selectedLayerModuleKeys.has(`${focusLayerId}:${id}`) || selectedLayerModuleKeys.has(`${storedLayerId}:${id}`);
+            })
+          )}
           t={t}
           onOpen={(moduleId) => {
             // Opening the module canvas should reveal it: close the focus overlay,
@@ -3706,7 +4058,8 @@ export function CanvasShell() {
           }}
           onClose={() => setFocusLayerId(null)}
         />
-      ) : null}
+        );
+      })() : null}
 
       <FloatingDock activeDrawer={activeDrawer} t={t} onToggle={toggleDrawer} />
 
@@ -3743,6 +4096,22 @@ export function CanvasShell() {
             loadedDRResult={loadedDRResult}
             previewLoadStatus={previewLoadStatus}
             previewLoadError={previewLoadError}
+          />
+        </FloatingSidePanel>
+      ) : null}
+
+      {activeDrawer === "assistant" && !activeModuleNode ? (
+        <FloatingSidePanel
+          title={t("assistant.panel.title", "Assistant")}
+          meta={t("assistant.panel.meta", "Studio canvas")}
+          className="assistant-side-panel"
+          onClose={() => setActiveDrawer(null)}
+        >
+          <StudioAssistantPanel
+            request={mainAssistantRequest}
+            canApplyPatch={false}
+            t={t}
+            onApplyPatch={handleMainAssistantPatch}
           />
         </FloatingSidePanel>
       ) : null}
@@ -3885,6 +4254,7 @@ function FloatingDock({
   onToggle: (drawer: DrawerId) => void;
 }) {
   const dockItems: { id: DrawerId; label: string }[] = [
+    { id: "assistant", label: t("assistant.floatingButton.title", "Assistant") },
     { id: "layers", label: t("panel.layerNavigator", "Layers") },
     { id: "logs", label: t("panel.logs") },
     { id: "artifacts", label: t("panel.artifacts") },
@@ -3935,19 +4305,34 @@ function FloatingDock({
       onMouseDown={handleDockMouseDown}
     >
       {dockItems.map((item) => (
-        <button
-          key={item.id}
-          className={activeDrawer === item.id ? "is-active" : ""}
-          title={item.label}
-          aria-label={item.label}
-          onClick={() => {
+        item.id === "assistant" ? (
+          <AssistantFloatingButton
+            key={item.id}
+            active={activeDrawer === item.id}
+            title={item.label}
+            onClick={() => {
+              if (!suppressClickRef.current) {
+                onToggle(item.id);
+              }
+            }}
+          >
+            <DockIcon id={item.id} />
+          </AssistantFloatingButton>
+        ) : (
+          <button
+            key={item.id}
+            className={activeDrawer === item.id ? "is-active" : ""}
+            title={item.label}
+            aria-label={item.label}
+            onClick={() => {
             if (!suppressClickRef.current) {
               onToggle(item.id);
             }
-          }}
-        >
-          <DockIcon id={item.id} />
-        </button>
+            }}
+          >
+            <DockIcon id={item.id} />
+          </button>
+        )
       ))}
     </nav>
     </FloatingPortal>
@@ -3969,6 +4354,15 @@ function FloatingPortal({ children }: { children: ReactNode }) {
 }
 
 function DockIcon({ id }: { id: DrawerId }) {
+  if (id === "assistant") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 4v3M12 17v3M5.6 6.6l2.1 2.1M16.3 15.3l2.1 2.1M4 12h3M17 12h3M5.6 17.4l2.1-2.1M16.3 8.7l2.1-2.1" />
+        <path d="M10 10.2c.5-1.2 2.1-1.4 3-.5.8.8.7 2.2-.2 2.9-.6.4-.8.8-.8 1.4" />
+        <path d="M12 16h.01" />
+      </svg>
+    );
+  }
   if (id === "layers") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -4830,8 +5224,10 @@ function ModuleCanvasPanel({
   libraryNodeTypes,
   language,
   t,
+  assistantOpen,
   onRenameModule,
   onExecutionResult,
+  onCloseAssistant,
   onClose
 }: {
   moduleNode: WorkflowNode;
@@ -4841,8 +5237,10 @@ function ModuleCanvasPanel({
   libraryNodeTypes: ModuleNodeType[];
   language: Language;
   t: (key: string, fallback?: string) => string;
+  assistantOpen: boolean;
   onRenameModule: (id: string, name: string) => void;
   onExecutionResult: (result: unknown) => void;
+  onCloseAssistant: () => void;
   onClose: () => void;
 }) {
   const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
@@ -4905,13 +5303,56 @@ function ModuleCanvasPanel({
   const [moduleNodes, setModuleNodes, onBaseModuleNodesChange] = useNodesState(initialGraph.nodes);
   const [moduleEdges, setModuleEdges, onModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [assistantFieldKey, setAssistantFieldKey] = useState("");
   const [executionResult, setExecutionResult] = useState<unknown>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunWorkflowStatus>("idle");
-	  const [runInputText, setRunInputText] = useState("");
+  const [runInputText, setRunInputText] = useState("");
   const [showModuleMiniMap, setShowModuleMiniMap] = useState(true);
   const [showModuleDebugTracePanel, setShowModuleDebugTracePanel] = useState(true);
 	  const addedRef = useRef(0);
+  const moduleNodesRef = useRef(moduleNodes);
+  const moduleEdgesRef = useRef(moduleEdges);
+
+  useEffect(() => {
+    moduleNodesRef.current = moduleNodes;
+  }, [moduleNodes]);
+
+  useEffect(() => {
+    moduleEdgesRef.current = moduleEdges;
+  }, [moduleEdges]);
+
+  const persistModuleGraphNow = useCallback(
+    (nodesToPersist: Node[], edgesToPersist: Edge[] = moduleEdgesRef.current) => {
+      const saved = saveModuleGraphState(moduleNode.node_id, nodesToPersist, edgesToPersist);
+      if (!saved) {
+        console.warn("[NODE-E-PERSIST] failed to persist module graph immediately", {
+          moduleId: moduleNode.node_id,
+          nodeCount: nodesToPersist.length,
+          edgeCount: edgesToPersist.length
+        });
+      }
+      window.queueMicrotask(() => {
+        useCanvasStore
+          .getState()
+          .updateModuleGraph(moduleNode.node_id, nodesToPersist as unknown as WorkflowNode[], edgesToPersist as unknown as WorkflowEdge[]);
+      });
+    },
+    [moduleNode.node_id]
+  );
+
+  useEffect(() => {
+    const flushModuleGraph = () => {
+      saveModuleGraphState(moduleNode.node_id, moduleNodesRef.current, moduleEdgesRef.current);
+    };
+    window.addEventListener("beforeunload", flushModuleGraph);
+    window.addEventListener("pagehide", flushModuleGraph);
+    return () => {
+      flushModuleGraph();
+      window.removeEventListener("beforeunload", flushModuleGraph);
+      window.removeEventListener("pagehide", flushModuleGraph);
+    };
+  }, [moduleNode.node_id]);
 
   const addModuleNode = useCallback((type: ModuleNodeType, position?: { x: number; y: number }) => {
     console.log("[P1-NODE-CRUD] addModuleNode: adding new node", { type, position });
@@ -4956,6 +5397,7 @@ function ModuleCanvasPanel({
       return next;
     });
     setSelectedId(id);
+    setAssistantFieldKey("");
   }, [moduleNode.node_id, setModuleNodes]);
 
   const handleModuleCanvasDrop = useCallback(
@@ -5004,6 +5446,7 @@ function ModuleCanvasPanel({
         const removed = new Set(removedIds);
         setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
         setSelectedId((current) => (current && removed.has(current) ? "" : current));
+        setAssistantFieldKey("");
       }
     },
     [onBaseModuleNodesChange, setModuleEdges]
@@ -5017,6 +5460,7 @@ function ModuleCanvasPanel({
       }
       setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
       setSelectedId((current) => (current && removed.has(current) ? "" : current));
+      setAssistantFieldKey("");
     },
     [setModuleEdges]
   );
@@ -5028,24 +5472,118 @@ function ModuleCanvasPanel({
 
   const patchModuleNodeData = useCallback(
     (id: string, patch: Record<string, unknown>) => {
-      setModuleNodes((current) =>
-        current.map((node) => {
-          if (node.id !== id) {
-            return node;
+      const nextNodes = moduleNodesRef.current.map((node) => {
+        if (node.id !== id) {
+          return node;
+        }
+        const existing = node.data as { schemaNode?: WorkflowNode };
+        const schema = existing.schemaNode ?? ({} as WorkflowNode);
+        return {
+          ...node,
+          data: {
+            ...existing,
+            schemaNode: { ...schema, data: { ...(schema.data ?? {}), ...patch } }
           }
-          const existing = node.data as { schemaNode?: WorkflowNode };
-          const schema = existing.schemaNode ?? ({} as WorkflowNode);
-          return {
-            ...node,
-            data: {
-              ...existing,
-              schemaNode: { ...schema, data: { ...(schema.data ?? {}), ...patch } }
-            }
-          };
-        })
-      );
+        };
+      });
+      moduleNodesRef.current = nextNodes;
+      setModuleNodes(nextNodes);
+      persistModuleGraphNow(nextNodes);
     },
-    [setModuleNodes]
+    [persistModuleGraphNow, setModuleNodes]
+  );
+
+  const assistantRequest = useMemo<StudioAssistantRequest>(() => {
+    const layerId = String(moduleNode.data?.parent_layer || layerIdFromInstanceId(moduleNode.node_id) || "");
+    const moduleId = String(moduleNode.data?.module_catalog_id || moduleIdFromInstanceId(moduleNode.node_id) || moduleNode.module_id || moduleNode.node_id);
+    const workflowModules = Array.isArray((workflow as unknown as { modules?: unknown[] } | null)?.modules)
+      ? ((workflow as unknown as { modules?: unknown[] }).modules ?? [])
+      : [];
+    const currentModule =
+      workflowModules.find((item) => isRecord(item) && String(item.module_id || "") === moduleId) ??
+      {
+        module_id: moduleId,
+        module_instance_id: moduleNode.node_id,
+        title: title,
+      };
+    const neighborModules = workflowModules.filter((item) => isRecord(item) && String(item.layer_id || "") === layerId);
+    const nodeData = isRecord(selectedSchema?.data) ? selectedSchema.data : {};
+    const compileFields = selectedSchema ? fieldsFromNodeData(nodeData) : [];
+    const selectedCompileField =
+      assistantFieldKey && compileFields.length
+        ? compileFields.find((field, index) => compileTimeFieldMatches(field, index, assistantFieldKey)) ?? null
+        : null;
+    const schemaFields = selectedSchema
+      ? (((selectedSchema as unknown as { input_schema?: NodeInputField[] }).input_schema ?? getNodeDefinition(String(selectedSchema.type))?.input_schema ?? []) as NodeInputField[])
+      : [];
+    const schemaField = assistantFieldKey ? schemaFields.find((field) => field.key === assistantFieldKey) ?? null : null;
+    const currentField = selectedCompileField
+      ? {
+          field_key: assistantFieldKey,
+          field: selectedCompileField,
+          value: selectedCompileField.value,
+        }
+      : schemaField
+        ? {
+            field_key: assistantFieldKey,
+            label: schemaField.label,
+            type: schemaField.type,
+            value: nodeData[assistantFieldKey],
+          }
+        : null;
+
+    return {
+      canvas_id: workflow?.template_type ?? "schema_v04",
+      layer_id: layerId || undefined,
+      module_id: moduleId || undefined,
+      node_id: selectedSchema?.node_id ?? (selectedId || undefined),
+      field_key: assistantFieldKey || undefined,
+      selected_text: "",
+      mode: "explain",
+      context: {
+        resident_identity: {
+          source_layer: "layer_1",
+        },
+        current_layer: {
+          layer_id: layerId,
+        },
+        current_module: currentModule,
+        current_node: selectedSchema,
+        current_field: currentField,
+        field_references: [],
+        neighbor_modules: neighborModules,
+        module_graph: {
+          module_node_id: moduleNode.node_id,
+          nodes: moduleNodes.map((node) => (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode).filter(Boolean),
+          edges: moduleEdges,
+        },
+      },
+    };
+  }, [assistantFieldKey, moduleEdges, moduleNode, moduleNodes, selectedId, selectedSchema, title, workflow]);
+
+  const applyAssistantPatch = useCallback(
+    (patch: StudioAssistantPatch) => {
+      if (!selectedId) {
+        return;
+      }
+      const targetField = patch.target_field || assistantFieldKey;
+      if (!targetField) {
+        return;
+      }
+      const targetNode = moduleNodesRef.current.find((node) => node.id === selectedId);
+      const schemaNode = (targetNode?.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
+      const nodeData = isRecord(schemaNode?.data) ? schemaNode.data : {};
+      const fields = fieldsFromNodeData(nodeData);
+      const fieldIndex = fields.findIndex((field, index) => compileTimeFieldMatches(field, index, targetField));
+      if (fieldIndex >= 0) {
+        const params = paramsFromNodeData(nodeData);
+        const nextFields = updateFieldValue(fields, fieldIndex, patch.proposed_value);
+        patchModuleNodeData(selectedId, { fields: nextFields, params: { ...params, fields: nextFields } });
+        return;
+      }
+      patchModuleNodeData(selectedId, { [targetField]: patch.proposed_value });
+    },
+    [assistantFieldKey, patchModuleNodeData, selectedId]
   );
 
   // 自动保存模块画布图 (nodes + edges) 到 localStorage
@@ -5056,7 +5594,14 @@ function ModuleCanvasPanel({
         nodeCount: moduleNodes.length,
         edgeCount: moduleEdges.length
       });
-      saveModuleGraphState(moduleNode.node_id, moduleNodes, moduleEdges);
+      const saved = saveModuleGraphState(moduleNode.node_id, moduleNodes, moduleEdges);
+      if (!saved) {
+        console.warn("[NODE-E-PERSIST] failed to persist module graph during autosave", {
+          moduleId: moduleNode.node_id,
+          nodeCount: moduleNodes.length,
+          edgeCount: moduleEdges.length
+        });
+      }
       useCanvasStore.getState().updateModuleGraph(moduleNode.node_id, moduleNodes as unknown as WorkflowNode[], moduleEdges as unknown as WorkflowEdge[]);
     }, 500);
     return () => clearTimeout(timer);
@@ -5072,7 +5617,11 @@ function ModuleCanvasPanel({
           ...(node.data as Record<string, unknown>),
           onRename: (name: string) => patchModuleNodeData(node.id, { ui_name: name.trim() }),
           onColor: (color: string) => patchModuleNodeData(node.id, { ui_color: color }),
-          onInput: (key: string, value: unknown) => patchModuleNodeData(node.id, { [key]: value })
+          onInput: (key: string, value: unknown) => patchModuleNodeData(node.id, { [key]: value }),
+          onFieldFocus: (fieldKey: string) => {
+            setSelectedId(node.id);
+            setAssistantFieldKey(fieldKey);
+          }
         }
       })),
     [moduleNodes, patchModuleNodeData]
@@ -5132,6 +5681,7 @@ function ModuleCanvasPanel({
     });
     
     setSelectedId((current) => (current && removedNodes.has(current) ? "" : current));
+    setAssistantFieldKey("");
   }, [moduleEdges, moduleNodes, setModuleEdges, setModuleNodes]);
 
   const updateModuleNodeDataById = useCallback(
@@ -5181,6 +5731,7 @@ function ModuleCanvasPanel({
         return relatedEdges;
       });
       setSelectedId((current) => (current === nodeId ? "" : current));
+      setAssistantFieldKey("");
     },
     [setModuleEdges, setModuleNodes]
   );
@@ -5342,6 +5893,7 @@ function ModuleCanvasPanel({
       }
     ]);
     setSelectedId(id);
+    setAssistantFieldKey("");
   }, [copiedModuleNode, setModuleNodes]);
 
   const deleteModuleEdgeById = useCallback(
@@ -5354,6 +5906,7 @@ function ModuleCanvasPanel({
   const handleModuleNodeContextMenu: NodeMouseHandler = useCallback(
     (event, node) => {
       setSelectedId(node.id);
+      setAssistantFieldKey("");
       const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const group = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
       const menu = makeContextMenu(event, [
@@ -5643,76 +6196,97 @@ function ModuleCanvasPanel({
               <span>{t("empty.moduleBody", "Start by adding nodes from the left library, then connect Input / Transform / Personality / Output.")}</span>
             </div>
           ) : null}
-          <ReactFlow
-            nodes={moduleFlowNodes}
-            edges={moduleEdges}
-            nodeTypes={nodeTypes}
-            fitView
-            onInit={(instance) => {
-              moduleFlowRef.current = instance;
-            }}
-            minZoom={0.3}
-            maxZoom={1.6}
-            onNodesChange={onModuleNodesChange}
-            onEdgesChange={onModuleEdgesChange}
-            onConnect={onConnect}
-            onNodesDelete={handleModuleNodesDelete}
-            onNodeClick={(_event, node) => {
-              setContextMenu(null);
-              setSelectedId(node.id);
-            }}
-            onNodeContextMenu={handleModuleNodeContextMenu}
-            onEdgeContextMenu={handleModuleEdgeContextMenu}
-            onPaneContextMenu={handleModulePaneContextMenu}
-            onPaneClick={() => setContextMenu(null)}
-            selectionOnDrag
-            selectNodesOnDrag={false}
-            deleteKeyCode={["Backspace", "Delete"]}
-          >
-            <Background color="#333" gap={20} />
-            <Controls />
-            <CanvasDebugTracePanel
-              open={showModuleDebugTracePanel}
-              t={t}
-              logs={executionError ? [{ level: "error", message: executionError }] : []}
-              trace={executionResult}
-              validation={selectedSchema?.validation ?? null}
-              jsonPreview={{
-                selected_node: selectedSchema,
-                node_count: moduleNodes.length,
-                edge_count: moduleEdges.length,
-                run_status: runStatus
+          <WorkflowNodeCardModuleNodesProvider nodes={moduleFlowNodes}>
+            <ReactFlow
+              nodes={moduleFlowNodes}
+              edges={moduleEdges}
+              nodeTypes={nodeTypes}
+              fitView
+              onInit={(instance) => {
+                moduleFlowRef.current = instance;
               }}
-              onToggle={() => setShowModuleDebugTracePanel((value) => !value)}
-            />
-            {showModuleMiniMap ? (
-              <>
-                <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />
+              minZoom={0.3}
+              maxZoom={1.6}
+              onNodesChange={onModuleNodesChange}
+              onEdgesChange={onModuleEdgesChange}
+              onConnect={onConnect}
+              onNodesDelete={handleModuleNodesDelete}
+              onNodeClick={(_event, node) => {
+                setContextMenu(null);
+                setSelectedId(node.id);
+                setAssistantFieldKey("");
+              }}
+              onNodeContextMenu={handleModuleNodeContextMenu}
+              onEdgeContextMenu={handleModuleEdgeContextMenu}
+              onPaneContextMenu={handleModulePaneContextMenu}
+              onPaneClick={() => {
+                setContextMenu(null);
+                setAssistantFieldKey("");
+              }}
+              selectionOnDrag
+              selectNodesOnDrag={false}
+              deleteKeyCode={["Backspace", "Delete"]}
+            >
+              <Background color="#333" gap={20} />
+              <Controls />
+              <CanvasDebugTracePanel
+                open={showModuleDebugTracePanel}
+                t={t}
+                logs={executionError ? [{ level: "error", message: executionError }] : []}
+                trace={executionResult}
+                validation={selectedSchema?.validation ?? null}
+                jsonPreview={{
+                  selected_node: selectedSchema,
+                  node_count: moduleNodes.length,
+                  edge_count: moduleEdges.length,
+                  run_status: runStatus
+                }}
+                onToggle={() => setShowModuleDebugTracePanel((value) => !value)}
+              />
+              {showModuleMiniMap ? (
+                <>
+                  <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />
+                  <button
+                    type="button"
+                    className="canvas-debug-panel__collapse nodrag nopan"
+                    aria-label={t("debugPanel.collapse")}
+                    title={t("debugPanel.collapse")}
+                    onClick={() => setShowModuleMiniMap(false)}
+                  >
+                    {t("debugPanel.collapseGlyph")}
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
-                  className="canvas-debug-panel__collapse nodrag nopan"
-                  aria-label={t("debugPanel.collapse")}
-                  title={t("debugPanel.collapse")}
-                  onClick={() => setShowModuleMiniMap(false)}
+                  className="canvas-debug-panel__expand nodrag nopan"
+                  aria-label={t("debugPanel.expand")}
+                  title={t("debugPanel.expand")}
+                  onClick={() => setShowModuleMiniMap(true)}
                 >
-                  {t("debugPanel.collapseGlyph")}
+                  {t("debugPanel.expandLabel")}
                 </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="canvas-debug-panel__expand nodrag nopan"
-                aria-label={t("debugPanel.expand")}
-                title={t("debugPanel.expand")}
-                onClick={() => setShowModuleMiniMap(true)}
-              >
-                {t("debugPanel.expandLabel")}
-              </button>
-            )}
-          </ReactFlow>
+              )}
+            </ReactFlow>
+          </WorkflowNodeCardModuleNodesProvider>
           {contextMenu ? <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} /> : null}
         </div>
       </div>
+      {assistantOpen ? (
+        <FloatingSidePanel
+          title={t("assistant.panel.title", "Assistant")}
+          meta={title}
+          className="assistant-side-panel"
+          onClose={onCloseAssistant}
+        >
+          <StudioAssistantPanel
+            request={assistantRequest}
+            canApplyPatch={Boolean(selectedId && selectedSchema)}
+            t={t}
+            onApplyPatch={applyAssistantPatch}
+          />
+        </FloatingSidePanel>
+      ) : null}
     </section>
   );
 }

@@ -735,9 +735,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       moduleUiColors: state.moduleUiColors,
       layerModules: state.layerModules,
       moduleInstanceRegistry: state.moduleInstanceRegistry,
-      moduleGraphs: convertModuleGraphsToLegacy(state.moduleGraphs),
+      moduleGraphs: {},
     };
-    saveCanvasStateToLocalStorage(toSave);
-    console.log("[P1-STORE] persistModuleState: saved to localStorage");
+    const saved = saveCanvasStateToLocalStorage(toSave);
+    console.log(saved ? "[P1-STORE] persistModuleState: saved to localStorage" : "[P1-STORE] persistModuleState: save skipped");
   },
 }));

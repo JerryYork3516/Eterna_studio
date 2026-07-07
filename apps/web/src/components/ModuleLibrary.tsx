@@ -24,6 +24,10 @@ function moduleId(mod: ModuleCatalogEntryV04) {
   return mod.module_id;
 }
 
+function isHiddenCatalogModule(mod: ModuleCatalogEntryV04) {
+  return mod.ui_config?.hidden_in_module_library === true || mod.config?.hidden_in_module_library === true || mod.ui_config?.catalog_only === true || mod.config?.catalog_only === true;
+}
+
 function moduleName(mod: ModuleCatalogEntryV04) {
   return mod.module_name;
 }
@@ -48,6 +52,18 @@ function moduleClass(mod: ModuleCatalogEntryV04) {
 function slotLabel(slot: string | null | undefined, t: (key: string, fallback?: string) => string) {
   const value = slot || "unplanned";
   return t(`module.slot.${value}`, value);
+}
+
+function moduleBadgeLabel(mod: ModuleCatalogEntryV04, t: (key: string, fallback?: string) => string) {
+  if (mod.slot_type) {
+    return slotLabel(mod.slot_type, t);
+  }
+  const displayClass = moduleClass(mod);
+  return displayClass === "core" ? t("module.class.core") : null;
+}
+
+function moduleBadgeTitle(mod: ModuleCatalogEntryV04, t: (key: string, fallback?: string) => string) {
+  return mod.slot_type ? t("module.capability") : t("module.class.core");
 }
 
 function layerOrder(layer: ModuleLayerV04) {
@@ -78,7 +94,7 @@ export function ModuleLibrary({
 
   const modulesByLayer = useMemo(() => {
     const next = new Map<string, ModuleCatalogEntryV04[]>();
-    for (const mod of modules) {
+    for (const mod of modules.filter((module) => !isHiddenCatalogModule(module))) {
       const layerId = mod.layer_id || "general";
       next.set(layerId, [...(next.get(layerId) ?? []), mod]);
     }
@@ -93,7 +109,7 @@ export function ModuleLibrary({
       return null;
     }
     const ids = new Set<string>();
-    for (const mod of modules) {
+    for (const mod of modules.filter((module) => !isHiddenCatalogModule(module))) {
       const haystack = [mod.module_name, mod.slot_type, mod.layer_id, mod.category, mod.status].filter(Boolean).join(" ").toLowerCase();
       if (haystack.includes(q)) {
         ids.add(moduleId(mod));
@@ -102,7 +118,7 @@ export function ModuleLibrary({
     return ids;
   }, [modules, query]);
 
-  const totalCount = modules.length;
+  const totalCount = modules.filter((module) => !isHiddenCatalogModule(module)).length;
 
   const toggleLayer = (id: string) =>
     setCollapsedLayers((current) => {
@@ -159,14 +175,16 @@ export function ModuleLibrary({
               </button>
               {!layerCollapsed ? (
                 <div className="module-cat__items">
-                  {mods.map((mod) => (
+                  {mods.map((mod) => {
+                    const badgeLabel = moduleBadgeLabel(mod, t);
+                    return (
                     <div
                       key={moduleId(mod)}
                       role="button"
                       tabIndex={0}
                       draggable
                       className={`module-card cat-${moduleClass(mod)} status-${String(mod.status).toLowerCase()}`}
-                      title={`${moduleDisplayName(mod, t)}${mod.slot_type ? ` · ${t("module.capability", "能力类型")}: ${slotLabel(mod.slot_type, t)}` : ""} · ${statusLabel(String(mod.status), t)}`}
+                      title={`${moduleDisplayName(mod, t)}${badgeLabel ? ` · ${badgeLabel}` : ""} · ${statusLabel(String(mod.status), t)}`}
                       onDragStart={(event) => {
                         setModuleDragData(event, moduleId(mod));
                         onDragStartModule?.(moduleId(mod));
@@ -178,16 +196,15 @@ export function ModuleLibrary({
                       </div>
                       <div className="module-card__meta">
                         <span className="module-card__layer">{t(`layer.${layer.layer_id}`, layer.layer_id)}</span>
-                        {mod.slot_type ? (
-                          // Capability tag (not a standalone "slot module"). slot_type is
-                          // kept intact for the Slot Protocol; this is display-only.
-                          <span className="module-card__slot" title={t("module.capability", "能力类型")}>
-                            {slotLabel(mod.slot_type, t)}
+                        {badgeLabel ? (
+                          <span className="module-card__slot" title={moduleBadgeTitle(mod, t)}>
+                            {badgeLabel}
                           </span>
                         ) : null}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
             </section>

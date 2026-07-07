@@ -18,6 +18,17 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function stableJson(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
+
+function positionValue(value: unknown): { x: number; y: number } | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return typeof value.x === "number" && typeof value.y === "number" ? { x: value.x, y: value.y } : null;
+}
+
 function schemaNodeRecord(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) {
     return null;
@@ -120,6 +131,133 @@ function mergeCatalogFieldSeed(
   };
 }
 
+function catalogModuleIdFromSeed(initialNodes?: WorkflowNode[]): string {
+  for (const node of initialNodes ?? []) {
+    const schemaNode = schemaNodeRecord(node);
+    const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+    const moduleId = String(data.catalog_module_id || schemaNode?.module_id || data.module_id || "");
+    if (moduleId) {
+      return moduleId;
+    }
+  }
+  return "";
+}
+
+function catalogNodeIdFromGraphNode(node: unknown): string {
+  const schemaNode = schemaNodeRecord(node);
+  const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+  return String(data.catalog_node_id || schemaNode?.node_id || "");
+}
+
+function seedPositionsByCatalogNodeId(initialNodes?: WorkflowNode[]) {
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const node of initialNodes ?? []) {
+    const schemaNode = schemaNodeRecord(node);
+    const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+    const catalogNodeId = String(data.catalog_node_id || schemaNode?.node_id || "");
+    const position = positionValue(schemaNode?.position);
+    if (catalogNodeId && position) {
+      positions.set(catalogNodeId, position);
+    }
+  }
+  return positions;
+}
+
+function seedParamsByCatalogNodeId(initialNodes?: WorkflowNode[]) {
+  const paramsByNodeId = new Map<string, Record<string, unknown>>();
+  for (const node of initialNodes ?? []) {
+    const schemaNode = schemaNodeRecord(node);
+    const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+    const catalogNodeId = String(data.catalog_node_id || schemaNode?.node_id || "");
+    const params = isRecord(data.params) ? data.params : {};
+    if (catalogNodeId && Object.keys(params).length) {
+      paramsByNodeId.set(catalogNodeId, params);
+    }
+  }
+  return paramsByNodeId;
+}
+
+function setGraphNodePosition(node: WorkflowNode, position: { x: number; y: number }) {
+  const nextNode = node as WorkflowNode & Record<string, unknown>;
+  nextNode.position = position;
+  const schemaNode = schemaNodeRecord(nextNode);
+  if (schemaNode) {
+    schemaNode.position = position;
+  }
+}
+
+function mergeCatalogLayoutSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  const catalogModuleId = catalogModuleIdFromSeed(initialNodes);
+  if (
+    !["language_habit", "decision_pattern", "emotion_reaction", "interaction_strategy", "behavior_habit", "emotion_mapper"].includes(catalogModuleId) ||
+    !initialNodes?.length ||
+    !graph.nodes?.length
+  ) {
+    return null;
+  }
+  const positions = seedPositionsByCatalogNodeId(initialNodes);
+  const seedParamsByNodeId = seedParamsByCatalogNodeId(initialNodes);
+  if (!positions.size && !seedParamsByNodeId.size && !initialEdges?.length) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const catalogNodeId = catalogNodeIdFromGraphNode(nextNode);
+    const seedPosition = positions.get(catalogNodeId);
+    if (seedPosition) {
+      const currentPosition = positionValue((nextNode as Record<string, unknown>).position);
+      if (!currentPosition || currentPosition.x !== seedPosition.x || currentPosition.y !== seedPosition.y) {
+        setGraphNodePosition(nextNode, seedPosition);
+        changed = true;
+      }
+    }
+    const seedParams = seedParamsByNodeId.get(catalogNodeId);
+    const seedCheckboxConfig = seedParams && isRecord(seedParams.checkbox_config) ? seedParams.checkbox_config : null;
+    if (seedCheckboxConfig) {
+      const schemaNode = schemaNodeRecord(nextNode);
+      if (schemaNode) {
+        const data = schemaDataRecord(schemaNode);
+        const params = isRecord(data.params) ? { ...data.params } : {};
+        if (!isRecord(params.checkbox_config)) {
+          params.checkbox_config = cloneJson(seedCheckboxConfig);
+          data.params = params;
+          changed = true;
+        }
+      }
+    }
+    return nextNode;
+  });
+
+  const nextEdges = initialEdges?.length ? initialEdges : graph.edges;
+  if (initialEdges?.length && stableJson(graph.edges) !== stableJson(initialEdges)) {
+    changed = true;
+  }
+  if (!changed) {
+    return null;
+  }
+  return {
+    ...graph,
+    nodes: nextNodes,
+    edges: nextEdges,
+  };
+}
+
+function mergeCatalogSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  const fieldMerged = mergeCatalogFieldSeed(graph, initialNodes, initialEdges);
+  const layoutMerged = mergeCatalogLayoutSeed(fieldMerged ?? graph, initialNodes, initialEdges);
+  return layoutMerged ?? fieldMerged;
+}
+
 /**
  * 初始化 module state 水合
  * 
@@ -213,7 +351,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced empty graph with catalog seed");
       return graph;
     }
-    const mergedGraph = mergeCatalogFieldSeed(existingGraph, initialNodes, initialEdges);
+    const mergedGraph = mergeCatalogSeed(existingGraph, initialNodes, initialEdges);
     if (mergedGraph) {
       store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
@@ -232,7 +370,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       nodes: legacyGraph.nodes as WorkflowNode[],
       edges: legacyGraph.edges as WorkflowEdge[],
     };
-    const mergedGraph = mergeCatalogFieldSeed(graph, initialNodes, initialEdges) ?? graph;
+    const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");
@@ -257,28 +395,11 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
  */
 export function cleanupOrphanedGraphs() {
   console.log("[P1-BRIDGE] cleanupOrphanedGraphs: starting");
-  
-  const store = useCanvasStore.getState();
-  const tabs = store.moduleTabs;
-  const graphs = Object.keys(store.moduleGraphs);
-  
-  const orphaned = graphs.filter(graphId => !tabs.includes(graphId));
-  
-  if (orphaned.length > 0) {
-    console.warn("[P1-BRIDGE] cleanupOrphanedGraphs: found orphaned graphs", { count: orphaned.length, ids: orphaned });
-    
-    // 创建新的 graphs 对象，排除孤立的
-    const cleaned = { ...store.moduleGraphs };
-    orphaned.forEach(graphId => {
-      delete cleaned[graphId];
-      // 注意：不删除 localStorage 中的旧 key，因为可能还需要
-    });
-    
-    store.setModuleGraphs(cleaned);
-    console.log("[P1-BRIDGE] cleanupOrphanedGraphs: removed orphaned graphs");
-  } else {
-    console.log("[P1-BRIDGE] cleanupOrphanedGraphs: no orphaned graphs found");
-  }
+  // Do not delete graphs merely because their tab is not currently open.
+  // Module graph ids include the layer-scoped instance id; when a module is
+  // displayed under its catalog layer, older instance ids can still hold the
+  // user's filled node data and must remain available for recovery.
+  console.log("[P1-BRIDGE] cleanupOrphanedGraphs: skipped to preserve recoverable module graphs");
 }
 
 /**
