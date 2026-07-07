@@ -29,6 +29,8 @@ export type StudioAssistantPatch = {
 
 export type StudioAssistantResponse = {
   ok: boolean;
+  provider: string;
+  model: string;
   mode: StudioAssistantMode;
   summary: string;
   suggestions: unknown[];

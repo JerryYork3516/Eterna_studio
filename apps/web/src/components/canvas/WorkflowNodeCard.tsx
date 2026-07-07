@@ -317,8 +317,18 @@ function translateIfPresent(language: Language, key: string): string {
   return translated === marker ? "" : translated;
 }
 
+function stableI18nKeyPart(value: string) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
 function localizedCoreKey(language: Language, key: string) {
   return (
+    translateIfPresent(language, `assembly.field.${stableI18nKeyPart(key)}`) ||
     translateIfPresent(language, `node.coreParams.key.${key}`) ||
     translateIfPresent(language, `field.identity.${key}.label`) ||
     key
@@ -326,7 +336,11 @@ function localizedCoreKey(language: Language, key: string) {
 }
 
 function localizedCoreValue(language: Language, value: string) {
+  const normalized = stableI18nKeyPart(value);
   return (
+    translateIfPresent(language, `validation.${value}`) ||
+    translateIfPresent(language, `validation.${normalized}`) ||
+    translateIfPresent(language, `assembly.status.${normalized}`) ||
     translateIfPresent(language, `node.coreParams.value.${value}`) ||
     translateIfPresent(language, `node.coreParams.key.${value}`) ||
     translateIfPresent(language, `field.identity.${value}.label`) ||

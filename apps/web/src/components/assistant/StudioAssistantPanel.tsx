@@ -22,6 +22,10 @@ function compactText(value: unknown) {
   return JSON.stringify(value);
 }
 
+function asText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
 export function StudioAssistantPanel({
   request,
   canApplyPatch,
@@ -33,7 +37,6 @@ export function StudioAssistantPanel({
   t: (key: string, fallback?: string) => string;
   onApplyPatch: (patch: StudioAssistantPatch) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
   const [loadingMode, setLoadingMode] = useState<StudioAssistantMode | null>(null);
   const [result, setResult] = useState<StudioAssistantResponse | null>(null);
   const [error, setError] = useState("");
@@ -50,6 +53,15 @@ export function StudioAssistantPanel({
   );
 
   const hasContext = Boolean(request.layer_id || request.module_id || request.node_id || request.field_key);
+  const provider = result?.provider || asText(result?.diagnostics?.provider) || t("assistant.status.unknown", "Unknown");
+  const model = result?.model || asText(result?.diagnostics?.model) || t("assistant.status.unknown", "Unknown");
+  const assistantStatus = !result
+    ? t("assistant.status.unknown", "Unknown")
+    : result.diagnostics?.status === "disabled"
+      ? t("assistant.status.disabled", "Assistant disabled")
+      : result.ok
+        ? t("assistant.status.enabled", "Assistant enabled")
+        : t("assistant.status.error", "Assistant error");
 
   const runAction = async (mode: StudioAssistantMode) => {
     setLoadingMode(mode);
@@ -91,18 +103,16 @@ export function StudioAssistantPanel({
   };
 
   return (
-    <div className={`studio-assistant-panel ${collapsed ? "is-collapsed" : ""}`}>
-      <div className="studio-assistant-panel__tools">
-        <button type="button" onClick={() => setCollapsed((value) => !value)}>
-          {collapsed ? t("assistant.panel.expand", "Expand") : t("assistant.panel.collapse", "Collapse")}
-        </button>
-      </div>
-
-      {collapsed ? (
-        <p className="assistant-empty">{t("assistant.panel.collapsed", "Assistant panel collapsed")}</p>
-      ) : (
-        <>
+    <div className="studio-assistant-panel">
           <section className="assistant-context">
+            <div className="assistant-runtime">
+              <span>{t("assistant.runtime.provider", "Provider")}</span>
+              <strong>{provider}</strong>
+              <span>{t("assistant.runtime.model", "Model")}</span>
+              <strong>{model}</strong>
+              <span>{t("assistant.runtime.status", "Status")}</span>
+              <strong>{assistantStatus}</strong>
+            </div>
             <h3>{t("assistant.context.title", "Current context")}</h3>
             {hasContext ? (
               <dl>
@@ -150,8 +160,6 @@ export function StudioAssistantPanel({
           ) : (
             <p className="assistant-empty">{t("assistant.result.empty", "Choose an assistant action.")}</p>
           )}
-        </>
-      )}
     </div>
   );
 }

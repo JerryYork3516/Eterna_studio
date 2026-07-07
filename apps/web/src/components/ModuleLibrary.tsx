@@ -75,12 +75,14 @@ export function ModuleLibrary({
   collapsed,
   layers,
   modules,
+  onExpand,
   onDragStartModule
 }: {
   t: (key: string, fallback?: string) => string;
   collapsed: boolean;
   layers: ModuleLayerV04[];
   modules: ModuleCatalogEntryV04[];
+  onExpand?: () => void;
   onDragStartModule?: (moduleId: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -134,10 +136,19 @@ export function ModuleLibrary({
   if (collapsed) {
     return (
       <section className="panel-section module-library is-rail">
-        <div className="section-title">
-          <h2>{t("panel.moduleLibrary")}</h2>
-          <span>{totalCount}</span>
-        </div>
+        <button
+          type="button"
+          className="sidebar-rail__button sidebar-rail__button--module"
+          title={t("canvas.sidebar.moduleLibrary", t("panel.moduleLibrary"))}
+          aria-label={t("canvas.sidebar.moduleLibrary", t("panel.moduleLibrary"))}
+          onClick={() => {
+            setBodyCollapsed(false);
+            onExpand?.();
+          }}
+        >
+          <span className="sidebar-rail__icon sidebar-rail__icon--modules" aria-hidden="true" />
+          <span className="sidebar-rail__dot" aria-hidden="true" />
+        </button>
       </section>
     );
   }

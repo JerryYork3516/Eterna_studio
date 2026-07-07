@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { CSSProperties } from "react";
-import { translate } from "@/i18n";
+import { translate, type Language } from "@/i18n";
 import type { WorkflowNode } from "@/lib/schema-types";
 import { getNodeDefinition } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -14,6 +14,7 @@ type CanvasNodeData = {
   uiTags?: string[];
   uiColor?: string;
   onColor?: (color: string) => void;
+  onOpenAssembly?: () => void;
 };
 
 function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
@@ -24,11 +25,40 @@ function dataText(data: WorkflowNode["data"], key: string, fallback = "-") {
   return String(value);
 }
 
+function stableI18nKeyPart(value: string) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function translateFirst(language: Language, keys: string[], fallback: string) {
+  for (const key of keys) {
+    const marker = `__missing__${key}`;
+    const translated = translate(language, key, marker);
+    if (translated !== marker) {
+      return translated;
+    }
+  }
+  return fallback;
+}
+
+function assemblyStatusText(language: Language, value: unknown, fallback = "-") {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : "";
+  if (!raw || raw === "-") {
+    return translate(language, "common.notGenerated");
+  }
+  const normalized = stableI18nKeyPart(raw);
+  return translateFirst(language, [`assembly.status.${normalized}`, `module.status.${raw}`, `lock.${raw}`], fallback === "-" ? raw : fallback);
+}
+
 export function LayerContainerNode({ data, selected }: NodeProps) {
   const language = useCanvasStore((state) => state.language);
-  const { schemaNode, viewLabel, viewIndex, groupLabel, uiGroup, uiTags = [], uiColor, onColor } = data as CanvasNodeData;
+  const { schemaNode, viewLabel, viewIndex, groupLabel, uiGroup, uiTags = [], uiColor, onColor, onOpenAssembly } = data as CanvasNodeData;
   const label = viewLabel ?? translate(language, schemaNode.title_key, schemaNode.title_fallback);
-  const typeLabel = getNodeDefinition(schemaNode.type)?.display_name ?? translate(language, `node.type.${schemaNode.type}`, schemaNode.type);
+  const typeLabel = translate(language, `node.type.${schemaNode.type}`, getNodeDefinition(schemaNode.type)?.display_name ?? schemaNode.type);
   const lockLabel = translate(language, `lock.${schemaNode.lock_level}`, schemaNode.lock_level);
   const moduleTier = typeof schemaNode.data?.module_tier === "string" ? schemaNode.data.module_tier : null;
   const reviewStatus =
@@ -53,33 +83,49 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
           </div>
         </div>
         <div className="layer-node__badges">
-          {moduleTier ? <span className="tier-pill">{moduleTier}</span> : null}
+          {moduleTier ? <span className="tier-pill">{assemblyStatusText(language, moduleTier)}</span> : null}
           <span className="lock-pill">{lockLabel}</span>
+          {onOpenAssembly ? (
+            <button
+              type="button"
+              className="layer-node__assembly-button nodrag nopan"
+              title={translate(language, "assembly.panel.layerAssembly")}
+              aria-label={translate(language, "assembly.action.viewDetails")}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenAssembly();
+              }}
+            >
+              {translate(language, "assembly.action.viewDetails")}
+            </button>
+          ) : null}
         </div>
         {onColor ? (
           <label className="layer-node__color-picker nodrag">
-            <span>{translate(language, "node.header.color", "颜色")}</span>
+            <span>{translate(language, "node.header.color")}</span>
             <input
               type="color"
               value={uiColor || "#4f8cff"}
               onChange={(event) => onColor(event.target.value)}
-              aria-label={translate(language, "node.header.color", "颜色")}
+              aria-label={translate(language, "node.header.color")}
             />
           </label>
         ) : null}
       </div>
       <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.core", "核心参数")}</summary>
+        <summary>{translate(language, "node.sections.core")}</summary>
         <div className="layer-node__description">{dataText(schemaNode.data, "description", schemaNode.title_fallback)}</div>
         <div className="layer-node__grid">
           <span>{translate(language, "field.status")}</span>
-          <strong>{dataText(schemaNode.data, "status")}</strong>
+          <strong>{assemblyStatusText(language, dataText(schemaNode.data, "status"))}</strong>
           <span>{translate(language, "field.version")}</span>
           <strong>{dataText(schemaNode.data, "version")}</strong>
         </div>
       </details>
       <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.advanced", "高级参数")}</summary>
+        <summary>{translate(language, "node.sections.advanced")}</summary>
         {uiGroup || uiTags.length ? (
           <div className="layer-node__ui-meta">
             {uiGroup ? <span className="layer-node__ui-group">{uiGroup}</span> : null}
@@ -92,12 +138,12 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
         ) : null}
       </details>
       <details className="layer-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-        <summary>{translate(language, "node.sections.runtime", "运行信息")}</summary>
+        <summary>{translate(language, "node.sections.runtime")}</summary>
         <div className="layer-node__grid">
           <span>{translate(language, "field.childrenCount")}</span>
           <strong>{dataText(schemaNode.data, "children_count", "0")}</strong>
           <span>{translate(language, "field.review")}</span>
-          <strong>{reviewStatus}</strong>
+          <strong>{assemblyStatusText(language, reviewStatus)}</strong>
         </div>
       </details>
       <Handle type="target" position={Position.Left} id="p_left_in" className="flow-handle flow-handle-left" />

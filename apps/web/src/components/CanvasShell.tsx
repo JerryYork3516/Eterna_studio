@@ -15,6 +15,7 @@ import {
   type Node,
   type NodeChange,
   type NodeMouseHandler,
+  type NodeProps,
   type ReactFlowInstance
 } from "@xyflow/react";
 import { translate, type Language } from "@/i18n";
@@ -291,37 +292,6 @@ const MODULE_COLOR_LABEL_KEYS = [
   "module.color.pink",
   "module.color.sky"
 ];
-const collapsedNodeLabels: Partial<Record<ModuleNodeType, { zh: string; en: string }>> = {
-  text_input: { zh: "文", en: "Tx" },
-  identity: { zh: "身", en: "Id" },
-  personality: { zh: "格", en: "Pe" },
-  dialogue: { zh: "话", en: "Dl" },
-  voice_profile: { zh: "声", en: "Vo" },
-  particle_avatar: { zh: "粒", en: "Av" },
-  model_adapter: { zh: "模", en: "Md" },
-  memory: { zh: "记", en: "Me" },
-  knowledge: { zh: "识", en: "Kn" },
-  tools: { zh: "具", en: "To" },
-  output: { zh: "出", en: "Ou" },
-  compile_resident: { zh: "编", en: "Cp" },
-  api_connector: { zh: "接", en: "Api" },
-  model_loader: { zh: "载", en: "Ld" },
-  local_model: { zh: "本", en: "Lm" },
-  llm_adapter: { zh: "语", en: "Llm" },
-  tts_adapter: { zh: "音", en: "Tts" },
-  ar_particle: { zh: "增", en: "Ar" },
-  particle_physics: { zh: "物", en: "Px" },
-  avatar_preview: { zh: "览", en: "Av" },
-  runtime_mock: { zh: "运", en: "Rt" },
-  export_package: { zh: "包", en: "Pk" },
-  input: { zh: "入", en: "In" },
-  transform: { zh: "转", en: "Tr" }
-};
-
-function getCollapsedLabel(type: ModuleNodeType, language: Language): string {
-  return collapsedNodeLabels[type]?.[language] ?? String(type).slice(0, 2);
-}
-
 type BottomTab = "logs" | "artifacts" | "preview";
 type DrawerId = "layers" | "residentPreview" | "settings" | "assistant" | BottomTab;
 type WorkspaceMode = "inline" | "right" | "split" | "window";
@@ -449,6 +419,34 @@ function assemblyFieldLabel(language: Language, value: string, fallback?: string
     [`assembly.field.${normalized}`, `node.coreParams.key.${raw}`, `field.identity.${raw}.label`, `field.${raw}`],
     fallback || raw
   );
+}
+
+function assemblyPrimitiveLabel(language: Language, value: unknown) {
+  if (typeof value === "boolean") {
+    return translate(language, value ? "common.yes" : "common.no", value ? "Yes" : "No");
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return String(value ?? "");
+}
+
+function assemblyModuleIdLabel(language: Language, moduleId: string, moduleCatalog: ModuleCatalogResponseV04 | null) {
+  const catalogModule = moduleCatalog?.modules.find((candidate) => candidate.module_id === moduleId);
+  if (catalogModule) {
+    return i18nCandidate(language, [catalogModule.i18n_keys?.display_name || "", `module.${catalogModule.module_id}`], catalogModule.module_name);
+  }
+  return i18nCandidate(language, [`module.${moduleId}`], moduleId);
+}
+
+function assemblyModuleLabel(language: Language, module: Record<string, unknown>, moduleCatalog: ModuleCatalogResponseV04 | null) {
+  const moduleId = String(module.module_id ?? module.id ?? "");
+  const catalogLabel = moduleId ? assemblyModuleIdLabel(language, moduleId, moduleCatalog) : "";
+  if (catalogLabel && catalogLabel !== moduleId) {
+    return catalogLabel;
+  }
+  const fallback = String((module.module_name ?? module.name ?? module.title ?? moduleId) || translate(language, "assembly.field.module", "Module"));
+  return i18nCandidate(language, [`module.${moduleId}`], fallback);
 }
 
 function layerDisplayName(language: Language, layer: CatalogLayerInput, fallback = "") {
@@ -664,7 +662,16 @@ type PendingModuleAdd = {
 const nodeTypes = {
   layerContainer: LayerContainerNode,
   workflowNode: WorkflowNodeCard,
-  folderGroup: FolderGroupNode
+  folderGroup: FolderGroupNode,
+  layerAssemblyPanel: LayerAssemblyPanelNode
+};
+
+const CURVED_EDGE_DEFAULT_OPTIONS = {
+  type: "bezier" as const,
+  animated: false,
+  style: {
+    strokeWidth: 2
+  }
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1143,6 +1150,7 @@ function buildLayerContainerFlowNode({
   uiGroups,
   uiColors,
   onColor,
+  onOpenAssembly,
   t
 }: {
   layer: CatalogLayerInput;
@@ -1152,6 +1160,7 @@ function buildLayerContainerFlowNode({
   uiGroups: Record<string, string>;
   uiColors: Record<string, string>;
   onColor?: (layerId: string, color: string) => void;
+  onOpenAssembly?: (layer: CatalogLayerInput) => void;
   t: (key: string, fallback?: string) => string;
 }) {
   const layerId = layer.layer_id;
@@ -1199,6 +1208,7 @@ function buildLayerContainerFlowNode({
       uiGroup: uiGroups[layerId] ?? "",
       uiColor: uiColors[layerId] ?? "",
       onColor: onColor ? (color: string) => onColor(layerId, color) : undefined,
+      onOpenAssembly: onOpenAssembly ? () => onOpenAssembly(layer) : undefined,
       t
     }
   } satisfies Node;
@@ -1584,6 +1594,36 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
   );
 }
 
+type LayerAssemblyPanelNodeData = {
+  layer: CatalogLayerInput;
+  moduleCatalog: ModuleCatalogResponseV04 | null;
+  edges: EdgeLike[];
+  t: (key: string, fallback?: string) => string;
+  moduleNames: Record<string, string>;
+  onOpen: (layer: CatalogLayerInput, mode: WorkspaceMode) => void;
+  onSelectNode: (node: WorkflowNode) => void;
+  onPreviewNode: (node: WorkflowNode) => void;
+};
+
+function LayerAssemblyPanelNode({ data }: NodeProps) {
+  const panel = data as LayerAssemblyPanelNodeData;
+  return (
+    <div className="layer-assembly-flow-node nodrag nopan">
+      <LayerWorkspacePanel
+        layer={panel.layer}
+        moduleCatalog={panel.moduleCatalog}
+        edges={panel.edges}
+        t={panel.t}
+        mode="inline"
+        moduleNames={panel.moduleNames}
+        onOpen={panel.onOpen}
+        onSelectNode={panel.onSelectNode}
+        onPreviewNode={panel.onPreviewNode}
+      />
+    </div>
+  );
+}
+
 export function CanvasShell() {
   const mainFlowRef = useRef<ReactFlowInstance | null>(null);
   const libraryDefaultsAppliedRef = useRef(false);
@@ -1594,7 +1634,7 @@ export function CanvasShell() {
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
   const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
-  const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(false);
+  const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(true);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [expandedLayerIds, setExpandedLayerIds] = useState<Set<string>>(() => new Set());
   const [workspaceTabs, setWorkspaceTabs] = useState<string[]>([]);
@@ -1856,7 +1896,7 @@ export function CanvasShell() {
   const [showDebugTracePanel, setShowDebugTracePanel] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
-  const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(false);
+  const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
 
   // executionState: display-only execution/result references; execution remains backend-owned.
@@ -2260,7 +2300,7 @@ export function CanvasShell() {
       return;
     }
     setCollapsedCategories(new Set(nodeLibraryCategories.map((category) => category.id)));
-    setLibraryBodyCollapsed(false);
+    setLibraryBodyCollapsed(true);
     libraryDefaultsAppliedRef.current = true;
   }, [nodeLibraryCategories]);
 
@@ -2394,9 +2434,6 @@ export function CanvasShell() {
     }
     setExpandedLayerIds((ids) => {
       const next = new Set([...ids].filter((id) => layerById.has(id)));
-      for (const id of layerById.keys()) {
-        next.add(id);
-      }
       if (next.size === ids.size && [...next].every((id) => ids.has(id))) {
         return ids;
       }
@@ -2708,53 +2745,43 @@ export function CanvasShell() {
 
   const buildModuleAddMenu = useCallback(
     (layerNodeId: string): CanvasContextMenuItem[] => {
-      // Same data source as the left ModuleLibrary (moduleCatalog.modules), filtered by
-      // this layer's real layer_id plus any general/cross-layer modules. Never derived
-      // from the node registry or a hardcoded list, and never keyed off layer_order.
-      const moduleChoices = [
-        ...(modulesByCatalogLayerId.get(layerNodeId) ?? []),
-        ...(modulesByCatalogLayerId.get("general") ?? [])
-      ];
-      if (!moduleChoices.length) {
+      const sortedLayers = (moduleCatalog?.layers ?? []).slice().sort((a, b) => catalogLayerOrder(a) - catalogLayerOrder(b));
+      const layerGroups: CanvasContextMenuItem[] = [];
+      for (const layer of sortedLayers) {
+        const mods = modulesByCatalogLayerId.get(layer.layer_id) ?? [];
+        if (!mods.length) {
+          continue;
+        }
+        const layerName = i18nCandidate(language, [`layers.${layer.layer_id}`, `layer.${layer.layer_id}`], layer.layer_name);
+        layerGroups.push({
+          label: `L${layer.layer_order} ${layerName}`,
+          children: mods.map((mod) => {
+            const status = String(mod.status);
+            const statusText = translate(language, `module.status.${status}`, status);
+            return {
+              label: `${moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback))} · ${statusText}`,
+              onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
+            };
+          })
+        });
+      }
+      if (!layerGroups.length) {
         return [{ label: t("module.empty", "暂无模块"), disabled: true }];
       }
-      // Group by capability lifecycle status: READY / MOCK / PLANNED / LATER ...
-      const STATUS_ORDER = ["CORE", "READY", "MOCK", "PLANNED", "LATER", "DISABLED"];
-      const byStatus = new Map<string, ModuleCatalogEntryV04[]>();
-      for (const mod of moduleChoices) {
-        const status = String(mod.status);
-        byStatus.set(status, [...(byStatus.get(status) ?? []), mod]);
-      }
-      const statusRank = (status: string) => {
-        const index = STATUS_ORDER.indexOf(status);
-        return index === -1 ? STATUS_ORDER.length : index;
-      };
-      return [...byStatus.keys()]
-        .sort((a, b) => statusRank(a) - statusRank(b))
-        .map((status) => {
-          const mods = byStatus.get(status) ?? [];
-          return {
-            label: `${translate(language, `module.status.${status}`, status)} (${mods.length})`,
-            children: mods.map((mod) => ({
-              // Identical label to ModuleLibrary: t(`module.${module_id}`, module_name).
-              label: moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)),
-              onSelect: () => addModuleToLayer(layerNodeId, moduleCatalogId(mod))
-            }))
-          };
-        });
+      return layerGroups;
     },
-    [addModuleToLayer, modulesByCatalogLayerId, language, t]
+    [addModuleToLayer, moduleCatalog, modulesByCatalogLayerId, language, t]
   );
 
   const openFolderContextMenu = useCallback(
     (event: ReactMouseEvent, layer: CatalogLayerInput) => {
       const menu = makeContextMenu(event, [
         {
-          label: t("module.add", "添加模块"),
+          label: t("canvas.contextMenu.addModule", t("module.add", "添加模块")),
           children: buildModuleAddMenu(layer.layer_id)
         },
-        { label: t("module.viewAll"), onSelect: () => setFocusLayerId(layer.layer_id) },
-        { label: t("module.removeAll", "移除全部模块"), onSelect: () => removeAllModulesFromLayer(layer.layer_id), danger: true }
+        { label: t("canvas.contextMenu.viewAllModules", t("module.viewAll")), onSelect: () => setFocusLayerId(layer.layer_id) },
+        { label: t("canvas.contextMenu.removeAllModules", t("module.removeAll", "移除全部模块")), onSelect: () => removeAllModulesFromLayer(layer.layer_id), danger: true }
       ]);
       if (menu) {
         setMainContextMenu(menu);
@@ -2797,6 +2824,32 @@ export function CanvasShell() {
       }
     },
     [moduleCatalogById, openCatalogModuleCanvas, removeModuleFromLayer, selectedLayerModuleKeys, setModuleColor, t]
+  );
+
+  const openLayerWorkspace = useCallback(
+    (layer: CatalogLayerInput, mode: WorkspaceMode) => {
+      const catalogLayerName = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
+      setSelectedNode(layer.layer_id);
+      setActiveLayerId(layer.layer_id);
+      setWorkspaceMode(mode);
+      setExpandedLayerIds((ids) => {
+        if (ids.has(layer.layer_id)) {
+          return ids;
+        }
+        const next = new Set(ids);
+        next.add(layer.layer_id);
+        return next;
+      });
+      if (mode !== "inline") {
+        setActiveWorkspaceId(layer.layer_id);
+        setWorkspaceTabs((tabs) => (tabs.includes(layer.layer_id) ? tabs : [...tabs, layer.layer_id]));
+      }
+      if (mode === "window") {
+        setFloatingLayerIds((ids) => (ids.includes(layer.layer_id) ? ids : [...ids, layer.layer_id]));
+      }
+      appendLog(`${t("status.layerOpened", "Layer opened")}: L${layer.layer_order} ${catalogLayerName}`);
+    },
+    [appendLog, language, moduleCatalog, setSelectedNode, t]
   );
 
   const flowNodes = useMemo<Node[]>(() => {
@@ -2878,17 +2931,69 @@ export function CanvasShell() {
           setUiColors((current) => ({ ...current, [layerId]: color }));
           setSaveStatus("dirty");
         },
+        onOpenAssembly: (targetLayer) => {
+          const catalogLayerName = layerDisplayName(language, targetLayer, moduleCatalog.layers.find((item) => item.layer_id === targetLayer.layer_id)?.layer_name ?? "");
+          setSelectedNode(targetLayer.layer_id);
+          setActiveLayerId(targetLayer.layer_id);
+          setWorkspaceMode("inline");
+          setExpandedLayerIds((ids) => {
+            const next = new Set(ids);
+            if (ids.has(targetLayer.layer_id)) {
+              next.delete(targetLayer.layer_id);
+              return next;
+            }
+            next.add(targetLayer.layer_id);
+            return next;
+          });
+          setActiveWorkspaceId(null);
+          setActiveModuleTabId(null);
+          appendLog(`${t("status.layerOpened", "Layer opened")}: L${targetLayer.layer_order} ${catalogLayerName}`);
+        },
         t
       });
     });
 
-    return [...folderNodes, ...layerSchemaNodes];
+    const layerAssemblyNodes = catalogLayersForRender.flatMap((layer) => {
+      if (!expandedLayerIds.has(layer.layer_id)) {
+        return [];
+      }
+      const frame = stackFrames.get(layer.layer_id);
+      if (!frame) {
+        throw new Error(`Missing v0.4 module-catalog layer frame: ${layer.layer_id}`);
+      }
+      const trunkPosition = LayerStackLayoutEngine.computeTrunkPosition(frame);
+      return [
+        {
+          id: `ui-assembly-${layer.layer_id}`,
+          type: "layerAssemblyPanel",
+          position: { x: trunkPosition.x + 724, y: trunkPosition.y },
+          draggable: false,
+          selectable: false,
+          data: {
+            layer,
+            moduleCatalog,
+            edges,
+            t,
+            moduleNames,
+            onOpen: openLayerWorkspace,
+            onSelectNode: handleChildModuleSelect,
+            onPreviewNode: handleChildModulePreview
+          } satisfies LayerAssemblyPanelNodeData
+        } satisfies Node
+      ];
+    });
+
+    return [...folderNodes, ...layerSchemaNodes, ...layerAssemblyNodes];
   }, [
     addModuleToLayer,
+    appendLog,
+    edges,
+    expandedLayerIds,
     focusedModuleId,
     handleChildModulePreview,
     handleChildModuleSelect,
     handleModuleContextMenu,
+    language,
     layerModules,
     moduleCatalog,
     moduleCatalogById,
@@ -2897,9 +3002,12 @@ export function CanvasShell() {
 	    openCatalogModuleCanvas,
     openDroppedModuleContextMenu,
     openFolderContextMenu,
+    openLayerWorkspace,
     selectLayerModule,
     selectedLayerModuleKeys,
     setModuleColor,
+    setSelectedNode,
+    t,
     uiGroups,
     uiColors,
     uiTags
@@ -3076,6 +3184,8 @@ export function CanvasShell() {
           setDraggedNodeIds(new Set());
           setModuleTabs([]);
           setActiveModuleTabId(null);
+          setNodeLibraryCollapsed(true);
+          setLibraryBodyCollapsed(true);
           setActiveDrawer("layers");
           setApiReady(true);
           appendLog(t("status.personaLoaded"));
@@ -3096,32 +3206,6 @@ export function CanvasShell() {
       );
     },
     [appendLog, clearRunOutput, language, loadingTemplateType, setApiReady, t]
-  );
-
-  const openLayerWorkspace = useCallback(
-    (layer: CatalogLayerInput, mode: WorkspaceMode) => {
-      const catalogLayerName = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
-      setSelectedNode(layer.layer_id);
-      setActiveLayerId(layer.layer_id);
-      setWorkspaceMode(mode);
-      setExpandedLayerIds((ids) => {
-        if (ids.has(layer.layer_id)) {
-          return ids;
-        }
-        const next = new Set(ids);
-        next.add(layer.layer_id);
-        return next;
-      });
-      if (mode !== "inline") {
-        setActiveWorkspaceId(layer.layer_id);
-        setWorkspaceTabs((tabs) => (tabs.includes(layer.layer_id) ? tabs : [...tabs, layer.layer_id]));
-      }
-      if (mode === "window") {
-        setFloatingLayerIds((ids) => (ids.includes(layer.layer_id) ? ids : [...ids, layer.layer_id]));
-      }
-      appendLog(`${t("status.layerOpened", "Layer opened")}: L${layer.layer_order} ${catalogLayerName}`);
-    },
-    [appendLog, language, moduleCatalog, setSelectedNode, t]
   );
 
   const toggleLayerCollapsed = useCallback(
@@ -3659,6 +3743,7 @@ export function CanvasShell() {
   );
 
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
+  const mainAssistantOpen = activeDrawer === "assistant" && !activeModuleNode;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
   const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
   const templateIsLoading = Boolean(loadingTemplateType);
@@ -3771,14 +3856,34 @@ export function CanvasShell() {
 
       <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""}`}>
         <aside className={`panel left-panel ${nodeLibraryCollapsed ? "is-collapsed" : ""}`}>
-          <button className="library-toggle" onClick={() => setNodeLibraryCollapsed((collapsed) => !collapsed)}>
+          <button
+            className="library-toggle"
+            title={nodeLibraryCollapsed ? t("canvas.sidebar.expand", "Expand") : t("canvas.sidebar.collapse", "Collapse")}
+            aria-label={nodeLibraryCollapsed ? t("canvas.sidebar.expand", "Expand") : t("canvas.sidebar.collapse", "Collapse")}
+            onClick={() => setNodeLibraryCollapsed((collapsed) => !collapsed)}
+          >
             {nodeLibraryCollapsed ? ">" : "<"}
           </button>
           <section className="panel-section">
-            <div className="section-title">
-              {nodeLibraryCollapsed ? (
-                <h2>{t("panel.nodeLibrary").slice(0, 1)}</h2>
-              ) : (
+            {nodeLibraryCollapsed ? (
+              <div className="sidebar-rail" aria-label={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}>
+                <button
+                  type="button"
+                  className="sidebar-rail__button sidebar-rail__button--node is-active"
+                  title={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}
+                  aria-label={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}
+                  onClick={() => {
+                    setNodeLibraryCollapsed(false);
+                    setLibraryBodyCollapsed(false);
+                  }}
+                >
+                  <span className="sidebar-rail__icon sidebar-rail__icon--nodes" aria-hidden="true" />
+                  <span className="sidebar-rail__dot" aria-hidden="true" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="section-title">
                 <button
                   type="button"
                   className="library-master-toggle"
@@ -3788,33 +3893,9 @@ export function CanvasShell() {
                   <span className="node-library-category__chevron">{libraryBodyCollapsed ? "▸" : "▾"}</span>
                   <h2>{t("panel.nodeLibrary")}</h2>
                 </button>
-              )}
-              <span>{libraryNodeTypes.length}</span>
-            </div>
-            {!nodeLibraryCollapsed && libraryBodyCollapsed ? null : nodeLibraryCollapsed ? (
-              <div className="node-library mini">
-                {libraryNodeTypes.map((type) => (
-                  <div
-                    key={type}
-                    role="button"
-                    tabIndex={0}
-                    draggable
-                    className={`library-item node-kind-${type}`}
-                    title={getNodeTypeLabel(type, t)}
-                    onDragStart={(event) => setNodeDragData(event, type)}
-                    onClick={() => handleAddNode(type)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleAddNode(type);
-                      }
-                    }}
-                  >
-                    <span className="library-item__icon">{getCollapsedLabel(type, language)}</span>
-                  </div>
-                ))}
+                <span>{libraryNodeTypes.length}</span>
               </div>
-            ) : (
+              {libraryBodyCollapsed ? null : (
               <div className="node-library">
                 {nodeLibraryCategories.map((category) => {
                   const categoryCollapsed = collapsedCategories.has(category.id);
@@ -3870,6 +3951,8 @@ export function CanvasShell() {
                   );
                 })}
               </div>
+              )}
+              </>
             )}
           </section>
           <ModuleLibrary
@@ -3877,6 +3960,7 @@ export function CanvasShell() {
             collapsed={nodeLibraryCollapsed}
             layers={moduleCatalog?.layers ?? []}
             modules={moduleCatalog?.modules ?? []}
+            onExpand={() => setNodeLibraryCollapsed(false)}
           />
         </aside>
 
@@ -3905,7 +3989,7 @@ export function CanvasShell() {
                 onReorderModule={reorderModuleTab}
                 onPinModule={pinModuleTab}
               />
-              <div className={`canvas-stage ${splitLayer ? "is-split" : ""}`}>
+              <div className={`canvas-stage ${splitLayer ? "is-split" : ""} ${mainAssistantOpen ? "is-assistant-open" : ""}`}>
                 <div
                   className="flow-stage"
                   onDragOver={(event) => {
@@ -4018,6 +4102,21 @@ export function CanvasShell() {
                     onCloseAssistant={() => setActiveDrawer(null)}
                     onClose={() => closeModuleTab(activeModuleNode.node_id)}
                   />
+                ) : null}
+                {mainAssistantOpen ? (
+                  <AssistantDock
+                    title={t("assistant.panel.title", "Assistant")}
+                    meta={t("assistant.panel.meta", "Studio canvas")}
+                    t={t}
+                    onClose={() => setActiveDrawer(null)}
+                  >
+                    <StudioAssistantPanel
+                      request={mainAssistantRequest}
+                      canApplyPatch={false}
+                      t={t}
+                      onApplyPatch={handleMainAssistantPatch}
+                    />
+                  </AssistantDock>
                 ) : null}
               </div>
               {floatingLayerIds.map((id, index) => {
@@ -4154,22 +4253,6 @@ export function CanvasShell() {
             loadedDRResult={loadedDRResult}
             previewLoadStatus={previewLoadStatus}
             previewLoadError={previewLoadError}
-          />
-        </FloatingSidePanel>
-      ) : null}
-
-      {activeDrawer === "assistant" && !activeModuleNode ? (
-        <FloatingSidePanel
-          title={t("assistant.panel.title", "Assistant")}
-          meta={t("assistant.panel.meta", "Studio canvas")}
-          className="assistant-side-panel"
-          onClose={() => setActiveDrawer(null)}
-        >
-          <StudioAssistantPanel
-            request={mainAssistantRequest}
-            canApplyPatch={false}
-            t={t}
-            onApplyPatch={handleMainAssistantPatch}
           />
         </FloatingSidePanel>
       ) : null}
@@ -4319,48 +4402,12 @@ function FloatingDock({
     { id: "residentPreview", label: t("panel.residentPreview", "Resident Preview") },
     { id: "preview", label: t("panel.exportPreview") }
   ];
-  const [dockOffset, setDockOffset] = useState({ x: 0, y: 0 });
-  const suppressClickRef = useRef(false);
-
-  const handleDockMouseDown = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startOffset = dockOffset;
-      suppressClickRef.current = false;
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const x = moveEvent.clientX - startX;
-        const y = moveEvent.clientY - startY;
-        if (Math.abs(x) + Math.abs(y) > 3) {
-          suppressClickRef.current = true;
-        }
-        setDockOffset({ x: startOffset.x + x, y: startOffset.y + y });
-      };
-      const handleMouseUp = () => {
-        window.removeEventListener("mousemove", handleMouseMove);
-        window.removeEventListener("mouseup", handleMouseUp);
-        window.setTimeout(() => {
-          suppressClickRef.current = false;
-        }, 0);
-      };
-
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-    },
-    [dockOffset]
-  );
 
   return (
     <FloatingPortal>
     <nav
-      className="floating-dock"
-      style={{ transform: `translate(${dockOffset.x}px, ${dockOffset.y}px)` }}
-      aria-label="Floating workspace dock"
-      onMouseDown={handleDockMouseDown}
+      className={`floating-dock ${activeDrawer === "assistant" ? "is-assistant-open" : ""}`}
+      aria-label={t("dock.ariaLabel")}
     >
       {dockItems.map((item) => (
         item.id === "assistant" ? (
@@ -4369,9 +4416,7 @@ function FloatingDock({
             active={activeDrawer === item.id}
             title={item.label}
             onClick={() => {
-              if (!suppressClickRef.current) {
-                onToggle(item.id);
-              }
+              onToggle(item.id);
             }}
           >
             <DockIcon id={item.id} />
@@ -4383,9 +4428,7 @@ function FloatingDock({
             title={item.label}
             aria-label={item.label}
             onClick={() => {
-            if (!suppressClickRef.current) {
               onToggle(item.id);
-            }
             }}
           >
             <DockIcon id={item.id} />
@@ -4488,6 +4531,40 @@ function FloatingSidePanel({
         <div className="floating-panel-body">{children}</div>
       </aside>
     </FloatingPortal>
+  );
+}
+
+function AssistantDock({
+  title,
+  meta,
+  children,
+  t,
+  onClose
+}: {
+  title: string;
+  meta?: string;
+  children: ReactNode;
+  t: (key: string, fallback?: string) => string;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="assistant-dock">
+      <div className="assistant-dock__header">
+        <div>
+          <h2>{title}</h2>
+          {meta ? <span>{meta}</span> : null}
+        </div>
+        <button
+          type="button"
+          title={t("assistant.panel.collapse", "Collapse")}
+          aria-label={t("assistant.panel.collapse", "Collapse")}
+          onClick={onClose}
+        >
+          x
+        </button>
+      </div>
+      <div className="assistant-dock__body">{children}</div>
+    </aside>
   );
 }
 
@@ -4899,8 +4976,11 @@ function LayerWorkspacePanel({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const language = useCanvasStore.getState().language;
+  const compiledDR = useCanvasStore((state) => state.compiledDR);
+  const drCompileResult = useCanvasStore((state) => state.drCompileResult);
   const label = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
   const parameterCount = Object.keys(layer).length;
+  const assembly = useMemo(() => layerAssemblyView(layer, compiledDR, drCompileResult), [compiledDR, drCompileResult, layer]);
 
   return (
     <section className={`layer-workspace mode-${mode} tier-core`}>
@@ -4913,7 +4993,7 @@ function LayerWorkspacePanel({
           <p>{t("workspace.breadcrumb", "Workflow / Layer / Folder")}</p>
           <h3>
             L{layer.layer_order} {label}
-            <span className="module-count-badge">0 {t("module.count")}</span>
+            <span className="module-count-badge">{assembly.moduleCount} {t("module.count")}</span>
           </h3>
           </div>
         </div>
@@ -4925,15 +5005,13 @@ function LayerWorkspacePanel({
         </div>
       </div>
       <div className="folder-group-meta">
-        <span>{assemblyFieldLabel(language, "status", t("field.status"))}: {assemblyStatusLabel(language, "schema")}</span>
+        <span>{assemblyFieldLabel(language, "status", t("field.status"))}: {assemblyStatusLabel(language, assembly.status)}</span>
         <span>{assemblyFieldLabel(language, "tier")}: {assemblyStatusLabel(language, "core")}</span>
         <span>{t("field.data")}: {parameterCount}</span>
-        <span>{t("field.childrenCount")}: 0</span>
+        <span>{t("field.childrenCount")}: {assembly.nodeCount}</span>
       </div>
       {!collapsed ? (
-        <div className="submodule-rail">
-          <div className="empty-node-canvas">0 {t("module.count")}</div>
-        </div>
+        <AssemblyContentView assembly={assembly} language={language} moduleCatalog={moduleCatalog} t={t} />
       ) : (
         <div className="folder-collapsed">{t("workspace.emptyFolder", "empty folder layer")}</div>
       )}
@@ -4976,7 +5054,7 @@ function FloatingNodeCanvas({
     target: edge.target,
     sourceHandle: edge.source_port,
     targetHandle: edge.target_port,
-    type: "smoothstep"
+    type: CURVED_EDGE_DEFAULT_OPTIONS.type
   }));
 
   return (
@@ -4996,6 +5074,7 @@ function FloatingNodeCanvas({
               nodes={flowPreviewNodes}
               edges={flowPreviewEdges}
               nodeTypes={nodeTypes}
+              defaultEdgeOptions={CURVED_EDGE_DEFAULT_OPTIONS}
               fitView
               minZoom={0.3}
               maxZoom={1.4}
@@ -5022,6 +5101,290 @@ type EdgeLike = {
   source_port?: string | null;
   target_port?: string | null;
 };
+
+type LayerAssemblyView = {
+  status: string;
+  layerSnapshot: Record<string, unknown> | null;
+  modules: Record<string, unknown>[];
+  nodes: Record<string, unknown>[];
+  policies: Record<string, unknown>;
+  references: unknown[];
+  findings: unknown[];
+  moduleCount: number;
+  nodeCount: number;
+  raw: Record<string, unknown> | null;
+};
+
+const LAYER_POLICY_KEYS: Record<string, string[]> = {
+  layer_1: ["resident_identity", "resident_blueprint"],
+  layer_3: ["safety_policy", "audit_policy", "risk_policy"],
+  layer_5: ["memory_policy", "memory_config"],
+  layer_8: ["runtime_plan", "fallback_routes"],
+  layer_9: ["runtime_requirements", "provider_requirements", "screen_capability_declaration"],
+  layer_10: ["lattice_config", "voice_config", "screen_capability_declaration"],
+  layer_13: ["manifest", "compile_info", "audit_report"]
+};
+
+function arrayFromRecordValue(record: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function compilePayload(
+  compiledDR: unknown,
+  drCompileResult: unknown
+): { result: Record<string, unknown>; dr: Record<string, unknown>; payload: Record<string, unknown> } {
+  const result = isRecord(drCompileResult) ? drCompileResult : {};
+  const dr = isRecord(compiledDR) ? compiledDR : isRecord(result.compiled_dr) ? result.compiled_dr : {};
+  const payload = isRecord(dr.payload) ? dr.payload : isRecord(result.dr_payload) ? result.dr_payload : {};
+  return { result, dr, payload };
+}
+
+function payloadArray(payload: Record<string, unknown>, dr: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const graph = isRecord(payload.graph_snapshot) ? payload.graph_snapshot : {};
+  return arrayFromRecordValue(payload, key).length
+    ? arrayFromRecordValue(payload, key)
+    : arrayFromRecordValue(graph, key).length
+      ? arrayFromRecordValue(graph, key)
+      : arrayFromRecordValue(dr, key);
+}
+
+function collectValuesByKey(value: unknown, targetKey: string, depth = 0): unknown[] {
+  if (depth > 5) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectValuesByKey(item, targetKey, depth + 1));
+  }
+  if (!isRecord(value)) {
+    return [];
+  }
+  const direct = value[targetKey];
+  const nested = Object.entries(value).flatMap(([key, item]) => (key === targetKey ? [] : collectValuesByKey(item, targetKey, depth + 1)));
+  return direct === undefined ? nested : [direct, ...nested];
+}
+
+function flattenReferences(values: unknown[]): unknown[] {
+  return values.flatMap((value) => (Array.isArray(value) ? value : value === undefined || value === null ? [] : [value]));
+}
+
+function layerFindings(layerId: string, moduleIds: string[], drCompileResult: unknown): unknown[] {
+  const result = isRecord(drCompileResult) ? drCompileResult : {};
+  const layerAudit = isRecord(result.layer_audit) ? result.layer_audit : {};
+  const compileAudit = isRecord(result.compile_audit) ? result.compile_audit : {};
+  const candidates = [
+    ...(Array.isArray(result.errors) ? result.errors : []),
+    ...(Array.isArray(result.warnings) ? result.warnings : []),
+    ...(Array.isArray(layerAudit.findings) ? layerAudit.findings : []),
+    ...(Array.isArray(compileAudit.findings) ? compileAudit.findings : [])
+  ];
+  const needles = [layerId, ...moduleIds].filter(Boolean);
+  const seen = new Set<string>();
+  return candidates.filter((finding) => {
+    const text = JSON.stringify(finding);
+    if (!needles.some((needle) => text.includes(needle))) {
+      return false;
+    }
+    if (seen.has(text)) {
+      return false;
+    }
+    seen.add(text);
+    return true;
+  });
+}
+
+function layerAssemblyView(layer: CatalogLayerInput, compiledDR: unknown, drCompileResult: unknown): LayerAssemblyView {
+  const { result, dr, payload } = compilePayload(compiledDR, drCompileResult);
+  const layers =
+    arrayFromRecordValue(payload, "13_layers_snapshot").length
+      ? arrayFromRecordValue(payload, "13_layers_snapshot")
+      : payloadArray(payload, dr, "layers");
+  const layerSnapshot = layers.find((item) => item.layer_id === layer.layer_id) ?? null;
+  const moduleIds = Array.isArray(layerSnapshot?.module_ids) ? layerSnapshot.module_ids.map(String) : [];
+  const modules = payloadArray(payload, dr, "modules").filter((module) => module.layer_id === layer.layer_id || moduleIds.includes(String(module.module_id ?? "")));
+  const nodes = payloadArray(payload, dr, "nodes").filter((node) => {
+    const data = isRecord(node.data) ? node.data : {};
+    return node.layer_id === layer.layer_id || data.layer_id === layer.layer_id || moduleIds.includes(String(data.parent_module ?? ""));
+  });
+  const policies = Object.fromEntries(
+    (LAYER_POLICY_KEYS[layer.layer_id] ?? [])
+      .map((key) => [key, payload[key] ?? dr[key] ?? result[key]])
+      .filter(([, value]) => value !== undefined && value !== null)
+  );
+  const references = flattenReferences(collectValuesByKey({ layerSnapshot, modules, policies }, "field_references"));
+  const findings = layerFindings(layer.layer_id, moduleIds, drCompileResult);
+  const raw = layerSnapshot || modules.length || Object.keys(policies).length || findings.length ? { layer: layerSnapshot, modules, nodes, policies, references, findings } : null;
+  const hasCompileResult = isRecord(drCompileResult);
+  return {
+    status: hasCompileResult ? (isRecord(result) && result.valid === false ? "error" : "compiled") : "uncompiled",
+    layerSnapshot,
+    modules,
+    nodes,
+    policies,
+    references,
+    findings,
+    moduleCount: modules.length || moduleIds.length,
+    nodeCount: nodes.length,
+    raw
+  };
+}
+
+function AssemblyValue({
+  fieldKey,
+  moduleCatalog,
+  record,
+  value,
+  language
+}: {
+  fieldKey: string;
+  moduleCatalog: ModuleCatalogResponseV04 | null;
+  record: Record<string, unknown>;
+  value: unknown;
+  language: Language;
+}) {
+  if (Array.isArray(value)) {
+    const primitiveItems = value.filter((item) => !isRecord(item) && !Array.isArray(item));
+    if (primitiveItems.length === value.length) {
+      return (
+        <div className="assembly-chip-list assembly-chip-list--compact">
+          {primitiveItems.map((item, index) => {
+            const raw = String(item ?? "");
+            const label = fieldKey === "module_ids" ? assemblyModuleIdLabel(language, raw, moduleCatalog) : assemblyPrimitiveLabel(language, item);
+            return (
+              <span className={fieldKey === "module_ids" ? "assembly-module-chip" : undefined} key={`${index}-${raw}`}>
+                {fieldKey === "module_ids" ? (
+                  <>
+                    <strong>{label}</strong>
+                    {raw && raw !== label ? <small>{raw}</small> : null}
+                  </>
+                ) : (
+                  label
+                )}
+              </span>
+            );
+          })}
+        </div>
+      );
+    }
+    return <pre className="assembly-json-block">{safeStringify(value)}</pre>;
+  }
+  if (isRecord(value)) {
+    return <pre className="assembly-json-block">{safeStringify(value)}</pre>;
+  }
+  if (fieldKey === "layer_name" && typeof value === "string") {
+    const layerId = typeof record.layer_id === "string" ? record.layer_id : "";
+    const layerOrder = typeof record.layer_order === "number" ? record.layer_order : "";
+    return <span className="assembly-value-text">{i18nCandidate(language, [`layer.${layerId}`, `layer.${layerOrder}.name`], value)}</span>;
+  }
+  return <span className="assembly-value-text">{assemblyPrimitiveLabel(language, value)}</span>;
+}
+
+function AssemblyKeyValueList({
+  emptyText,
+  language,
+  moduleCatalog,
+  value
+}: {
+  emptyText: string;
+  language: Language;
+  moduleCatalog: ModuleCatalogResponseV04 | null;
+  value: Record<string, unknown> | null;
+}) {
+  const entries = value ? Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== "") : [];
+  if (!entries.length) {
+    return <p className="assembly-empty">{emptyText}</p>;
+  }
+  return (
+    <dl className="assembly-kv-list">
+      {entries.map(([key, item]) => (
+        <div key={key}>
+          <dt>{assemblyFieldLabel(language, key)}</dt>
+          <dd>
+            <AssemblyValue fieldKey={key} moduleCatalog={moduleCatalog} record={value ?? {}} value={item} language={language} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function AssemblyContentView({
+  assembly,
+  language,
+  moduleCatalog,
+  t
+}: {
+  assembly: LayerAssemblyView;
+  language: Language;
+  moduleCatalog: ModuleCatalogResponseV04 | null;
+  t: (key: string, fallback?: string) => string;
+}) {
+  if (!assembly.raw) {
+    return <div className="assembly-empty assembly-empty--panel">{t("assembly.panel.empty")}</div>;
+  }
+  return (
+    <div className="assembly-content">
+      <section className="assembly-section">
+        <h4>{t("assembly.section.summary")}</h4>
+        <AssemblyKeyValueList value={assembly.layerSnapshot} language={language} moduleCatalog={moduleCatalog} emptyText={t("assembly.panel.noFields")} />
+      </section>
+      <section className="assembly-section">
+        <h4>{t("assembly.section.modules")}</h4>
+        {assembly.modules.length ? (
+          <div className="assembly-chip-list">
+            {assembly.modules.map((module) => {
+              const moduleId = String(module.module_id ?? module.id ?? "");
+              const label = assemblyModuleLabel(language, module, moduleCatalog);
+              return (
+                <span className="assembly-module-chip" key={moduleId || label}>
+                  <strong>{label}</strong>
+                  {moduleId && moduleId !== label ? <small>{moduleId}</small> : null}
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="assembly-empty">{t("assembly.panel.noFields")}</p>
+        )}
+      </section>
+      <section className="assembly-section">
+        <h4>{t("assembly.section.policySummary")}</h4>
+        <AssemblyKeyValueList value={assembly.policies} language={language} moduleCatalog={moduleCatalog} emptyText={t("assembly.panel.noFields")} />
+      </section>
+      <section className="assembly-section">
+        <h4>{t("assembly.section.fieldReferences")}</h4>
+        {assembly.references.length ? (
+          <ul className="assembly-reference-list">
+            {assembly.references.map((reference, index) => (
+              <li key={`${index}-${String(typeof reference === "object" ? index : reference)}`}>{typeof reference === "object" ? safeStringify(reference) : String(reference)}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="assembly-empty">{t("assembly.panel.noReferences")}</p>
+        )}
+      </section>
+      <section className="assembly-section">
+        <h4>{t("assembly.section.validation")}</h4>
+        {assembly.findings.length ? (
+          <ul className="assembly-validation-list">
+            {assembly.findings.map((finding, index) => (
+              <li key={`${index}-${safeStringify(finding)}`}>
+                <strong>{validationFindingMessage(language, finding)}</strong>
+                {isRecord(finding) && typeof finding.code === "string" ? <code>{finding.code}</code> : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="assembly-empty">{t("assembly.validation.noWarnings")}</p>
+        )}
+      </section>
+      <details className="assembly-section assembly-raw-json">
+        <summary>{t("assembly.tab.rawJson")}</summary>
+        <pre>{safeStringify(assembly.raw)}</pre>
+      </details>
+    </div>
+  );
+}
 
 function FloatingWorkspace({
   index,
@@ -5108,8 +5471,11 @@ function ValidationSummary({ validation, t }: { validation: unknown; t: (key: st
               const code = isRecord(error) && typeof error.code === "string" ? error.code : `${index}`;
               return (
                 <li key={`${code}-${index}`}>
-                  <strong>{code}</strong>
-                  <span>{validationFindingMessage(language, error)}</span>
+                  <strong>{validationFindingMessage(language, error)}</strong>
+                  <details>
+                    <summary>{t("assembly.validation.code")}</summary>
+                    <code>{code}</code>
+                  </details>
                 </li>
               );
             })}
@@ -5126,8 +5492,11 @@ function ValidationSummary({ validation, t }: { validation: unknown; t: (key: st
               const code = isRecord(warning) && typeof warning.code === "string" ? warning.code : `${index}`;
               return (
                 <li key={`${code}-${index}`}>
-                  <strong>{code}</strong>
-                  <span>{validationFindingMessage(language, warning)}</span>
+                  <strong>{validationFindingMessage(language, warning)}</strong>
+                  <details>
+                    <summary>{t("assembly.validation.code")}</summary>
+                    <code>{code}</code>
+                  </details>
                 </li>
               );
             })}
@@ -5560,7 +5929,7 @@ function ModuleCanvasPanel({
       if (!currentNodeIds.has(connection.source) || !currentNodeIds.has(connection.target)) {
         return;
       }
-      setModuleEdges((eds) => addEdge({ ...connection, type: "smoothstep" }, eds));
+      setModuleEdges((eds) => addEdge(connection, eds));
     },
     [moduleNodes, setModuleEdges]
   );
@@ -5752,6 +6121,15 @@ function ModuleCanvasPanel({
         }
       })),
     [moduleNodes, patchModuleNodeData]
+  );
+
+  const moduleRenderEdges = useMemo<Edge[]>(
+    () =>
+      moduleEdges.map((edge) => ({
+        ...edge,
+        type: CURVED_EDGE_DEFAULT_OPTIONS.type
+      })),
+    [moduleEdges]
   );
 
   const applyAlignment = useCallback(
@@ -6308,7 +6686,7 @@ function ModuleCanvasPanel({
           </button>
         </div>
       </header>
-      <div className="module-canvas-panel__body">
+      <div className={`module-canvas-panel__body ${assistantOpen ? "is-assistant-open" : ""}`}>
         <div
           className="module-canvas-panel__flow"
           onDragOver={(event) => {
@@ -6326,8 +6704,9 @@ function ModuleCanvasPanel({
           <WorkflowNodeCardModuleNodesProvider nodes={moduleFlowNodes}>
             <ReactFlow
               nodes={moduleFlowNodes}
-              edges={moduleEdges}
+              edges={moduleRenderEdges}
               nodeTypes={nodeTypes}
+              defaultEdgeOptions={CURVED_EDGE_DEFAULT_OPTIONS}
               fitView
               onInit={(instance) => {
                 moduleFlowRef.current = instance;
@@ -6398,22 +6777,22 @@ function ModuleCanvasPanel({
           </WorkflowNodeCardModuleNodesProvider>
           {contextMenu ? <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} /> : null}
         </div>
-      </div>
-      {assistantOpen ? (
-        <FloatingSidePanel
-          title={t("assistant.panel.title", "Assistant")}
-          meta={title}
-          className="assistant-side-panel"
-          onClose={onCloseAssistant}
-        >
-          <StudioAssistantPanel
-            request={assistantRequest}
-            canApplyPatch={Boolean(selectedId && selectedSchema)}
+        {assistantOpen ? (
+          <AssistantDock
+            title={t("assistant.panel.title", "Assistant")}
+            meta={title}
             t={t}
-            onApplyPatch={applyAssistantPatch}
-          />
-        </FloatingSidePanel>
-      ) : null}
+            onClose={onCloseAssistant}
+          >
+            <StudioAssistantPanel
+              request={assistantRequest}
+              canApplyPatch={Boolean(selectedId && selectedSchema)}
+              t={t}
+              onApplyPatch={applyAssistantPatch}
+            />
+          </AssistantDock>
+        ) : null}
+      </div>
     </section>
   );
 }
