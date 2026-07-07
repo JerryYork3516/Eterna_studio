@@ -121,6 +121,8 @@
   "panel.noArtifacts": "No artifacts yet",
   "panel.noPreview": "No export preview yet",
   "panel.residentPreview": "Resident Preview",
+  "panel.rightTools": "Right panels",
+  "panel.fixedTools": "Fixed panels",
   "preview.mockLayer": "Mock preview",
   "preview.emptyTitle": "No resident preview yet",
   "preview.emptyBody": "After compiling or loading a file, test dialogue, voice, and avatar state here.",

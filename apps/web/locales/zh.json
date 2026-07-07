@@ -96,6 +96,8 @@
   "panel.noArtifacts": "暂无 artifacts",
   "panel.noPreview": "暂无导出预览",
   "panel.residentPreview": "数字居民预览",
+  "panel.rightTools": "右侧面板",
+  "panel.fixedTools": "固定面板",
   "preview.mockLayer": "Mock 预览",
   "preview.emptyTitle": "暂无数字居民预览",
   "preview.emptyBody": "编译或加载文件后，可在这里测试对话、声音与形象状态。",

@@ -26,7 +26,6 @@ import type { ModuleCatalogEntryV04, ModuleCatalogResponseV04, NodeType, Residen
 import { safeClone, safeSerialize } from "@/lib/safe-serialize";
 import { downloadWorkflow } from "@/lib/workflow";
 import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
-import { AssistantFloatingButton } from "@/components/assistant/AssistantFloatingButton";
 import { StudioAssistantPanel } from "@/components/assistant/StudioAssistantPanel";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -123,7 +122,8 @@ const FOLDER_PREVIEW_MODULE_LIMIT = 6;
 const FOLDER_GROUP_WIDTH = 1180;
 const FOLDER_GROUP_HEIGHT = 216;
 const FOLDER_TO_TRUNK_GAP = 120;
-const TRUNK_LAYER_X = FOLDER_GROUP_X + FOLDER_GROUP_WIDTH + FOLDER_TO_TRUNK_GAP;
+const TRUNK_LAYER_WIDTH = 346;
+const TRUNK_LAYER_X = FOLDER_GROUP_X + FOLDER_GROUP_WIDTH + FOLDER_TO_TRUNK_GAP / 2;
 const TRUNK_LAYER_Y_OFFSET = 110;
 const LAYER_STACK_GAP = 80;
 const LAYER_NODE_ROW_HEIGHT = 72;
@@ -293,7 +293,14 @@ const MODULE_COLOR_LABEL_KEYS = [
   "module.color.sky"
 ];
 type BottomTab = "logs" | "artifacts" | "preview";
-type DrawerId = "layers" | "residentPreview" | "settings" | "assistant" | BottomTab;
+type DrawerId = "layers" | "residentPreview" | "settings" | "assistant" | "debugTrace" | BottomTab;
+type ModuleAssistantPanelState = {
+  title: string;
+  meta: string;
+  request: StudioAssistantRequest;
+  canApplyPatch: boolean;
+  onApplyPatch: (patch: StudioAssistantPatch) => void;
+};
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 type RunWorkflowStatus = "idle" | "running" | "success" | "error";
 type AlignAction = "left" | "right" | "top" | "bottom" | "center-x" | "center-y";
@@ -1195,7 +1202,7 @@ function buildLayerContainerFlowNode({
     id: layerId,
     type: "layerContainer",
     position: LayerStackLayoutEngine.computeTrunkPosition(frame),
-    style: { width: 692, height: TRUNK_LAYER_HEIGHT },
+    style: { width: TRUNK_LAYER_WIDTH, height: TRUNK_LAYER_HEIGHT },
     draggable: true,
     selectable: true,
     data: {
@@ -1632,6 +1639,9 @@ export function CanvasShell() {
   // uiState: shell navigation, drawers, panels, tabs, and visual editing state.
   const [bottomTab, setBottomTab] = useState<BottomTab>("logs");
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
+  const [assistantPanelOpen, setAssistantPanelOpen] = useState(false);
+  const [residentPreviewPanelOpen, setResidentPreviewPanelOpen] = useState(false);
+  const [moduleAssistantPanel, setModuleAssistantPanel] = useState<ModuleAssistantPanelState | null>(null);
   const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
   const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(true);
@@ -1893,7 +1903,6 @@ export function CanvasShell() {
   const [mainContextMenu, setMainContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [showMiniMap, setShowMiniMap] = useState(true);
-  const [showDebugTracePanel, setShowDebugTracePanel] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(true);
@@ -3742,10 +3751,22 @@ export function CanvasShell() {
     [appendLog, t]
   );
 
+  const handleModuleAssistantPanelChange = useCallback((panel: ModuleAssistantPanelState | null) => {
+    setModuleAssistantPanel(panel);
+  }, []);
+
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
-  const mainAssistantOpen = activeDrawer === "assistant" && !activeModuleNode;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
-  const outputDrawer = activeDrawer === "logs" || activeDrawer === "artifacts" || activeDrawer === "preview" ? activeDrawer : null;
+  const assistantPanel = activeModuleNode && moduleAssistantPanel
+    ? moduleAssistantPanel
+    : {
+        title: t("assistant.panel.title", "Assistant"),
+        meta: t("assistant.panel.meta", "Studio canvas"),
+        request: mainAssistantRequest,
+        canApplyPatch: false,
+        onApplyPatch: handleMainAssistantPatch,
+      };
+  const rightPanelExpanded = assistantPanelOpen || residentPreviewPanelOpen;
   const templateIsLoading = Boolean(loadingTemplateType);
   const toggleDrawer = useCallback(
     (drawer: DrawerId) => {
@@ -3854,7 +3875,7 @@ export function CanvasShell() {
 	        </div>
       </header>
 
-      <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""}`}>
+      <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""} ${rightPanelExpanded ? "has-right-panel-open" : ""}`}>
         <aside className={`panel left-panel ${nodeLibraryCollapsed ? "is-collapsed" : ""}`}>
           <button
             className="library-toggle"
@@ -3989,7 +4010,7 @@ export function CanvasShell() {
                 onReorderModule={reorderModuleTab}
                 onPinModule={pinModuleTab}
               />
-              <div className={`canvas-stage ${splitLayer ? "is-split" : ""} ${mainAssistantOpen ? "is-assistant-open" : ""}`}>
+              <div className={`canvas-stage ${splitLayer ? "is-split" : ""}`}>
                 <div
                   className="flow-stage"
                   onDragOver={(event) => {
@@ -4029,23 +4050,6 @@ export function CanvasShell() {
                   >
                     {showGrid ? <Background color="#3a3a3a" gap={24} /> : null}
                     <Controls />
-                    <CanvasDebugTracePanel
-                      open={showDebugTracePanel}
-                      t={t}
-                      logs={logs}
-                      trace={loadedDRResult?.execution_trace ?? (runtimeResult as { execution_trace?: unknown } | null)?.execution_trace ?? null}
-                      validation={loadedDRResult?.validation_result ?? validation}
-                      jsonPreview={{
-                        runtime_result: runtimeResult,
-                        loaded_file: loadedDRResult,
-                        export_preview: exportPreview,
-                        memory_view: memoryView,
-                        memory_clear_result: memoryClearResult
-                      }}
-                      memoryView={memoryView ?? null}
-                      memoryClearResult={memoryClearResult ?? null}
-                      onToggle={() => setShowDebugTracePanel((value) => !value)}
-                    />
                     {showMiniMap ? (
                       <>
                         <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />
@@ -4096,27 +4100,11 @@ export function CanvasShell() {
                     libraryNodeTypes={libraryNodeTypes}
                     language={language}
                     t={t}
-                    assistantOpen={activeDrawer === "assistant"}
                     onRenameModule={(id, name) => setModuleNames((current) => ({ ...current, [id]: name }))}
                     onExecutionResult={setResidentPreviewOutput}
-                    onCloseAssistant={() => setActiveDrawer(null)}
+                    onAssistantPanelChange={handleModuleAssistantPanelChange}
                     onClose={() => closeModuleTab(activeModuleNode.node_id)}
                   />
-                ) : null}
-                {mainAssistantOpen ? (
-                  <AssistantDock
-                    title={t("assistant.panel.title", "Assistant")}
-                    meta={t("assistant.panel.meta", "Studio canvas")}
-                    t={t}
-                    onClose={() => setActiveDrawer(null)}
-                  >
-                    <StudioAssistantPanel
-                      request={mainAssistantRequest}
-                      canApplyPatch={false}
-                      t={t}
-                      onApplyPatch={handleMainAssistantPatch}
-                    />
-                  </AssistantDock>
                 ) : null}
               </div>
               {floatingLayerIds.map((id, index) => {
@@ -4172,6 +4160,35 @@ export function CanvasShell() {
 	            </div>
 	          )}
         </section>
+
+        <RightStudioPanel
+          assistantOpen={assistantPanelOpen}
+          residentPreviewOpen={residentPreviewPanelOpen}
+          activeFloatingDrawer={activeDrawer}
+          assistantTitle={assistantPanel.title}
+          assistantMeta={assistantPanel.meta}
+          assistantRequest={assistantPanel.request}
+          assistantCanApplyPatch={assistantPanel.canApplyPatch}
+          onAssistantPatch={assistantPanel.onApplyPatch}
+          resident={residentInstance}
+          canLoadCompiledDR={canExportDR}
+          loadedDRResult={loadedDRResult}
+          previewLoadStatus={previewLoadStatus}
+          previewLoadError={previewLoadError}
+          t={t}
+          onToggleAssistant={() => {
+            setAssistantPanelOpen((value) => !value);
+            setResidentPreviewPanelOpen(false);
+          }}
+          onToggleResidentPreview={() => {
+            setResidentPreviewPanelOpen((value) => !value);
+            setAssistantPanelOpen(false);
+          }}
+          onToggleFloatingDrawer={toggleDrawer}
+          onCloseAssistant={() => setAssistantPanelOpen(false)}
+          onCloseResidentPreview={() => setResidentPreviewPanelOpen(false)}
+          onLoadCompiledDR={handleLoadCompiledDRToPreview}
+        />
       </section>
 
       {focusLayerId ? (() => {
@@ -4218,12 +4235,11 @@ export function CanvasShell() {
         );
       })() : null}
 
-      <FloatingDock activeDrawer={activeDrawer} t={t} onToggle={toggleDrawer} />
-
       {activeDrawer === "layers" ? (
         <FloatingSidePanel
           title={t("panel.layerNavigator", "Layer Navigator")}
           meta={`${catalogLayers.length}/13`}
+          rightPanelExpanded={rightPanelExpanded}
           onClose={() => setActiveDrawer(null)}
         >
           <LayerNavigator
@@ -4238,21 +4254,30 @@ export function CanvasShell() {
         </FloatingSidePanel>
       ) : null}
 
-      {activeDrawer === "residentPreview" ? (
+      {activeDrawer === "debugTrace" ? (
         <FloatingSidePanel
-          title={t("panel.residentPreview", "Resident Preview")}
-          meta={t("preview.mockLayer", "Mock preview")}
-          className="resident-preview-panel"
+          title={t("panel.debugTrace", "Debug / Trace")}
+          meta={t("debugTrace.openLabel", "Debug")}
+          rightPanelExpanded={rightPanelExpanded}
           onClose={() => setActiveDrawer(null)}
         >
-          <ResidentPreviewPanel
-            resident={residentInstance}
+          <CanvasDebugTracePanel
+            open
+            embedded
             t={t}
-            canLoadCompiledDR={canExportDR}
-            onLoadCompiledDR={handleLoadCompiledDRToPreview}
-            loadedDRResult={loadedDRResult}
-            previewLoadStatus={previewLoadStatus}
-            previewLoadError={previewLoadError}
+            logs={logs}
+            trace={loadedDRResult?.execution_trace ?? (runtimeResult as { execution_trace?: unknown } | null)?.execution_trace ?? null}
+            validation={loadedDRResult?.validation_result ?? validation}
+            jsonPreview={{
+              runtime_result: runtimeResult,
+              loaded_file: loadedDRResult,
+              export_preview: exportPreview,
+              memory_view: memoryView,
+              memory_clear_result: memoryClearResult
+            }}
+            memoryView={memoryView ?? null}
+            memoryClearResult={memoryClearResult ?? null}
+            onToggle={() => setActiveDrawer(null)}
           />
         </FloatingSidePanel>
       ) : null}
@@ -4264,22 +4289,34 @@ export function CanvasShell() {
         />
       ) : null}
 
-      {outputDrawer ? (
-        <FloatingBottomPanel
-          activeTab={bottomTab}
-          t={t}
-          onTab={(tab) => {
-            setBottomTab(tab);
-            setActiveDrawer(tab);
-          }}
+      {activeDrawer === "logs" ? (
+        <FloatingSidePanel
+          title={t("panel.logs")}
+          rightPanelExpanded={rightPanelExpanded}
           onClose={() => setActiveDrawer(null)}
         >
-          {bottomTab === "logs" ? <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} t={t} /> : null}
-          {bottomTab === "artifacts" ? (
-            <JsonPanel value={artifacts.length ? artifacts : null} emptyText={t("panel.noArtifacts")} />
-          ) : null}
-          {bottomTab === "preview" ? <JsonPanel value={exportPreview} emptyText={t("panel.noPreview")} /> : null}
-        </FloatingBottomPanel>
+          <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} t={t} />
+        </FloatingSidePanel>
+      ) : null}
+
+      {activeDrawer === "artifacts" ? (
+        <FloatingSidePanel
+          title={t("panel.artifacts")}
+          rightPanelExpanded={rightPanelExpanded}
+          onClose={() => setActiveDrawer(null)}
+        >
+          <JsonPanel value={artifacts.length ? artifacts : null} emptyText={t("panel.noArtifacts")} />
+        </FloatingSidePanel>
+      ) : null}
+
+      {activeDrawer === "preview" ? (
+        <FloatingSidePanel
+          title={t("panel.exportPreview")}
+          rightPanelExpanded={rightPanelExpanded}
+          onClose={() => setActiveDrawer(null)}
+        >
+          <JsonPanel value={exportPreview} emptyText={t("panel.noPreview")} />
+        </FloatingSidePanel>
       ) : null}
     </main>
   );
@@ -4385,55 +4422,197 @@ function ModuleFocusPanel({
   );
 }
 
+function RightStudioPanel({
+  assistantOpen,
+  residentPreviewOpen,
+  activeFloatingDrawer,
+  assistantTitle,
+  assistantMeta,
+  assistantRequest,
+  assistantCanApplyPatch,
+  resident,
+  canLoadCompiledDR,
+  loadedDRResult,
+  previewLoadStatus,
+  previewLoadError,
+  t,
+  onToggleAssistant,
+  onToggleResidentPreview,
+  onToggleFloatingDrawer,
+  onCloseAssistant,
+  onCloseResidentPreview,
+  onAssistantPatch,
+  onLoadCompiledDR
+}: {
+  assistantOpen: boolean;
+  residentPreviewOpen: boolean;
+  activeFloatingDrawer: DrawerId | null;
+  assistantTitle: string;
+  assistantMeta: string;
+  assistantRequest: StudioAssistantRequest;
+  assistantCanApplyPatch: boolean;
+  resident: ResidentInstance | null;
+  canLoadCompiledDR: boolean;
+  loadedDRResult: DRLoadResult | null;
+  previewLoadStatus: "idle" | "loading" | "success" | "error";
+  previewLoadError: string | null;
+  t: (key: string, fallback?: string) => string;
+  onToggleAssistant: () => void;
+  onToggleResidentPreview: () => void;
+  onToggleFloatingDrawer: (drawer: DrawerId) => void;
+  onCloseAssistant: () => void;
+  onCloseResidentPreview: () => void;
+  onAssistantPatch: (patch: StudioAssistantPatch) => void;
+  onLoadCompiledDR: () => Promise<void>;
+}) {
+  const expanded = assistantOpen || residentPreviewOpen;
+  const floatingItems: { id: DrawerId; label: string }[] = [
+    { id: "debugTrace", label: t("panel.debugTrace", "Debug / Trace") },
+    { id: "layers", label: t("panel.layerNavigator", "Layers") },
+    { id: "logs", label: t("panel.logs") },
+    { id: "artifacts", label: t("panel.artifacts") },
+    { id: "preview", label: t("panel.exportPreview") }
+  ];
+  return (
+    <aside className={`right-studio-panel ${expanded ? "is-expanded" : "is-collapsed"}`}>
+      <div className="right-studio-panel__rail" aria-label={t("panel.rightTools", "Right panels")}>
+        <div className="right-studio-panel__rail-group" aria-label={t("panel.fixedTools", "Fixed panels")}>
+          <button
+            type="button"
+            className={assistantOpen ? "is-active" : ""}
+            title={t("assistant.floatingButton.title", "Assistant")}
+            aria-label={t("assistant.floatingButton.title", "Assistant")}
+            aria-pressed={assistantOpen}
+            onClick={onToggleAssistant}
+          >
+            <DockIcon id="assistant" />
+          </button>
+          <button
+            type="button"
+            className={residentPreviewOpen ? "is-active" : ""}
+            title={t("panel.residentPreview", "Resident Preview")}
+            aria-label={t("panel.residentPreview", "Resident Preview")}
+            aria-pressed={residentPreviewOpen}
+            onClick={onToggleResidentPreview}
+          >
+            <DockIcon id="residentPreview" />
+          </button>
+        </div>
+        <div className="right-studio-panel__rail-group right-studio-panel__rail-group--floating" aria-label={t("dock.ariaLabel")}>
+          {floatingItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={activeFloatingDrawer === item.id ? "is-active" : ""}
+              title={item.label}
+              aria-label={item.label}
+              aria-pressed={activeFloatingDrawer === item.id}
+              onClick={() => onToggleFloatingDrawer(item.id)}
+            >
+              <DockIcon id={item.id} />
+            </button>
+          ))}
+        </div>
+      </div>
+      {expanded ? (
+        <div className="right-studio-panel__panels">
+          {assistantOpen ? (
+            <section className="right-studio-panel__section">
+              <div className="right-studio-panel__header">
+                <div>
+                  <h2>{assistantTitle}</h2>
+                  {assistantMeta ? <span>{assistantMeta}</span> : null}
+                </div>
+                <button
+                  type="button"
+                  title={t("assistant.panel.collapse", "Collapse")}
+                  aria-label={t("assistant.panel.collapse", "Collapse")}
+                  onClick={onCloseAssistant}
+                >
+                  x
+                </button>
+              </div>
+              <div className="right-studio-panel__body">
+                <StudioAssistantPanel
+                  request={assistantRequest}
+                  canApplyPatch={assistantCanApplyPatch}
+                  t={t}
+                  onApplyPatch={onAssistantPatch}
+                />
+              </div>
+            </section>
+          ) : null}
+          {residentPreviewOpen ? (
+            <section className="right-studio-panel__section resident-preview-panel">
+              <div className="right-studio-panel__header">
+                <div>
+                  <h2>{t("panel.residentPreview", "Resident Preview")}</h2>
+                  <span>{t("preview.mockLayer", "Mock preview")}</span>
+                </div>
+                <button
+                  type="button"
+                  title={t("canvas.sidebar.collapse", "Collapse")}
+                  aria-label={t("canvas.sidebar.collapse", "Collapse")}
+                  onClick={onCloseResidentPreview}
+                >
+                  x
+                </button>
+              </div>
+              <div className="right-studio-panel__body">
+                <ResidentPreviewPanel
+                  resident={resident}
+                  t={t}
+                  canLoadCompiledDR={canLoadCompiledDR}
+                  onLoadCompiledDR={onLoadCompiledDR}
+                  loadedDRResult={loadedDRResult}
+                  previewLoadStatus={previewLoadStatus}
+                  previewLoadError={previewLoadError}
+                />
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+    </aside>
+  );
+}
+
 function FloatingDock({
   activeDrawer,
+  rightPanelExpanded,
   t,
   onToggle
 }: {
   activeDrawer: DrawerId | null;
+  rightPanelExpanded: boolean;
   t: (key: string, fallback?: string) => string;
   onToggle: (drawer: DrawerId) => void;
 }) {
   const dockItems: { id: DrawerId; label: string }[] = [
-    { id: "assistant", label: t("assistant.floatingButton.title", "Assistant") },
     { id: "layers", label: t("panel.layerNavigator", "Layers") },
     { id: "logs", label: t("panel.logs") },
     { id: "artifacts", label: t("panel.artifacts") },
-    { id: "residentPreview", label: t("panel.residentPreview", "Resident Preview") },
     { id: "preview", label: t("panel.exportPreview") }
   ];
 
   return (
     <FloatingPortal>
     <nav
-      className={`floating-dock ${activeDrawer === "assistant" ? "is-assistant-open" : ""}`}
+      className={`floating-dock ${rightPanelExpanded ? "has-right-panel-open" : ""}`}
       aria-label={t("dock.ariaLabel")}
     >
       {dockItems.map((item) => (
-        item.id === "assistant" ? (
-          <AssistantFloatingButton
-            key={item.id}
-            active={activeDrawer === item.id}
-            title={item.label}
-            onClick={() => {
-              onToggle(item.id);
-            }}
-          >
-            <DockIcon id={item.id} />
-          </AssistantFloatingButton>
-        ) : (
-          <button
-            key={item.id}
-            className={activeDrawer === item.id ? "is-active" : ""}
-            title={item.label}
-            aria-label={item.label}
-            onClick={() => {
-              onToggle(item.id);
-            }}
-          >
-            <DockIcon id={item.id} />
-          </button>
-        )
+        <button
+          key={item.id}
+          className={activeDrawer === item.id ? "is-active" : ""}
+          title={item.label}
+          aria-label={item.label}
+          onClick={() => {
+            onToggle(item.id);
+          }}
+        >
+          <DockIcon id={item.id} />
+        </button>
       ))}
     </nav>
     </FloatingPortal>
@@ -4469,6 +4648,15 @@ function DockIcon({ id }: { id: DrawerId }) {
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 6h16M4 12h16M4 18h16" />
         <path d="M7 4v4M12 10v4M17 16v4" />
+      </svg>
+    );
+  }
+  if (id === "debugTrace") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 8h10M7 12h7M7 16h10" />
+        <path d="M5 4h14v16H5z" />
+        <path d="M9 2v4M15 2v4M9 18v4M15 18v4" />
       </svg>
     );
   }
@@ -4510,17 +4698,19 @@ function FloatingSidePanel({
   meta,
   children,
   className,
+  rightPanelExpanded,
   onClose
 }: {
   title: string;
   meta?: string;
   children: ReactNode;
   className?: string;
+  rightPanelExpanded?: boolean;
   onClose: () => void;
 }) {
   return (
     <FloatingPortal>
-      <aside className={`floating-side-panel${className ? ` ${className}` : ""}`}>
+      <aside className={`floating-side-panel${rightPanelExpanded ? " is-right-panel-open" : ""}${className ? ` ${className}` : ""}`}>
         <div className="floating-panel-header">
           <div>
             <h2>{title}</h2>
@@ -4531,40 +4721,6 @@ function FloatingSidePanel({
         <div className="floating-panel-body">{children}</div>
       </aside>
     </FloatingPortal>
-  );
-}
-
-function AssistantDock({
-  title,
-  meta,
-  children,
-  t,
-  onClose
-}: {
-  title: string;
-  meta?: string;
-  children: ReactNode;
-  t: (key: string, fallback?: string) => string;
-  onClose: () => void;
-}) {
-  return (
-    <aside className="assistant-dock">
-      <div className="assistant-dock__header">
-        <div>
-          <h2>{title}</h2>
-          {meta ? <span>{meta}</span> : null}
-        </div>
-        <button
-          type="button"
-          title={t("assistant.panel.collapse", "Collapse")}
-          aria-label={t("assistant.panel.collapse", "Collapse")}
-          onClick={onClose}
-        >
-          x
-        </button>
-      </div>
-      <div className="assistant-dock__body">{children}</div>
-    </aside>
   );
 }
 
@@ -5720,10 +5876,9 @@ function ModuleCanvasPanel({
   libraryNodeTypes,
   language,
   t,
-  assistantOpen,
   onRenameModule,
   onExecutionResult,
-  onCloseAssistant,
+  onAssistantPanelChange,
   onClose
 }: {
   moduleNode: WorkflowNode;
@@ -5733,10 +5888,9 @@ function ModuleCanvasPanel({
   libraryNodeTypes: ModuleNodeType[];
   language: Language;
   t: (key: string, fallback?: string) => string;
-  assistantOpen: boolean;
   onRenameModule: (id: string, name: string) => void;
   onExecutionResult: (result: unknown) => void;
-  onCloseAssistant: () => void;
+  onAssistantPanelChange: (panel: ModuleAssistantPanelState | null) => void;
   onClose: () => void;
 }) {
   const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
@@ -6081,6 +6235,17 @@ function ModuleCanvasPanel({
     },
     [assistantFieldKey, patchModuleNodeData, selectedId]
   );
+
+  useEffect(() => {
+    onAssistantPanelChange({
+      title: t("assistant.panel.title", "Assistant"),
+      meta: title,
+      request: assistantRequest,
+      canApplyPatch: Boolean(selectedId && selectedSchema),
+      onApplyPatch: applyAssistantPatch,
+    });
+    return () => onAssistantPanelChange(null);
+  }, [applyAssistantPatch, assistantRequest, onAssistantPanelChange, selectedId, selectedSchema, t, title]);
 
   // 自动保存模块画布图 (nodes + edges) 到 localStorage
   useEffect(() => {
@@ -6686,7 +6851,7 @@ function ModuleCanvasPanel({
           </button>
         </div>
       </header>
-      <div className={`module-canvas-panel__body ${assistantOpen ? "is-assistant-open" : ""}`}>
+      <div className="module-canvas-panel__body">
         <div
           className="module-canvas-panel__flow"
           onDragOver={(event) => {
@@ -6777,21 +6942,6 @@ function ModuleCanvasPanel({
           </WorkflowNodeCardModuleNodesProvider>
           {contextMenu ? <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} /> : null}
         </div>
-        {assistantOpen ? (
-          <AssistantDock
-            title={t("assistant.panel.title", "Assistant")}
-            meta={title}
-            t={t}
-            onClose={onCloseAssistant}
-          >
-            <StudioAssistantPanel
-              request={assistantRequest}
-              canApplyPatch={Boolean(selectedId && selectedSchema)}
-              t={t}
-              onApplyPatch={applyAssistantPatch}
-            />
-          </AssistantDock>
-        ) : null}
       </div>
     </section>
   );
@@ -6836,6 +6986,7 @@ function JsonPanel({ value, emptyText }: { value: unknown; emptyText: string }) 
 
 function CanvasDebugTracePanel({
   open,
+  embedded = false,
   t,
   logs,
   trace,
@@ -6846,6 +6997,7 @@ function CanvasDebugTracePanel({
   onToggle
 }: {
   open: boolean;
+  embedded?: boolean;
   t: (key: string, fallback?: string) => string;
   logs: { ts?: string; level: string; message: string }[];
   trace: unknown;
@@ -6871,12 +7023,14 @@ function CanvasDebugTracePanel({
 
   return (
     <aside className="canvas-debug-trace-panel nodrag nopan">
-      <header className="canvas-debug-trace-panel__header">
-        <strong>{t("panel.debugTrace")}</strong>
-        <button type="button" aria-label={t("debugTrace.collapse")} title={t("debugTrace.collapse")} onClick={onToggle}>
-          {t("debugPanel.collapseGlyph")}
-        </button>
-      </header>
+      {embedded ? null : (
+        <header className="canvas-debug-trace-panel__header">
+          <strong>{t("panel.debugTrace")}</strong>
+          <button type="button" aria-label={t("debugTrace.collapse")} title={t("debugTrace.collapse")} onClick={onToggle}>
+            {t("debugPanel.collapseGlyph")}
+          </button>
+        </header>
+      )}
       <details>
         <summary>{t("panel.logs")}</summary>
         {logs.length ? (
