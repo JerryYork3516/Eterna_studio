@@ -1162,6 +1162,51 @@ pre {
   line-height: 1.45;
 }
 
+.validation-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 7px;
+  max-width: 100%;
+}
+
+.validation-summary section {
+  display: grid;
+  gap: 5px;
+}
+
+.validation-summary h4,
+.validation-summary p {
+  margin: 0;
+}
+
+.validation-summary h4 {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.validation-summary ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.validation-summary li {
+  display: grid;
+  gap: 2px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.validation-summary li strong {
+  color: var(--muted-strong);
+  font-size: 10px;
+}
+
 .react-flow__node-layerContainer {
   width: 692px;
   height: 216px;

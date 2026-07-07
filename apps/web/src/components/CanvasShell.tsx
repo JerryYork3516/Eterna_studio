@@ -183,12 +183,12 @@ function getLayerDisplayMeta(layer: CatalogLayerInput, t: (key: string, fallback
           : "review_required";
   const review =
     lockLevel === "editable"
-      ? t("ui.lock.editable", "Editable")
+      ? t("ui.lock.editable")
       : lockLevel === "locked"
-        ? t("ui.lock.locked", "Locked")
+        ? t("ui.lock.locked")
         : lockLevel === "mixed"
-          ? t("ui.lock.mixed", "Mixed")
-          : t("ui.lock.reviewRequired", "Review Required");
+          ? t("ui.lock.mixed")
+          : t("ui.lock.reviewRequired");
 
   return {
     groupLabel,
@@ -225,7 +225,7 @@ function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: M
 
 function catalogLayerToWorkflowNode(layer: CatalogLayerInput, moduleCatalog: ModuleCatalogResponseV04): WorkflowNode {
   const layerOrder = catalogLayerOrder(layer);
-  const catalogLayerName = translate(useCanvasStore.getState().language, `layer.${layer.layer_id}`, layer.layer_name);
+  const catalogLayerName = layerDisplayName(useCanvasStore.getState().language, layer, layer.layer_name);
   return {
     node_id: layer.layer_id,
     type: "layer_container",
@@ -407,6 +407,64 @@ function moduleCatalogClass(module: ModuleCatalogEntryV04) {
     return moduleClass;
   }
   return module.category || "plugin";
+}
+
+function i18nCandidate(language: Language, keys: string[], fallback: string) {
+  for (const key of keys) {
+    const marker = `__missing__${key}`;
+    const translated = translate(language, key, marker);
+    if (translated !== marker) {
+      return translated;
+    }
+  }
+  return fallback;
+}
+
+function stableI18nKeyPart(value: string) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function assemblyStatusLabel(language: Language, value: unknown, fallback?: string) {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback || "";
+  if (!raw) {
+    return translate(language, "common.notGenerated", "Not generated");
+  }
+  const normalized = stableI18nKeyPart(raw);
+  return i18nCandidate(language, [`assembly.status.${normalized}`, `module.status.${raw}`, `lock.${raw}`], fallback || raw);
+}
+
+function assemblyFieldLabel(language: Language, value: string, fallback?: string) {
+  const raw = value.trim();
+  if (!raw) {
+    return fallback || translate(language, "common.field", "Field");
+  }
+  const normalized = stableI18nKeyPart(raw);
+  return i18nCandidate(
+    language,
+    [`assembly.field.${normalized}`, `node.coreParams.key.${raw}`, `field.identity.${raw}.label`, `field.${raw}`],
+    fallback || raw
+  );
+}
+
+function layerDisplayName(language: Language, layer: CatalogLayerInput, fallback = "") {
+  return i18nCandidate(language, [`layer.${layer.layer_id}`, `layer.${layer.layer_order}.name`], fallback || layer.layer_name || layer.layer_id);
+}
+
+function validationFindingMessage(language: Language, finding: unknown) {
+  if (!isRecord(finding)) {
+    return String(finding ?? "");
+  }
+  const code = typeof finding.code === "string" ? finding.code : "";
+  const message = typeof finding.message === "string" ? finding.message : "";
+  if (!code) {
+    return message;
+  }
+  return i18nCandidate(language, [`validation.${code}`, `validation.${stableI18nKeyPart(code)}`, `audit.${code}`], message || code);
 }
 
 function moduleDisplayLayerId(module: ModuleCatalogEntryV04, storedLayerId: string) {
@@ -1372,7 +1430,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
     onContainerContextMenu,
     onDroppedModuleContextMenu
   } = data;
-  const label = translate(language, `layer.${layer.layer_id}`, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "");
+  const label = layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "");
   const parameterCount = Object.keys(layer).length;
   const visibleModules = modules.slice(0, FOLDER_PREVIEW_MODULE_LIMIT);
   const visibleSubnodes: WorkflowNode[] = data.subnodes.slice(0, FOLDER_PREVIEW_MODULE_LIMIT);
@@ -1405,7 +1463,7 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
           <button
             type="button"
             className="folder-icon folder-focus-button nodrag"
-            title={translate(language, "module.viewAll", "查看全部模块")}
+            title={translate(language, "module.viewAll")}
             onClick={(event) => {
               event.stopPropagation();
               onOpenModuleFocus();
@@ -1417,15 +1475,15 @@ function FolderGroupNode({ data }: { data: FolderGroupNodeData }) {
             <p>{translate(language, "workspace.breadcrumb", "Workflow / Layer / Folder")}</p>
             <h3>
               L{layer.layer_order} {label}
-              <span className="module-count-badge">{modules.length} {translate(language, "module.count", "个模块")}</span>
+              <span className="module-count-badge">{modules.length} {translate(language, "module.count")}</span>
             </h3>
           </div>
         </div>
         <details className="folder-group-params nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
-          <summary>{translate(language, "node.params", "参数")}</summary>
+          <summary>{translate(language, "node.params")}</summary>
           <div className="folder-group-meta compact">
-            <span>{translate(language, "field.status")}: schema</span>
-            <span>Tier: core</span>
+            <span>{assemblyFieldLabel(language, "status", translate(language, "field.status"))}: {assemblyStatusLabel(language, "schema")}</span>
+            <span>{assemblyFieldLabel(language, "tier")}: {assemblyStatusLabel(language, "core")}</span>
             <span>{translate(language, "field.data")}: {parameterCount}</span>
           </div>
         </details>
@@ -2695,7 +2753,7 @@ export function CanvasShell() {
           label: t("module.add", "添加模块"),
           children: buildModuleAddMenu(layer.layer_id)
         },
-        { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(layer.layer_id) },
+        { label: t("module.viewAll"), onSelect: () => setFocusLayerId(layer.layer_id) },
         { label: t("module.removeAll", "移除全部模块"), onSelect: () => removeAllModulesFromLayer(layer.layer_id), danger: true }
       ]);
       if (menu) {
@@ -2718,7 +2776,7 @@ export function CanvasShell() {
         onSelect: () => targetModuleIds.forEach((id) => setModuleColor(layer.layer_id, id, color))
       }));
       const menu = makeContextMenu(event, [
-        { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count", "个模块")}` : mod ? moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)) : moduleId, disabled: true },
+        { label: targetModuleIds.length > 1 ? `${targetModuleIds.length} ${t("module.count")}` : mod ? moduleCatalogName(mod, (key, fallback) => translate(language, key, fallback)) : moduleId, disabled: true },
         {
           label: t("module.open", "打开模组"),
           onSelect: () => openCatalogModuleCanvas(layer.layer_id, moduleId)
@@ -2727,7 +2785,7 @@ export function CanvasShell() {
           label: t("module.colorMenu", "修改颜色"),
           children: colorItems
         },
-        { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(layer.layer_id) },
+        { label: t("module.viewAll"), onSelect: () => setFocusLayerId(layer.layer_id) },
         {
           label: t("module.remove", "移除"),
           onSelect: () => targetModuleIds.forEach((id) => removeModuleFromLayer(layer.layer_id, id)),
@@ -3042,7 +3100,7 @@ export function CanvasShell() {
 
   const openLayerWorkspace = useCallback(
     (layer: CatalogLayerInput, mode: WorkspaceMode) => {
-      const catalogLayerName = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
+      const catalogLayerName = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
       setSelectedNode(layer.layer_id);
       setActiveLayerId(layer.layer_id);
       setWorkspaceMode(mode);
@@ -3063,7 +3121,7 @@ export function CanvasShell() {
       }
       appendLog(`${t("status.layerOpened", "Layer opened")}: L${layer.layer_order} ${catalogLayerName}`);
     },
-    [appendLog, moduleCatalog, setSelectedNode, t]
+    [appendLog, language, moduleCatalog, setSelectedNode, t]
   );
 
   const toggleLayerCollapsed = useCallback(
@@ -3295,7 +3353,7 @@ export function CanvasShell() {
         ...(isLayer
           ? [
               { label: t("module.add", "添加模块"), children: buildModuleAddMenu(node.id) },
-              { label: t("module.viewAll", "查看全部模块"), onSelect: () => setFocusLayerId(node.id) }
+              { label: t("module.viewAll"), onSelect: () => setFocusLayerId(node.id) }
             ]
           : []),
         { label: t("common.rename", "重命名"), onSelect: () => renameUiNode(node.id, label) },
@@ -4133,7 +4191,7 @@ export function CanvasShell() {
           }}
           onClose={() => setActiveDrawer(null)}
         >
-          {bottomTab === "logs" ? <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} /> : null}
+          {bottomTab === "logs" ? <LogsPanel logs={logs} validation={validation} emptyText={t("panel.noLogs")} t={t} /> : null}
           {bottomTab === "artifacts" ? (
             <JsonPanel value={artifacts.length ? artifacts : null} emptyText={t("panel.noArtifacts")} />
           ) : null}
@@ -4186,7 +4244,7 @@ function ModuleFocusPanel({
           <div>
             <p>{t("module.focusMode", "Focus Mode")}</p>
             <h3>{layerLabel}</h3>
-            <span>{mods.length} {t("module.count", "modules")}</span>
+            <span>{mods.length} {t("module.count")}</span>
           </div>
           <button onClick={onClose}>✕</button>
         </header>
@@ -4641,7 +4699,8 @@ function LayerNavigator({
   return (
     <div className="layer-navigator">
       {layers.map((layer) => {
-        const label = moduleCatalog ? translate(useCanvasStore.getState().language, `layer.${layer.layer_id}`, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
+        const language = useCanvasStore.getState().language;
+        const label = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
         const collapsed = collapsedLayerIds.has(layer.layer_id);
         return (
           <div key={layer.layer_id} className="layer-nav-section">
@@ -4651,18 +4710,18 @@ function LayerNavigator({
             <button className="layer-nav-main" onClick={() => onOpen(layer, "inline")}>
               <span className="layer-index">{String(layer.layer_order).padStart(2, "0")}</span>
               <span className="layer-name">{label}</span>
-              <span className="layer-status">schema</span>
+              <span className="layer-status">{assemblyStatusLabel(language, "schema")}</span>
             </button>
             <div className="layer-nav-meta">
-              <span>core</span>
-              <span>0 nodes</span>
-              <span>{t("lock.editable", "editable")}</span>
+              <span>{assemblyStatusLabel(language, "core")}</span>
+              <span>0 {t("assembly.field.nodes")}</span>
+              <span>{t("lock.editable")}</span>
             </div>
-            <div className="layer-nav-actions" aria-label={`${label} workspace actions`}>
+            <div className="layer-nav-actions" aria-label={`${label} ${t("assembly.action.workspaceActions")}`}>
               <button onClick={() => onToggle(layer)}>{collapsed ? "+" : "-"}</button>
-              <button onClick={() => onOpen(layer, "right")}>{t("workspace.rightShort", "Right")}</button>
-              <button onClick={() => onOpen(layer, "split")}>{t("workspace.splitShort", "Split")}</button>
-              <button onClick={() => onOpen(layer, "window")}>{t("workspace.windowShort", "Pop")}</button>
+              <button onClick={() => onOpen(layer, "right")}>{t("workspace.rightShort")}</button>
+              <button onClick={() => onOpen(layer, "split")}>{t("workspace.splitShort")}</button>
+              <button onClick={() => onOpen(layer, "window")}>{t("workspace.windowShort")}</button>
             </div>
           </article>
           </div>
@@ -4712,11 +4771,15 @@ function WorkspaceTabs({
         type="button"
         className={`breadcrumb breadcrumb-home ${activeModuleId ? "" : "is-active"}`}
         onClick={onReturnToMain}
-        title={t("workspace.backToCanvas", "Back to main canvas")}
+        title={t("workspace.backToCanvas")}
       >
         <span>{t("field.workflow")}</span>
         <span>/</span>
-        <strong>{activeId && moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === activeId)?.layer_name ?? "" : "Pipeline"}</strong>
+        <strong>
+          {activeId && moduleCatalog && layers.get(activeId)
+            ? layerDisplayName(useCanvasStore.getState().language, layers.get(activeId) as CatalogLayerInput, moduleCatalog.layers.find((l) => l.layer_id === activeId)?.layer_name ?? "")
+            : t("common.pipeline")}
+        </strong>
       </button>
       <div className="tab-strip">
         {tabs.map((id) => {
@@ -4727,8 +4790,8 @@ function WorkspaceTabs({
           return (
             <button key={id} className={activeId === id ? "is-active" : ""} onClick={() => onSelect(id)}>
               L{layer.layer_order}
-              <span>{moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : ""}</span>
-              <small>{mode}</small>
+              <span>{moduleCatalog ? layerDisplayName(useCanvasStore.getState().language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : ""}</span>
+              <small>{t(`workspace.${mode}`)}</small>
               <b
                 role="button"
                 tabIndex={0}
@@ -4835,7 +4898,8 @@ function LayerWorkspacePanel({
   onPreviewNode: (node: WorkflowNode) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const label = moduleCatalog ? moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "" : "";
+  const language = useCanvasStore.getState().language;
+  const label = moduleCatalog ? layerDisplayName(language, layer, moduleCatalog.layers.find((l) => l.layer_id === layer.layer_id)?.layer_name ?? "") : "";
   const parameterCount = Object.keys(layer).length;
 
   return (
@@ -4849,26 +4913,26 @@ function LayerWorkspacePanel({
           <p>{t("workspace.breadcrumb", "Workflow / Layer / Folder")}</p>
           <h3>
             L{layer.layer_order} {label}
-            <span className="module-count-badge">0 modules</span>
+            <span className="module-count-badge">0 {t("module.count")}</span>
           </h3>
           </div>
         </div>
         <div className="workspace-actions">
           <button onClick={() => setCollapsed((value) => !value)}>{collapsed ? "+" : "-"}</button>
-          <button onClick={() => onOpen(layer, "right")}>{t("workspace.rightShort", "Right")}</button>
-          <button onClick={() => onOpen(layer, "split")}>{t("workspace.splitShort", "Split")}</button>
-          <button onClick={() => onOpen(layer, "window")}>{t("workspace.window", "New window")}</button>
+          <button onClick={() => onOpen(layer, "right")}>{t("workspace.rightShort")}</button>
+          <button onClick={() => onOpen(layer, "split")}>{t("workspace.splitShort")}</button>
+          <button onClick={() => onOpen(layer, "window")}>{t("workspace.window")}</button>
         </div>
       </div>
       <div className="folder-group-meta">
-        <span>{t("field.status")}: schema</span>
-        <span>Tier: core</span>
+        <span>{assemblyFieldLabel(language, "status", t("field.status"))}: {assemblyStatusLabel(language, "schema")}</span>
+        <span>{assemblyFieldLabel(language, "tier")}: {assemblyStatusLabel(language, "core")}</span>
         <span>{t("field.data")}: {parameterCount}</span>
         <span>{t("field.childrenCount")}: 0</span>
       </div>
       {!collapsed ? (
         <div className="submodule-rail">
-          <div className="empty-node-canvas">0 modules</div>
+          <div className="empty-node-canvas">0 {t("module.count")}</div>
         </div>
       ) : (
         <div className="folder-collapsed">{t("workspace.emptyFolder", "empty folder layer")}</div>
@@ -5015,6 +5079,69 @@ function safeStringify(value: unknown) {
   } catch (error) {
     return String((error as Error)?.message ?? value);
   }
+}
+
+function validationFindings(validation: unknown, key: "errors" | "warnings") {
+  if (!isRecord(validation)) {
+    return [];
+  }
+  const value = validation[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function ValidationSummary({ validation, t }: { validation: unknown; t: (key: string, fallback?: string) => string }) {
+  const language = useCanvasStore((state) => state.language);
+  const errors = validationFindings(validation, "errors");
+  const warnings = validationFindings(validation, "warnings");
+
+  if (!validation) {
+    return <p className="canvas-debug-trace-panel__empty">{t("inspector.noValidation")}</p>;
+  }
+
+  return (
+    <div className="validation-summary">
+      <section>
+        <h4>{t("assembly.validation.errors")}</h4>
+        {errors.length ? (
+          <ul>
+            {errors.map((error, index) => {
+              const code = isRecord(error) && typeof error.code === "string" ? error.code : `${index}`;
+              return (
+                <li key={`${code}-${index}`}>
+                  <strong>{code}</strong>
+                  <span>{validationFindingMessage(language, error)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p>{t("assembly.validation.noErrors")}</p>
+        )}
+      </section>
+      <section>
+        <h4>{t("assembly.validation.warnings")}</h4>
+        {warnings.length ? (
+          <ul>
+            {warnings.map((warning, index) => {
+              const code = isRecord(warning) && typeof warning.code === "string" ? warning.code : `${index}`;
+              return (
+                <li key={`${code}-${index}`}>
+                  <strong>{code}</strong>
+                  <span>{validationFindingMessage(language, warning)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p>{t("assembly.validation.noWarnings")}</p>
+        )}
+      </section>
+      <details>
+        <summary>{t("inspector.rawJson")}</summary>
+        <pre>{safeStringify(validation)}</pre>
+      </details>
+    </div>
+  );
 }
 
 // Ensure a node exposes at least one in/out port so WorkflowNodeCard renders
@@ -6294,11 +6421,13 @@ function ModuleCanvasPanel({
 function LogsPanel({
   logs,
   validation,
-  emptyText
+  emptyText,
+  t
 }: {
   logs: { ts?: string; level: string; message: string }[];
   validation: unknown;
   emptyText: string;
+  t: (key: string, fallback?: string) => string;
 }) {
   if (!logs.length && !validation) {
     return <div className="bottom-empty">{emptyText}</div>;
@@ -6313,7 +6442,7 @@ function LogsPanel({
           <p>{log.message}</p>
         </div>
       ))}
-      {validation ? <pre>{JSON.stringify(validation, null, 2)}</pre> : null}
+      {validation ? <ValidationSummary validation={validation} t={t} /> : null}
     </div>
   );
 }
@@ -6389,7 +6518,7 @@ function CanvasDebugTracePanel({
       </details>
       <details>
         <summary>{t("inspector.validationResult")}</summary>
-        <pre>{validation ? safeStringify(validation) : t("inspector.noValidation")}</pre>
+        <ValidationSummary validation={validation} t={t} />
       </details>
       <details>
         <summary>{t("inspector.jsonPreview")}</summary>
@@ -6497,7 +6626,7 @@ function ResidentPreviewPanel({
           <ul>
             {validationErrors.map((error, index) => (
               <li key={`${error.code}-${index}`}>
-                {error.code}: {error.message}
+                {error.code}: {validationFindingMessage(useCanvasStore.getState().language, error)}
               </li>
             ))}
           </ul>

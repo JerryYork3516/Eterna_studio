@@ -425,6 +425,20 @@ function i18nText(language: Language, key: string) {
   return translate(language, key, key);
 }
 
+function statusText(language: Language, value: unknown, fallbackKey = "node.status.UNPLANNED") {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : "";
+  if (!raw) {
+    return translate(language, fallbackKey, "UNPLANNED");
+  }
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const marker = `__missing__${normalized}`;
+  const assemblyLabel = translate(language, `assembly.status.${normalized}`, marker);
+  if (assemblyLabel !== marker) {
+    return assemblyLabel;
+  }
+  return translate(language, `node.status.${raw}`, raw);
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean) : [];
 }
@@ -2086,12 +2100,12 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           <dl>
             <dt>{translate(language, "field.nodeId", "Node ID")}</dt>
             <dd>{schemaNode.node_id}</dd>
-            <dt>{translate(language, "field.status", "Status")}</dt>
+            <dt>{translate(language, "field.status")}</dt>
             <dd>{stateLabel}</dd>
             <dt>{translate(language, "field.lockLevel", "Lock")}</dt>
             <dd>{lockLabel}</dd>
             <dt>{translate(language, "field.validation", "Validation")}</dt>
-            <dd>{schemaNode.validation?.status ?? translate(language, "node.status.UNPLANNED", "UNPLANNED")}</dd>
+            <dd>{statusText(language, schemaNode.validation?.status)}</dd>
             <dt>{translate(language, "node.sections.slotBinding", "Slot Binding")}</dt>
             <dd>{slotBinding || translate(language, "node.slotBinding.none", "None")}</dd>
             <dt>{translate(language, "node.sections.inputSchema", "Input Schema")}</dt>
