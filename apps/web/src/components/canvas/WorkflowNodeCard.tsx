@@ -532,6 +532,179 @@ function updateFieldValue(fields: Record<string, unknown>[], index: number, valu
   return fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, value } : field));
 }
 
+const GENERIC_FIELD_TYPES: GenericFieldType[] = ["text", "long_text", "number", "boolean", "list", "object", "unknown"];
+const GENERIC_FIELD_RESERVED_KEYS = new Set(["mode", "text", "fields", "tags"]);
+const GENERIC_FIELD_NAME_KEY_MAP: Record<string, string> = {
+  "姓名": "resident_name",
+  "年龄设定": "age_profile",
+  "年龄": "age_profile",
+  "城市锚点": "city_anchor",
+  "主语言": "primary_language",
+  "居民类型": "resident_type",
+  "性别感": "gender_presentation",
+  "成长背景": "growth_background",
+  "家庭背景": "family_background",
+  "教育背景": "education_background",
+  "生活经历": "life_experience",
+  "关键人生事件": "key_life_events",
+  "职业身份": "career_identity",
+  "职业": "occupation",
+  "服务对象": "service_target",
+  "职业边界": "professional_boundary",
+  "存在模式": "existence_mode",
+  "可视形态": "visible_form",
+  "不可见形态": "invisible_form",
+  "运行形态": "runtime_form",
+  "设备形态": "device_form",
+};
+
+function safeGenericFieldKey(value: string) {
+  const mapped = GENERIC_FIELD_NAME_KEY_MAP[value.trim()];
+  const raw = mapped || value.normalize("NFKD").toLowerCase();
+  let key = raw
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  if (!key) {
+    key = "field";
+  }
+  if (/^[0-9]/.test(key)) {
+    key = `field_${key}`;
+  }
+  return key;
+}
+
+function uniqueGenericFieldKey(baseKey: string, fields: GenericField[], currentIndex: number) {
+  const base = safeGenericFieldKey(baseKey);
+  const used = new Set(fields.map((field, index) => (index === currentIndex ? "" : field.field_key)).filter(Boolean));
+  if (!used.has(base)) {
+    return base;
+  }
+  let suffix = 2;
+  while (used.has(`${base}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${base}_${suffix}`;
+}
+
+function genericFieldDrMapping(layerId: string, moduleId: string, fieldKey: string) {
+  return layerId && moduleId && fieldKey ? `payload.layers.${layerId}.modules.${moduleId}.fields.${fieldKey}` : "";
+}
+
+function genericFieldsFromParams(value: unknown): GenericField[] {
+  return Array.isArray(value)
+    ? value
+        .filter(isRecord)
+        .map((field, index) => ({
+          field_key: stringValue(field.field_key) || `field_${index + 1}`,
+          field_name: stringValue(field.field_name) || stringValue(field.field_key) || `field_${index + 1}`,
+          field_value: typeof field.field_value === "string" ? field.field_value : prettyValue(field.field_value),
+          field_type: GENERIC_FIELD_TYPES.includes(field.field_type as GenericFieldType) ? (field.field_type as GenericFieldType) : "long_text",
+          description: stringValue(field.description),
+          dr_mapping: stringValue(field.dr_mapping),
+          reference_enabled: field.reference_enabled !== false,
+          field_key_auto: field.field_key_auto === true,
+          dr_mapping_auto: field.dr_mapping_auto === true,
+        }))
+    : [];
+}
+
+function textInputLegacyText(data: Record<string, unknown>, params: Record<string, unknown>) {
+  const candidates = [params.text, data.source_text, data.text, data.value, data.content, data.prompt];
+  const text = candidates.find((value) => typeof value === "string" && value.trim());
+  return typeof text === "string" ? text : "";
+}
+
+function inferGenericFieldType(value: unknown): GenericFieldType {
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (Array.isArray(value)) return "list";
+  if (isRecord(value)) return "object";
+  const text = typeof value === "string" ? value : prettyValue(value);
+  return text.length > 80 || text.includes("\n") ? "long_text" : "text";
+}
+
+function genericFieldsFromLegacy(data: Record<string, unknown>, params: Record<string, unknown>): GenericField[] {
+  const paramFields = Object.entries(params)
+    .filter(([key, value]) => !GENERIC_FIELD_RESERVED_KEYS.has(key) && !HIDDEN_PARAM_KEYS.has(key) && !isEmptyDisplayValue(value))
+    .map(([key, value]) => ({
+      field_key: key,
+      field_name: key,
+      field_value: typeof value === "string" ? value : prettyValue(value),
+      field_type: inferGenericFieldType(value),
+      description: "",
+      dr_mapping: "",
+      reference_enabled: true,
+      field_key_auto: false,
+      dr_mapping_auto: true,
+    }));
+  if (paramFields.length) {
+    return paramFields;
+  }
+  const text = textInputLegacyText(data, params);
+  return text
+    ? [
+        {
+          field_key: "field_1",
+          field_name: "field_1",
+          field_value: text,
+          field_type: "long_text",
+          description: "",
+          dr_mapping: "",
+          reference_enabled: true,
+          field_key_auto: true,
+          dr_mapping_auto: true,
+        },
+      ]
+    : [];
+}
+
+function nextGenericFieldKey(fields: GenericField[]) {
+  let index = fields.length + 1;
+  const used = new Set(fields.map((field) => field.field_key));
+  while (used.has(`field_${index}`)) {
+    index += 1;
+  }
+  return `field_${index}`;
+}
+
+function genericFieldContext(data: Record<string, unknown>, moduleInstanceRegistry: ModuleInstanceRegistryStore) {
+  const parentModule = stringValue(data.parent_module) || stringValue(data.module_instance_id);
+  const registryEntry = moduleInstanceRegistry[parentModule];
+  const parts = moduleInstanceParts(parentModule);
+  return {
+    layerId: registryEntry?.layerId || stringValue(data.parent_layer) || stringValue(data.layer_id) || parts.layerId,
+    moduleId: registryEntry?.moduleId || stringValue(data.catalog_module_id) || stringValue(data.module_id) || parts.moduleId,
+  };
+}
+
+function shouldAutoUpdateFieldKey(field: GenericField, fields: GenericField[], index: number) {
+  if (!field.field_key) return true;
+  if (field.field_key_auto) return true;
+  if (field.field_key_auto === false) return false;
+  const generatedFromCurrentName = uniqueGenericFieldKey(field.field_name || field.field_key, fields, index);
+  return field.field_key === generatedFromCurrentName || /^field_\d+$/.test(field.field_key);
+}
+
+function shouldAutoUpdateDrMapping(field: GenericField, layerId: string, moduleId: string) {
+  if (!field.dr_mapping) return true;
+  if (field.dr_mapping_auto) return true;
+  if (field.dr_mapping_auto === false) return false;
+  return field.dr_mapping === genericFieldDrMapping(layerId, moduleId, field.field_key);
+}
+
+function genericFieldWarnings(fields: GenericField[], field: GenericField, language: Language) {
+  const warnings: string[] = [];
+  if (!field.field_key.trim()) {
+    warnings.push(i18nText(language, "genericFields.validation.emptyKey"));
+  }
+  if (field.field_key.trim() && fields.filter((candidate) => candidate.field_key === field.field_key).length > 1) {
+    warnings.push(i18nText(language, "genericFields.validation.duplicateKey"));
+  }
+  return warnings;
+}
+
 function compileTimeFieldKey(field: Record<string, unknown>, index: number) {
   return String(field.field_id || field.key || field.name || field.id || `field_${index + 1}`);
 }
@@ -933,6 +1106,246 @@ function CompileTimeFieldInputRenderer({
   );
 }
 
+function GenericTextInputRenderer({
+  fields,
+  data,
+  language,
+  onFieldFocus,
+  onInput,
+}: {
+  fields: NodeInputField[];
+  data: Record<string, unknown>;
+  language: Language;
+  onFieldFocus?: (key: string) => void;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const params = paramsFromNodeData(data);
+  const mode = stringValue(params.mode) === "generic_fields" ? "generic_fields" : "text";
+  const genericFields = genericFieldsFromParams(params.fields);
+  const moduleInstanceRegistry = useCanvasStore((state) => state.moduleInstanceRegistry);
+  const { layerId, moduleId } = genericFieldContext(data, moduleInstanceRegistry);
+  const legacyText = textInputLegacyText(data, params);
+  const [expandedFieldKeys, setExpandedFieldKeys] = useState<Set<string>>(() => new Set());
+  const commitParams = (nextParams: Record<string, unknown>) => {
+    onInput?.("params", nextParams);
+    for (const [key, value] of Object.entries(nextParams)) {
+      onInput?.(key, value);
+    }
+  };
+  const commitFields = (nextFields: GenericField[]) => {
+    commitParams({
+      ...params,
+      mode: "generic_fields",
+      text: stringValue(params.text) || legacyText,
+      fields: nextFields,
+    });
+  };
+  const convertToFields = () => {
+    const sourceFields = genericFields.length ? genericFields : genericFieldsFromLegacy(data, params);
+    const nextFields = sourceFields.map((field, index) => {
+      const fieldKey = field.field_key || uniqueGenericFieldKey(field.field_name || `field_${index + 1}`, sourceFields, index);
+      return {
+        ...field,
+        field_key: fieldKey,
+        field_name: field.field_name || fieldKey,
+        dr_mapping: field.dr_mapping || genericFieldDrMapping(layerId, moduleId, fieldKey),
+        reference_enabled: field.reference_enabled !== false,
+        field_key_auto: field.field_key_auto ?? !field.field_key,
+        dr_mapping_auto: field.dr_mapping_auto ?? !field.dr_mapping,
+      };
+    });
+    commitParams({
+      ...params,
+      mode: "generic_fields",
+      text: stringValue(params.text) || legacyText,
+      fields: nextFields,
+    });
+  };
+  const addField = () => {
+    const key = nextGenericFieldKey(genericFields);
+    commitFields([
+      ...genericFields,
+      {
+        field_key: key,
+        field_name: key,
+        field_value: "",
+        field_type: "long_text",
+        description: "",
+        dr_mapping: genericFieldDrMapping(layerId, moduleId, key),
+        reference_enabled: true,
+        field_key_auto: true,
+        dr_mapping_auto: true,
+      },
+    ]);
+  };
+  const patchField = (index: number, patchValue: Partial<GenericField>) => {
+    commitFields(genericFields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, ...patchValue } : field)));
+  };
+  const patchFieldName = (index: number, value: string) => {
+    const field = genericFields[index];
+    if (!field) return;
+    const shouldUpdateKey = shouldAutoUpdateFieldKey(field, genericFields, index);
+    const nextKey = shouldUpdateKey ? uniqueGenericFieldKey(value, genericFields, index) : field.field_key;
+    const shouldUpdateMapping = shouldAutoUpdateDrMapping(field, layerId, moduleId);
+    patchField(index, {
+      field_name: value,
+      field_key: nextKey,
+      field_key_auto: shouldUpdateKey ? true : field.field_key_auto,
+      dr_mapping: shouldUpdateMapping ? genericFieldDrMapping(layerId, moduleId, nextKey) : field.dr_mapping,
+      dr_mapping_auto: shouldUpdateMapping ? true : field.dr_mapping_auto,
+    });
+  };
+  const patchFieldKey = (index: number, value: string) => {
+    const field = genericFields[index];
+    if (!field) return;
+    const nextKey = value.trim() ? safeGenericFieldKey(value) : "";
+    const shouldUpdateMapping = shouldAutoUpdateDrMapping(field, layerId, moduleId);
+    patchField(index, {
+      field_key: nextKey,
+      field_key_auto: false,
+      dr_mapping: shouldUpdateMapping ? genericFieldDrMapping(layerId, moduleId, nextKey) : field.dr_mapping,
+      dr_mapping_auto: shouldUpdateMapping ? true : field.dr_mapping_auto,
+    });
+  };
+  const patchDrMapping = (index: number, value: string) => {
+    patchField(index, {
+      dr_mapping: value,
+      dr_mapping_auto: false,
+    });
+  };
+  const removeField = (index: number) => {
+    if (typeof window !== "undefined" && !window.confirm(i18nText(language, "genericFields.confirmDelete"))) {
+      return;
+    }
+    commitFields(genericFields.filter((_, fieldIndex) => fieldIndex !== index));
+  };
+  const toggleExpanded = (fieldIdentity: string) => {
+    setExpandedFieldKeys((current) => {
+      const next = new Set(current);
+      if (next.has(fieldIdentity)) {
+        next.delete(fieldIdentity);
+      } else {
+        next.add(fieldIdentity);
+      }
+      return next;
+    });
+  };
+
+  if (mode !== "generic_fields") {
+    return (
+      <div className="generic-fields-editor">
+        <div className="generic-fields-editor__mode">
+          <span>{i18nText(language, "genericFields.mode.text")}</span>
+          <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={convertToFields} disabled={!onInput}>
+            {i18nText(language, "genericFields.convert")}
+          </button>
+        </div>
+        {onInput ? (
+          <NodeInputRenderer fields={fields} data={data} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+        ) : (
+          <div className="node-inputs__empty">{translate(language, "node.inputs.readonly", "Read-only node")}</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="generic-fields-editor">
+      <div className="generic-fields-editor__mode">
+        <span>{i18nText(language, "genericFields.summary")}</span>
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={addField} disabled={!onInput}>
+          {i18nText(language, "genericFields.addField")}
+        </button>
+      </div>
+      <div className="generic-fields-editor__summary">
+        <span>{i18nText(language, "genericFields.fieldCount")}：{genericFields.length}</span>
+        <span>{i18nText(language, "genericFields.referenceEnabledCount")}：{genericFields.filter((field) => field.reference_enabled !== false).length}</span>
+      </div>
+      <div className="generic-fields-editor__scroll nodrag nopan" onPointerDown={stopInputEventPropagation} onWheel={(event) => event.stopPropagation()}>
+        {genericFields.length ? (
+          genericFields.map((field, index) => {
+            const warnings = genericFieldWarnings(genericFields, field, language);
+            const fieldIdentity = `${index}:${field.field_key || field.field_name || "field"}`;
+            const expanded = expandedFieldKeys.has(fieldIdentity);
+            return (
+              <article key={`${index}-${field.field_key}`} className="generic-fields-editor__field-card">
+              <div className="generic-fields-editor__field-head">
+                <label>
+                  <span>{i18nText(language, "genericFields.fieldName")}</span>
+                  <NodeTextInput className="nodrag" value={field.field_name || field.field_key} onValueChange={(value) => patchFieldName(index, value)} />
+                </label>
+                <button className="generic-fields-editor__expand nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => toggleExpanded(fieldIdentity)} title={i18nText(language, expanded ? "genericFields.collapseField" : "genericFields.expandField")}>
+                  {warnings.length && !expanded ? <span className="generic-fields-editor__warning-dot" aria-label={i18nText(language, "genericFields.warning")}>!</span> : null}
+                  {expanded ? "−" : "+"}
+                </button>
+              </div>
+              <label className="generic-fields-editor__block">
+                <span>{i18nText(language, "genericFields.fieldValue")}</span>
+                <NodeTextarea className="nodrag" rows={3} value={field.field_value} onValueChange={(value) => patchField(index, { field_value: value })} />
+              </label>
+              <label className="generic-fields-editor__block">
+                <span>{i18nText(language, "genericFields.description")}</span>
+                <NodeTextarea className="nodrag" rows={2} value={field.description ?? ""} onValueChange={(value) => patchField(index, { description: value })} />
+              </label>
+              {expanded ? (
+                <section className="generic-fields-editor__advanced">
+                  <h5>{i18nText(language, "genericFields.advancedSettings")}</h5>
+                  <div className="generic-fields-editor__grid">
+                    <label>
+                      <span>{i18nText(language, "genericFields.fieldKey")}</span>
+                      <NodeTextInput className="nodrag" value={field.field_key} onValueChange={(value) => patchFieldKey(index, value)} />
+                      {field.field_key_auto || !field.field_key ? <small className="generic-fields-editor__hint">{i18nText(language, "genericFields.autoGenerated")}</small> : null}
+                    </label>
+                    <label>
+                      <span>{i18nText(language, "genericFields.fieldType")}</span>
+                      <select className="nodrag" value={field.field_type || "long_text"} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patchField(index, { field_type: event.target.value as GenericFieldType })}>
+                        {GENERIC_FIELD_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {i18nText(language, `genericFields.type.${type}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>{i18nText(language, "genericFields.drMapping")}</span>
+                      <NodeTextInput className="nodrag" value={field.dr_mapping ?? ""} onValueChange={(value) => patchDrMapping(index, value)} />
+                      {field.dr_mapping_auto || !field.dr_mapping ? <small className="generic-fields-editor__hint">{i18nText(language, "genericFields.autoGenerated")}</small> : null}
+                    </label>
+                    <label className="generic-fields-editor__toggle">
+                      <input
+                        className="nodrag"
+                        type="checkbox"
+                        checked={Boolean(field.reference_enabled)}
+                        onPointerDown={stopInputEventPropagation}
+                        onKeyDown={stopInputEventPropagation}
+                        onChange={(event) => patchField(index, { reference_enabled: event.target.checked })}
+                      />
+                      <span>{i18nText(language, "genericFields.referenceEnabled")}</span>
+                    </label>
+                  </div>
+                  {warnings.length ? (
+                    <ul className="generic-fields-editor__warnings">
+                      {warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <button className="generic-fields-editor__remove nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => removeField(index)}>
+                    {i18nText(language, "genericFields.removeField")}
+                  </button>
+                </section>
+              ) : null}
+              </article>
+            );
+          })
+        ) : (
+          <div className="node-inputs__empty">{translate(language, "common.empty", "Empty")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FieldReferenceRenderer({
   data,
   language,
@@ -1143,6 +1556,628 @@ function FieldReferenceRenderer({
       {renderReferenceSection("required")}
       {renderReferenceSection("optional")}
       {renderReferenceSection("forbidden")}
+    </div>
+  );
+}
+
+type ReferenceValueType = "text" | "number" | "boolean" | "object" | "array" | "unknown";
+type ReferenceScope = "module" | "node" | "field";
+type GenericFieldType = "text" | "long_text" | "number" | "boolean" | "list" | "object" | "unknown";
+type ModuleGraphStore = ReturnType<typeof useCanvasStore.getState>["moduleGraphs"];
+type ModuleInstanceRegistryStore = ReturnType<typeof useCanvasStore.getState>["moduleInstanceRegistry"];
+
+type ReferenceExportField = {
+  field_key: string;
+  field_path: string;
+  display_name?: string;
+  description?: string;
+  value_type?: ReferenceValueType;
+  required?: boolean;
+};
+
+type GenericField = {
+  field_key: string;
+  field_name: string;
+  field_value: string;
+  field_type: GenericFieldType;
+  description?: string;
+  dr_mapping?: string;
+  reference_enabled?: boolean;
+  field_key_auto?: boolean;
+  dr_mapping_auto?: boolean;
+};
+
+type ReferenceOutputSource = {
+  layerId: string;
+  moduleId: string;
+  moduleInstanceId: string;
+  nodeId: string;
+  label: string;
+  exportName: string;
+  exportScope: ReferenceScope;
+  exportScopes: ReferenceScope[];
+  allowModuleLevelReference: boolean;
+  exportFields: ReferenceExportField[];
+  allowLayers: string[];
+  forbiddenLayers: string[];
+  isCoreSource: boolean;
+  overrideAllowed: boolean;
+};
+
+const REFERENCE_TYPES = ["references", "outputs_to", "constrains", "conflicts_with", "overrides_forbidden"] as const;
+const REFERENCE_SCOPES: ReferenceScope[] = ["module", "node", "field"];
+const REFERENCE_VALUE_TYPES: ReferenceValueType[] = ["text", "number", "boolean", "object", "array", "unknown"];
+
+function moduleInstanceParts(instanceId: string) {
+  const [layerId = "", moduleId = instanceId] = instanceId.split("::");
+  return { layerId, moduleId };
+}
+
+function referenceExportFields(value: unknown): ReferenceExportField[] {
+  return Array.isArray(value)
+    ? value
+        .filter(isRecord)
+        .map((field) => ({
+          field_key: stringValue(field.field_key) || stringValue(field.field_path),
+          field_path: stringValue(field.field_path) || stringValue(field.field_key),
+          display_name: stringValue(field.display_name),
+          description: stringValue(field.description),
+          value_type: REFERENCE_VALUE_TYPES.includes(field.value_type as ReferenceValueType) ? (field.value_type as ReferenceValueType) : "unknown",
+          required: Boolean(field.required),
+        }))
+        .filter((field) => field.field_key || field.field_path)
+    : [];
+}
+
+function referenceStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => stringValue(item)).filter(Boolean) : [];
+}
+
+function referenceScope(value: unknown, fallback: ReferenceScope = "field"): ReferenceScope {
+  return REFERENCE_SCOPES.includes(value as ReferenceScope) ? (value as ReferenceScope) : fallback;
+}
+
+function referenceScopes(value: unknown): ReferenceScope[] {
+  if (!Array.isArray(value)) {
+    return [...REFERENCE_SCOPES];
+  }
+  const scopes = value.filter((scope): scope is ReferenceScope => REFERENCE_SCOPES.includes(scope as ReferenceScope));
+  return scopes.length ? scopes : [...REFERENCE_SCOPES];
+}
+
+function referenceFieldLabel(field: ReferenceExportField) {
+  return field.display_name || field.field_path || field.field_key;
+}
+
+function schemaNodeFromGraphNode(value: unknown): WorkflowNode | null {
+  const record = isRecord(value) ? value : {};
+  const data = isRecord(record.data) ? record.data : {};
+  const schemaNode = isRecord(data.schemaNode) ? data.schemaNode : record;
+  return isRecord(schemaNode) ? (schemaNode as unknown as WorkflowNode) : null;
+}
+
+function workflowNodesFromGraph(graph: { nodes?: unknown[] } | undefined): WorkflowNode[] {
+  return Array.isArray(graph?.nodes) ? graph.nodes.map(schemaNodeFromGraphNode).filter((node): node is WorkflowNode => Boolean(node)) : [];
+}
+
+function referenceOutputSourcesFromNodes(
+  nodes: WorkflowNode[],
+  moduleInstanceId: string,
+  moduleInstanceRegistry: ModuleInstanceRegistryStore
+): ReferenceOutputSource[] {
+  const parts = moduleInstanceParts(moduleInstanceId);
+  const registryEntry = moduleInstanceRegistry[moduleInstanceId];
+  const layerId = registryEntry?.layerId || parts.layerId;
+  const moduleId = registryEntry?.moduleId || parts.moduleId;
+  return nodes
+    .filter((node) => workflowNodeType(node) === "reference_output")
+    .map((node) => {
+      const data = workflowNodeData(node);
+      const params = paramsFromNodeData(data);
+      return {
+        layerId,
+        moduleId,
+        moduleInstanceId,
+        nodeId: node.node_id,
+        label: translateIfPresent(useCanvasStore.getState().language, node.title_key) || node.title_fallback || node.node_id,
+        exportName: stringValue(params.export_name) || stringValue(data.export_name) || node.title_fallback || node.node_id,
+        exportScope: referenceScope(params.export_scope ?? data.export_scope),
+        exportScopes: referenceScopes(params.export_scopes ?? data.export_scopes),
+        allowModuleLevelReference: Boolean(params.allow_module_level_reference ?? data.allow_module_level_reference ?? referenceScopes(params.export_scopes ?? data.export_scopes).includes("module")),
+        exportFields: referenceExportFields(params.export_fields ?? data.export_fields),
+        allowLayers: referenceStringArray(params.allow_layers ?? data.allow_layers),
+        forbiddenLayers: referenceStringArray(params.forbidden_layers ?? data.forbidden_layers),
+        isCoreSource: Boolean(params.is_core_source ?? data.is_core_source),
+        overrideAllowed: Boolean(params.override_allowed ?? data.override_allowed),
+      };
+    });
+}
+
+function referenceOutputSources(
+  moduleGraphs: ModuleGraphStore,
+  moduleInstanceRegistry: ModuleInstanceRegistryStore,
+  currentModuleInstanceId: string,
+  currentNodes: WorkflowNode[]
+) {
+  const byKey = new Map<string, ReferenceOutputSource>();
+  for (const [moduleInstanceId, graph] of Object.entries(moduleGraphs)) {
+    for (const source of referenceOutputSourcesFromNodes(workflowNodesFromGraph(graph), moduleInstanceId, moduleInstanceRegistry)) {
+      byKey.set(`${source.moduleInstanceId}:${source.nodeId}`, source);
+    }
+  }
+  if (currentModuleInstanceId) {
+    for (const source of referenceOutputSourcesFromNodes(currentNodes, currentModuleInstanceId, moduleInstanceRegistry)) {
+      byKey.set(`${source.moduleInstanceId}:${source.nodeId}`, source);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function ReferenceOutputRenderer({
+  data,
+  language,
+  onInput,
+}: {
+  data: Record<string, unknown>;
+  language: Language;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const params = paramsFromNodeData(data);
+  const fields = referenceExportFields(params.export_fields);
+  const moduleInstanceRegistry = useCanvasStore((state) => state.moduleInstanceRegistry);
+  const moduleNames = useCanvasStore((state) => state.moduleNames);
+  const currentModuleInstanceId = stringValue(data.parent_module);
+  const currentModule = moduleInstanceRegistry[currentModuleInstanceId];
+  const currentModuleName =
+    moduleNames[currentModuleInstanceId] ||
+    moduleNames[currentModule?.moduleId ?? ""] ||
+    currentModule?.moduleId ||
+    moduleInstanceParts(currentModuleInstanceId).moduleId ||
+    currentModuleInstanceId ||
+    i18nText(language, "common.unknown");
+  const activeScopes = referenceScopes(params.export_scopes);
+  const autoExportName = stringValue(params.export_name) || currentModuleName;
+  const fieldSummary = fields.map(referenceFieldLabel).filter(Boolean).join(", ");
+  const autoExportDescription =
+    stringValue(params.export_description) ||
+    (fieldSummary
+      ? `${i18nText(language, "reference.autoOutputContent")}: ${fieldSummary}`
+      : i18nText(language, "reference.autoOutputContentEmpty"));
+  const commitParams = (nextParams: Record<string, unknown>) => {
+    onInput?.("params", nextParams);
+    for (const [key, value] of Object.entries(nextParams)) {
+      onInput?.(key, value);
+    }
+  };
+  const patch = (patchValue: Record<string, unknown>) => commitParams({ ...params, ...patchValue });
+  const patchField = (index: number, patchValue: Partial<ReferenceExportField>) => {
+    patch({ export_fields: fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, ...patchValue } : field)) });
+  };
+  const addField = () => {
+    patch({
+      export_fields: [
+        ...fields,
+        {
+          field_key: "",
+          field_path: "",
+          display_name: "",
+          description: "",
+          value_type: "unknown",
+          required: false,
+        },
+      ],
+    });
+  };
+  const removeField = (index: number) => {
+    patch({ export_fields: fields.filter((_, fieldIndex) => fieldIndex !== index) });
+  };
+  const toggleExportScope = (scope: ReferenceScope, checked: boolean) => {
+    const nextScopes = checked ? [...new Set([...activeScopes, scope])] : activeScopes.filter((item) => item !== scope);
+    const safeScopes = nextScopes.length ? nextScopes : [...REFERENCE_SCOPES];
+    patch({
+      export_scopes: safeScopes,
+      export_scope: safeScopes[0],
+      allow_module_level_reference: safeScopes.includes("module"),
+    });
+  };
+
+  return (
+    <div className="reference-node-editor reference-node-editor--output">
+      <label className="node-inputs__row node-inputs__row--block">
+        <span>{i18nText(language, "reference.exportName")}</span>
+        <NodeTextInput className="nodrag" value={autoExportName} onValueChange={(value) => patch({ export_name: value })} />
+      </label>
+      <label className="node-inputs__row node-inputs__row--block">
+        <span>{i18nText(language, "reference.exportDescription")}</span>
+        <NodeTextarea className="nodrag" rows={2} value={autoExportDescription} onValueChange={(value) => patch({ export_description: value })} />
+      </label>
+      <div className="reference-node-editor__scope-group">
+        <span>{i18nText(language, "reference.exportScope")}</span>
+        <div className="reference-node-editor__toggles">
+          {REFERENCE_SCOPES.map((scope) => (
+            <label key={scope}>
+              <input
+                className="nodrag"
+                type="checkbox"
+                checked={activeScopes.includes(scope)}
+                onPointerDown={stopInputEventPropagation}
+                onKeyDown={stopInputEventPropagation}
+                onChange={(event) => toggleExportScope(scope, event.target.checked)}
+              />
+              <span>{i18nText(language, `reference.scope.${scope}`)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="reference-node-editor__grid">
+        <label className="reference-node-editor__field-required">
+          <input
+            className="nodrag"
+            type="checkbox"
+            checked={Boolean(params.allow_module_level_reference ?? activeScopes.includes("module"))}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) =>
+              {
+                const nextScopes = event.target.checked ? [...new Set([...activeScopes, "module"])] : activeScopes.filter((scope) => scope !== "module");
+                patch({
+                  allow_module_level_reference: event.target.checked,
+                  export_scopes: nextScopes.length ? nextScopes : ["node", "field"],
+                  export_scope: (nextScopes.length ? nextScopes : ["node", "field"])[0],
+                });
+              }
+            }
+          />
+          <span>{i18nText(language, "reference.allowModuleLevelReference")}</span>
+        </label>
+      </div>
+      <div className="reference-node-editor__grid">
+        <label className="node-inputs__row node-inputs__row--block">
+          <span>{i18nText(language, "reference.allowLayers")}</span>
+          <NodeTextInput className="nodrag" value={referenceStringArray(params.allow_layers).join(", ")} onValueChange={(value) => patch({ allow_layers: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
+        </label>
+        <label className="node-inputs__row node-inputs__row--block">
+          <span>{i18nText(language, "reference.forbiddenLayers")}</span>
+          <NodeTextInput className="nodrag" value={referenceStringArray(params.forbidden_layers).join(", ")} onValueChange={(value) => patch({ forbidden_layers: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
+        </label>
+      </div>
+      <div className="reference-node-editor__toggles">
+        <label>
+          <input className="nodrag" type="checkbox" checked={Boolean(params.is_core_source)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ is_core_source: event.target.checked })} />
+          <span>{i18nText(language, "reference.isCoreSource")}</span>
+        </label>
+        <label>
+          <input className="nodrag" type="checkbox" checked={Boolean(params.override_allowed)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ override_allowed: event.target.checked })} />
+          <span>{i18nText(language, "reference.overrideAllowed")}</span>
+        </label>
+      </div>
+      <section className="reference-node-editor__section">
+        <div className="reference-node-editor__section-header">
+          <h5>{i18nText(language, "reference.exportFields")}</h5>
+          <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={addField} disabled={!onInput}>
+            +
+          </button>
+        </div>
+        {fields.length ? (
+          fields.map((field, index) => (
+            <article key={`${index}-${field.field_key || field.field_path}`} className="reference-node-editor__field-card">
+              <label>
+                <span>{i18nText(language, "reference.fieldKey")}</span>
+                <NodeTextInput className="nodrag" value={field.field_key} onValueChange={(value) => patchField(index, { field_key: value, field_path: field.field_path || value })} />
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.fieldPath")}</span>
+                <NodeTextInput className="nodrag" value={field.field_path} onValueChange={(value) => patchField(index, { field_path: value })} />
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.displayName")}</span>
+                <NodeTextInput className="nodrag" value={field.display_name ?? ""} onValueChange={(value) => patchField(index, { display_name: value })} />
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.valueType")}</span>
+                <select className="nodrag" value={field.value_type ?? "unknown"} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patchField(index, { value_type: event.target.value as ReferenceValueType })}>
+                  {REFERENCE_VALUE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="reference-node-editor__usage">
+                <span>{i18nText(language, "reference.description")}</span>
+                <NodeTextarea className="nodrag" rows={2} value={field.description ?? ""} onValueChange={(value) => patchField(index, { description: value })} />
+              </label>
+              <label className="reference-node-editor__field-required">
+                <input className="nodrag" type="checkbox" checked={Boolean(field.required)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patchField(index, { required: event.target.checked })} />
+                <span>{i18nText(language, "reference.required")}</span>
+              </label>
+              <button className="reference-node-editor__remove nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => removeField(index)}>
+                {i18nText(language, "reference.removeField")}
+              </button>
+            </article>
+          ))
+        ) : (
+          <div className="node-inputs__empty">{translate(language, "common.empty", "Empty")}</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ReferenceInputRenderer({
+  currentNode,
+  data,
+  language,
+  onInput,
+}: {
+  currentNode: WorkflowNode;
+  data: Record<string, unknown>;
+  language: Language;
+  onInput?: (key: string, value: unknown) => void;
+}) {
+  const moduleGraphs = useCanvasStore((state) => state.moduleGraphs);
+  const moduleInstanceRegistry = useCanvasStore((state) => state.moduleInstanceRegistry);
+  const currentNodes = useModuleWorkflowNodes();
+  const currentModuleInstanceId = stringValue(data.parent_module);
+  const currentLayerId = moduleInstanceRegistry[currentModuleInstanceId]?.layerId || moduleInstanceParts(currentModuleInstanceId).layerId;
+  const sources = useMemo(
+    () => referenceOutputSources(moduleGraphs, moduleInstanceRegistry, currentModuleInstanceId, currentNodes),
+    [currentModuleInstanceId, currentNodes, moduleGraphs, moduleInstanceRegistry]
+  );
+  const moduleOptions = useMemo(
+    () =>
+      Object.values(moduleInstanceRegistry)
+        .map((instance) => ({
+          layerId: instance.layerId,
+          moduleId: instance.moduleId,
+          moduleInstanceId: instance.instanceId,
+        }))
+        .filter((instance) => instance.layerId && instance.moduleId),
+    [moduleInstanceRegistry]
+  );
+  const params = paramsFromNodeData(data);
+  const references = Array.isArray(params.references) ? params.references.filter(isRecord) : [];
+  const layerOptions = [...new Set([...sources.map((source) => source.layerId), ...moduleOptions.map((module) => module.layerId)].filter(Boolean))].sort();
+  const commitReferences = (nextReferences: Record<string, unknown>[]) => {
+    const nextParams = { ...params, references: nextReferences };
+    onInput?.("params", nextParams);
+    onInput?.("references", nextReferences);
+  };
+  const addReference = () => {
+    const source = sources[0];
+    const moduleOption = moduleOptions[0];
+    commitReferences([
+      ...references,
+      {
+        source_layer_id: source?.layerId ?? moduleOption?.layerId ?? "",
+        source_module_id: source?.moduleId ?? moduleOption?.moduleId ?? "",
+        source_node_id: source?.nodeId ?? "",
+        source_scope: "module",
+        source_field_paths: [],
+        reference_type: "references",
+        usage_reason: "",
+        required: false,
+      },
+    ]);
+  };
+  const patchReference = (index: number, patchValue: Record<string, unknown>) => {
+    commitReferences(references.map((reference, referenceIndex) => (referenceIndex === index ? { ...reference, ...patchValue } : reference)));
+  };
+  const removeReference = (index: number) => {
+    commitReferences(references.filter((_, referenceIndex) => referenceIndex !== index));
+  };
+  const warningsForReference = (reference: Record<string, unknown>, source: ReferenceOutputSource | undefined, selectedFields: string[]) => {
+    const warnings: string[] = [];
+    if (!stringValue(reference.source_module_id)) {
+      return warnings;
+    }
+    if (!source) {
+      warnings.push(i18nText(language, "reference.validation.noReferenceOutput"));
+      return warnings;
+    }
+    const sourceScope = referenceScope(reference.source_scope, selectedFields.length ? "field" : "module");
+    if (!source.exportScopes.includes(sourceScope) || (sourceScope === "module" && !source.allowModuleLevelReference)) {
+      warnings.push(i18nText(language, "reference.validation.scopeUnavailable"));
+    }
+    const fieldPaths = new Set(source.exportFields.map((field) => field.field_path || field.field_key));
+    if (sourceScope === "field" && (!selectedFields.length || selectedFields.some((fieldPath) => !fieldPaths.has(fieldPath)))) {
+      warnings.push(i18nText(language, "reference.validation.fieldMissing"));
+    }
+    if (currentLayerId && source.forbiddenLayers.includes(currentLayerId)) {
+      warnings.push(i18nText(language, "reference.validation.forbiddenLayer"));
+    }
+    if (currentLayerId && source.allowLayers.length && !source.allowLayers.includes(currentLayerId)) {
+      warnings.push(i18nText(language, "reference.validation.notAllowedLayer"));
+    }
+    if (source.isCoreSource && !source.overrideAllowed) {
+      warnings.push(i18nText(language, "reference.validation.coreSource"));
+    }
+    return warnings;
+  };
+
+  return (
+    <div className="reference-node-editor reference-node-editor--input">
+      <div className="reference-node-editor__actions">
+        <button className="nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={addReference} disabled={!onInput || (!sources.length && !moduleOptions.length)}>
+          {i18nText(language, "reference.addReference")}
+        </button>
+      </div>
+      {!sources.length ? <div className="reference-node-editor__warning">{i18nText(language, "reference.validation.noReferenceOutput")}</div> : null}
+      {references.length ? (
+        references.map((reference, index) => {
+          const selectedLayerId = stringValue(reference.source_layer_id);
+          const moduleChoiceMap = new Map<string, { layerId: string; moduleId: string; moduleInstanceId?: string }>();
+          for (const moduleOption of moduleOptions.filter((moduleOption) => !selectedLayerId || moduleOption.layerId === selectedLayerId)) {
+            moduleChoiceMap.set(`${moduleOption.layerId}:${moduleOption.moduleId}`, moduleOption);
+          }
+          for (const source of sources.filter((source) => !selectedLayerId || source.layerId === selectedLayerId)) {
+            moduleChoiceMap.set(`${source.layerId}:${source.moduleId}`, source);
+          }
+          const moduleChoices = [...moduleChoiceMap.values()];
+          const selectedModuleId = stringValue(reference.source_module_id);
+          const outputChoices = sources.filter((source) => (!selectedLayerId || source.layerId === selectedLayerId) && (!selectedModuleId || source.moduleId === selectedModuleId));
+          const selectedNodeId = stringValue(reference.source_node_id);
+          const selectedSource = outputChoices.find((source) => source.nodeId === selectedNodeId) ?? outputChoices[0];
+          const fieldChoices = selectedSource?.exportFields ?? [];
+          const rawSelectedFields = referenceStringArray(reference.source_field_paths);
+          const selectedScope = referenceScope(reference.source_scope, rawSelectedFields.length ? "field" : "module");
+          const selectedFields = rawSelectedFields.filter((fieldPath) => fieldChoices.some((field) => (field.field_path || field.field_key) === fieldPath));
+          const warnings = warningsForReference(reference, selectedSource, rawSelectedFields);
+          return (
+            <article key={`${index}-${selectedLayerId}-${selectedModuleId}-${selectedNodeId}`} className="reference-node-editor__reference-card">
+              <label>
+                <span>{i18nText(language, "reference.sourceLayer")}</span>
+                <select
+                  className="nodrag"
+                  value={selectedLayerId}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) => {
+                    const nextLayer = event.target.value;
+                    const nextModule = moduleOptions.find((moduleOption) => moduleOption.layerId === nextLayer);
+                    const nextSource = sources.find((source) => source.layerId === nextLayer && (!nextModule || source.moduleId === nextModule.moduleId));
+                    patchReference(index, {
+                      source_layer_id: nextLayer,
+                      source_module_id: nextModule?.moduleId ?? nextSource?.moduleId ?? "",
+                      source_node_id: nextSource?.nodeId ?? "",
+                      source_field_paths: [],
+                    });
+                  }}
+                >
+                  <option value="">{i18nText(language, "common.notGenerated")}</option>
+                  {layerOptions.map((layerId) => (
+                    <option key={layerId} value={layerId}>
+                      {layerId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.sourceModule")}</span>
+                <select
+                  className="nodrag"
+                  value={selectedModuleId}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) => {
+                    const nextModule = event.target.value;
+                    const nextSource = sources.find((source) => source.layerId === selectedLayerId && source.moduleId === nextModule);
+                    patchReference(index, {
+                      source_module_id: nextModule,
+                      source_node_id: nextSource?.nodeId ?? "",
+                      source_field_paths: [],
+                    });
+                  }}
+                >
+                  <option value="">{i18nText(language, "common.notGenerated")}</option>
+                  {moduleChoices.map((source) => (
+                    <option key={`${source.layerId}:${source.moduleId}`} value={source.moduleId}>
+                      {source.moduleId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.sourceScope")}</span>
+                <select
+                  className="nodrag"
+                  value={selectedScope}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) => {
+                    const nextScope = event.target.value as ReferenceScope;
+                    patchReference(index, {
+                      source_scope: nextScope,
+                      source_node_id: nextScope === "module" ? "" : selectedSource?.nodeId ?? selectedNodeId,
+                      source_field_paths: nextScope === "field" ? rawSelectedFields : [],
+                    });
+                  }}
+                >
+                  {REFERENCE_SCOPES.map((scope) => (
+                    <option key={scope} value={scope}>
+                      {i18nText(language, `reference.scope.${scope}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>{i18nText(language, "reference.sourceNode")}</span>
+                <select
+                  className="nodrag"
+                  value={selectedNodeId}
+                  disabled={selectedScope === "module"}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) => patchReference(index, { source_node_id: event.target.value, source_field_paths: [] })}
+                >
+                  <option value="">{i18nText(language, "common.notGenerated")}</option>
+                  {outputChoices.map((source) => (
+                    <option key={source.nodeId} value={source.nodeId}>
+                      {source.exportName || source.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedScope === "field" ? (
+              <label>
+                <span>{i18nText(language, "reference.sourceFields")}</span>
+                <select
+                  className="nodrag"
+                  multiple
+                  value={selectedFields}
+                  onPointerDown={stopInputEventPropagation}
+                  onKeyDown={stopInputEventPropagation}
+                  onChange={(event) =>
+                    patchReference(index, {
+                      source_field_paths: [...event.currentTarget.selectedOptions].map((option) => option.value),
+                    })
+                  }
+                >
+                  {fieldChoices.map((field) => {
+                    const value = field.field_path || field.field_key;
+                    return (
+                      <option key={value} value={value}>
+                        {field.display_name || value}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              ) : null}
+              <label>
+                <span>{i18nText(language, "reference.referenceType")}</span>
+                <select className="nodrag" value={stringValue(reference.reference_type) || "references"} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patchReference(index, { reference_type: event.target.value })}>
+                  {REFERENCE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {i18nText(language, `reference.type.${type}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="reference-node-editor__usage">
+                <span>{i18nText(language, "reference.usageReason")}</span>
+                <NodeTextarea className="nodrag" rows={2} value={stringValue(reference.usage_reason)} onValueChange={(value) => patchReference(index, { usage_reason: value })} />
+              </label>
+              <label className="reference-node-editor__field-required">
+                <input className="nodrag" type="checkbox" checked={Boolean(reference.required)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patchReference(index, { required: event.target.checked })} />
+                <span>{i18nText(language, "reference.required")}</span>
+              </label>
+              {warnings.length ? (
+                <ul className="reference-node-editor__warnings">
+                  {warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <button className="reference-node-editor__remove nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => removeReference(index)}>
+                {i18nText(language, "reference.removeReference")}
+              </button>
+            </article>
+          );
+        })
+      ) : (
+        <div className="node-inputs__empty">{translate(language, "common.empty", "Empty")}</div>
+      )}
     </div>
   );
 }
@@ -1627,7 +2662,7 @@ function CompileTimeNodeSummary({
     return (
       <p className="node-inputs__empty">
         {translate(language, "node.compileTime.summary.moduleOutput", "Output: {output}; fields: {count}")
-          .replace("{output}", outputKey || translate(language, "common.unknown", "Unknown"))
+          .replace("{output}", outputKey ? localizedCoreValue(language, outputKey) : translate(language, "common.unknown", "Unknown"))
           .replace("{count}", String(outputFields))}
       </p>
     );
@@ -1967,6 +3002,9 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const showCompileTimeFieldForm = isCatalogPreconfigured && ["field_input", "text_config"].includes(String(effectiveType));
   const showChecklistTextConfig = showCompileTimeFieldForm && String(effectiveType) === "text_config" && Boolean(textConfigChecklistFromParams(compileTimeParams));
   const showFieldReferenceForm = isCatalogPreconfigured && String(effectiveType) === "field_reference";
+  const showReferenceOutputForm = String(effectiveType) === "reference_output";
+  const showReferenceInputForm = String(effectiveType) === "reference_input";
+  const showGenericTextInputForm = String(effectiveType) === "text_input";
   const showCoreParamsPanel = isCatalogPreconfigured && ["layer_aggregator", "structure_normalize", "validation", "update_rule"].includes(String(effectiveType));
   const showModuleOutputSummary = isCatalogPreconfigured && String(effectiveType) === "module_output";
   const siblingOutput = moduleOutputValue(findSiblingModuleOutputNode(schemaNode, moduleWorkflowNodes));
@@ -1982,7 +3020,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`workflow-node lock-${schemaNode.lock_level} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
+      className={`workflow-node node-kind-${effectiveType} lock-${schemaNode.lock_level} ${aiSlotClass(aiSlot)} ${aiSlot === "none" ? "is-ai-unplanned" : "has-ai-slot"} ${selected ? "is-selected" : ""}`}
       style={nodeColor ? ({ "--node-accent": nodeColor, backgroundColor: nodeColor } as CSSProperties) : undefined}
     >
       {hasInput ? <Handle type="target" position={Position.Left} id="p_in" className="flow-handle flow-handle-left" /> : null}
@@ -2050,10 +3088,74 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         </div>
       ) : null}
 
+      {showReferenceOutputForm ? (
+        <div className="workflow-node__output reference-node-summary nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
+          <div className="workflow-node__output-head">
+            <span className="workflow-node__output-label">{i18nText(language, "nodes.referenceOutput.title")}</span>
+          </div>
+          <dl>
+            <div>
+              <dt>{i18nText(language, "reference.exportScope")}</dt>
+              <dd>{referenceScopes(compileTimeParams.export_scopes).map((scope) => i18nText(language, `reference.scope.${scope}`)).join(", ")}</dd>
+            </div>
+            <div>
+              <dt>{i18nText(language, "reference.allowModuleLevelReference")}</dt>
+              <dd>
+                {translate(
+                  language,
+                  Boolean(compileTimeParams.allow_module_level_reference ?? referenceScopes(compileTimeParams.export_scopes).includes("module")) ? "common.yes" : "common.no",
+                  Boolean(compileTimeParams.allow_module_level_reference ?? referenceScopes(compileTimeParams.export_scopes).includes("module")) ? "Yes" : "No"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>{i18nText(language, "reference.exportFields")}</dt>
+              <dd>{referenceExportFields(compileTimeParams.export_fields).length}</dd>
+            </div>
+            <div>
+              <dt>{i18nText(language, "reference.isCoreSource")}</dt>
+              <dd>{translate(language, compileTimeParams.is_core_source ? "common.yes" : "common.no", compileTimeParams.is_core_source ? "Yes" : "No")}</dd>
+            </div>
+            <div>
+              <dt>{i18nText(language, "reference.overrideAllowed")}</dt>
+              <dd>{translate(language, compileTimeParams.override_allowed ? "common.yes" : "common.no", compileTimeParams.override_allowed ? "Yes" : "No")}</dd>
+            </div>
+          </dl>
+        </div>
+      ) : null}
+
+      {showReferenceInputForm ? (
+        <div className="workflow-node__output reference-node-summary nodrag nopan" onPointerDown={(event) => event.stopPropagation()}>
+          <div className="workflow-node__output-head">
+            <span className="workflow-node__output-label">{i18nText(language, "nodes.referenceInput.title")}</span>
+          </div>
+          <dl>
+            <div>
+              <dt>{i18nText(language, "reference.addReference")}</dt>
+              <dd>{Array.isArray(compileTimeParams.references) ? compileTimeParams.references.length : 0}</dd>
+            </div>
+            <div>
+              <dt>{i18nText(language, "reference.referenceType")}</dt>
+              <dd>
+                {Array.isArray(compileTimeParams.references)
+                  ? [...new Set(compileTimeParams.references.filter(isRecord).map((reference) => stringValue(reference.reference_type) || "references"))].join(", ")
+                  : "references"}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      ) : null}
+
       <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core && !isCatalogPreconfigured}>
         <summary>{sectionTitle(language, "node.coreParams.title", "Core Params")}</summary>
         <div className="workflow-node__params-body">
-          {showFieldReferenceForm ? (
+          {showGenericTextInputForm ? (
+            <GenericTextInputRenderer fields={inputSchema} data={nodeData} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+          ) : showReferenceOutputForm ? (
+            <ReferenceOutputRenderer data={nodeData} language={language} onInput={onInput} />
+          ) : showReferenceInputForm ? (
+            <ReferenceInputRenderer currentNode={schemaNode} data={nodeData} language={language} onInput={onInput} />
+          ) : showFieldReferenceForm ? (
             <FieldReferenceRenderer data={nodeData} language={language} onInput={onInput} />
           ) : showChecklistTextConfig ? (
             <ChecklistTextConfigRenderer fields={compileTimeFields} params={compileTimeParams} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />

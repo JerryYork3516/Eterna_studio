@@ -12,6 +12,7 @@ import {
   useNodesState,
   type Connection,
   type Edge,
+  type EdgeChange,
   type Node,
   type NodeChange,
   type NodeMouseHandler,
@@ -31,6 +32,7 @@ import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNod
 import { useCanvasStore } from "@/store/canvas-store";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
+import { ResidentNeuralGraphPanel } from "@/components/neural-graph/ResidentNeuralGraphPanel";
 import type { StudioAssistantPatch, StudioAssistantRequest } from "@/lib/studioAssistantApi";
 import {
   type CanvasState,
@@ -103,6 +105,39 @@ function backendNodeCategory(type: NodeType): string {
   }
 }
 
+function referenceNodeDefaultParams(type: ModuleNodeType): Record<string, unknown> {
+  if (type === "reference_output") {
+    return {
+      export_name: "",
+      export_description: "",
+      export_scope: "field",
+      export_scopes: ["module", "node", "field"],
+      allow_module_level_reference: true,
+      export_fields: [],
+      allow_layers: [],
+      forbidden_layers: [],
+      is_core_source: false,
+      override_allowed: false
+    };
+  }
+  if (type === "reference_input") {
+    return {
+      references: []
+    };
+  }
+  return {};
+}
+
+function referenceNodeDefaultColor(type: ModuleNodeType) {
+  if (type === "reference_output") {
+    return "#22d3ee";
+  }
+  if (type === "reference_input") {
+    return "#8b5cf6";
+  }
+  return "";
+}
+
 function setNodeDragData(event: ReactDragEvent, type: ModuleNodeType) {
   event.dataTransfer.setData(NODE_DND_MIME, type);
   event.dataTransfer.setData("text/plain", type);
@@ -124,6 +159,7 @@ const FOLDER_GROUP_HEIGHT = 216;
 const FOLDER_TO_TRUNK_GAP = 120;
 const TRUNK_LAYER_WIDTH = 346;
 const TRUNK_LAYER_X = FOLDER_GROUP_X + FOLDER_GROUP_WIDTH + FOLDER_TO_TRUNK_GAP / 2;
+const LAYER_ASSEMBLY_PANEL_GAP = 84;
 const TRUNK_LAYER_Y_OFFSET = 110;
 const LAYER_STACK_GAP = 80;
 const LAYER_NODE_ROW_HEIGHT = 72;
@@ -293,7 +329,7 @@ const MODULE_COLOR_LABEL_KEYS = [
   "module.color.sky"
 ];
 type BottomTab = "logs" | "artifacts" | "preview";
-type DrawerId = "layers" | "residentPreview" | "settings" | "assistant" | "debugTrace" | BottomTab;
+type DrawerId = "layers" | "residentPreview" | "residentNeuralGraph" | "settings" | "assistant" | "debugTrace" | BottomTab;
 type ModuleAssistantPanelState = {
   title: string;
   meta: string;
@@ -317,6 +353,43 @@ type CanvasContextMenuState = {
   y: number;
   items: CanvasContextMenuItem[];
 };
+type FlowHistorySnapshot = {
+  nodes: Node[];
+  edges: Edge[];
+};
+type FlowHistoryState = {
+  past: FlowHistorySnapshot[];
+  future: FlowHistorySnapshot[];
+  restoring: boolean;
+};
+type MainCanvasSnapshot = {
+  layerModules: Record<string, string[]>;
+  moduleInstanceRegistry: Record<string, ModuleInstance>;
+  moduleTabs: string[];
+  activeModuleTabId: string | null;
+  focusedModuleId: string | null;
+  moduleNames: Record<string, string>;
+  uiNodeNames: Record<string, string>;
+  uiTags: Record<string, string[]>;
+  uiGroups: Record<string, string>;
+  uiColors: Record<string, string>;
+  moduleUiColors: Record<string, string>;
+  selectedLayerModuleKeys: string[];
+  expandedLayerIds: string[];
+  activeLayerId: string | null;
+  activeWorkspaceId: string | null;
+  workspaceTabs: string[];
+  floatingLayerIds: string[];
+  floatingNodeIds: string[];
+  draggedNodeIds: string[];
+};
+type MainHistoryState = {
+  past: MainCanvasSnapshot[];
+  future: MainCanvasSnapshot[];
+  restoring: boolean;
+};
+
+const CANVAS_HISTORY_LIMIT = 60;
 type NodeLibraryCategory = {
   id: string;
   labelKey: string;
@@ -1240,12 +1313,12 @@ function buildFolderToLayerEdge(layer: CatalogLayerInput) {
     target: layer.layer_id,
     sourceHandle: "p_out",
     targetHandle: "p_left_in",
-    type: "smoothstep",
+    type: "bezier",
     selectable: false,
     deletable: false,
     focusable: false,
     animated: false,
-    style: { stroke: "rgba(110, 231, 183, 0.95)", strokeWidth: 2 }
+    style: { stroke: "rgba(110, 231, 183, 0.95)", strokeWidth: 2.2 }
   } satisfies Edge;
 }
 
@@ -1256,12 +1329,12 @@ function buildLayerSpineEdge(layer: CatalogLayerInput, nextLayer: CatalogLayerIn
     target: nextLayer.layer_id,
     sourceHandle: "p_out",
     targetHandle: "p_in",
-    type: "smoothstep",
+    type: "bezier",
     selectable: false,
     deletable: false,
     focusable: false,
     animated: false,
-    style: { stroke: "rgba(148, 163, 184, 0.72)", strokeWidth: 1.8 }
+    style: { stroke: "rgba(148, 163, 184, 0.74)", strokeWidth: 2.1 }
   } satisfies Edge;
 }
 
@@ -1345,6 +1418,17 @@ function shouldUseNativeContextMenu(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
 }
 
+function shouldSkipCanvasContextCapture(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true'], [role='button'], .react-flow__controls, .react-flow__minimap"))
+  );
+}
+
+function shouldLetReactFlowElementContextMenuHandle(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest(".react-flow__node, .react-flow__edge"));
+}
+
 function makeContextMenu(event: ContextMenuEvent, items: CanvasContextMenuItem[]): CanvasContextMenuState | null {
   if (shouldUseNativeContextMenu(event.target)) {
     return null;
@@ -1358,6 +1442,42 @@ function makeContextMenu(event: ContextMenuEvent, items: CanvasContextMenuItem[]
     y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
     items
   };
+}
+
+function cloneCanvasValue<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall through to JSON for ReactFlow plain node/edge snapshots.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneFlowHistorySnapshot(nodes: Node[], edges: Edge[]): FlowHistorySnapshot {
+  return {
+    nodes: cloneCanvasValue(nodes),
+    edges: cloneCanvasValue(edges)
+  };
+}
+
+function isUndoRedoShortcut(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  const modifier = event.metaKey || event.ctrlKey;
+  if (!modifier) {
+    return null;
+  }
+  if (key === "z" && event.shiftKey) {
+    return "redo" as const;
+  }
+  if (key === "z") {
+    return "undo" as const;
+  }
+  if (key === "y") {
+    return "redo" as const;
+  }
+  return null;
 }
 
 function inferNodeLayerIndex(node: WorkflowNode, layers: WorkflowNode[]) {
@@ -1641,6 +1761,7 @@ export function CanvasShell() {
   const [activeDrawer, setActiveDrawer] = useState<DrawerId | null>(null);
   const [assistantPanelOpen, setAssistantPanelOpen] = useState(false);
   const [residentPreviewPanelOpen, setResidentPreviewPanelOpen] = useState(false);
+  const [residentNeuralGraphPanelOpen, setResidentNeuralGraphPanelOpen] = useState(false);
   const [moduleAssistantPanel, setModuleAssistantPanel] = useState<ModuleAssistantPanelState | null>(null);
   const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
@@ -1678,6 +1799,7 @@ export function CanvasShell() {
           uiTags: parsed.uiTags ?? {},
           uiGroups: parsed.uiGroups ?? {},
           uiColors: parsed.uiColors ?? {},
+          moduleUiColors: parsed.moduleUiColors ?? {},
         };
       }
     } catch (e) {
@@ -1695,6 +1817,7 @@ export function CanvasShell() {
       uiTags: Record<string, string[]>;
       uiGroups: Record<string, string>;
       uiColors: Record<string, string>;
+      moduleUiColors?: Record<string, string>;
     }) => {
       if (typeof window === "undefined") {
         return;
@@ -1777,7 +1900,7 @@ export function CanvasShell() {
     return loaded;
   });
   const [focusLayerId, setFocusLayerId] = useState<string | null>(null);
-  const [moduleUiColors, setModuleUiColors] = useState<Record<string, string>>({});
+  const [moduleUiColors, setModuleUiColors] = useState<Record<string, string>>(() => loadModuleCanvasState()?.moduleUiColors ?? {});
   const [selectedLayerModuleKeys, setSelectedLayerModuleKeys] = useState<Set<string>>(() => new Set());
 
   // schemaState: backend catalog and registry snapshots used for rendering.
@@ -1845,6 +1968,7 @@ export function CanvasShell() {
         console.warn("[NODE-C-DEDUP] DUPLICATE PREVENTED: moduleId already attached:", { storedLayerId: existingStoredLayerId, moduleId });
         return;
       }
+      pushMainHistoryRef.current();
       
       // 1. Ensure instance is created and registered (dedup at instance level)
       ensureModuleInstance(moduleId, targetLayerId);
@@ -1868,6 +1992,7 @@ export function CanvasShell() {
   );
 
   const removeModuleFromLayer = useCallback((layerNodeId: string, moduleId: string) => {
+    pushMainHistoryRef.current();
     setLayerModules((current) => {
       const module = moduleCatalogById.get(moduleId);
       if (module?.layer_id === "general") {
@@ -1883,6 +2008,7 @@ export function CanvasShell() {
     setSaveStatus("dirty");
   }, [moduleCatalogById]);
   const removeAllModulesFromLayer = useCallback((layerNodeId: string) => {
+    pushMainHistoryRef.current();
     setLayerModules((current) => ({ ...current, [layerNodeId]: [] }));
     setSelectedLayerModuleKeys((current) => {
       const next = new Set(current);
@@ -1896,6 +2022,7 @@ export function CanvasShell() {
     setSaveStatus("dirty");
   }, []);
   const setModuleColor = useCallback((layerNodeId: string, moduleId: string, color: string) => {
+    pushMainHistoryRef.current();
     setModuleUiColors((current) => ({ ...current, [`${layerNodeId}:${moduleId}`]: color }));
     setSaveStatus("dirty");
   }, []);
@@ -1907,6 +2034,10 @@ export function CanvasShell() {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+  const mainHistoryRef = useRef<MainHistoryState>({ past: [], future: [], restoring: false });
+  const pushMainHistoryRef = useRef<() => void>(() => undefined);
+  const mainSnapshotRef = useRef<MainCanvasSnapshot | null>(null);
+  const [mainHistoryVersion, setMainHistoryVersion] = useState(0);
 
   // executionState: display-only execution/result references; execution remains backend-owned.
   const [residentPreviewOutput, setResidentPreviewOutput] = useState<unknown>(null);
@@ -1933,6 +2064,7 @@ export function CanvasShell() {
     runtimeResult,
     memoryView,
     memoryClearResult,
+    moduleGraphs,
     apiReady,
     setSelectedNode,
     setLanguage,
@@ -1953,6 +2085,115 @@ export function CanvasShell() {
   } = useCanvasStore();
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
+
+  useEffect(() => {
+    mainSnapshotRef.current = {
+      layerModules: cloneCanvasValue(layerModules),
+      moduleInstanceRegistry: cloneCanvasValue(moduleInstanceRegistry),
+      moduleTabs: [...moduleTabs],
+      activeModuleTabId,
+      focusedModuleId,
+      moduleNames: cloneCanvasValue(moduleNames),
+      uiNodeNames: cloneCanvasValue(uiNodeNames),
+      uiTags: cloneCanvasValue(uiTags),
+      uiGroups: cloneCanvasValue(uiGroups),
+      uiColors: cloneCanvasValue(uiColors),
+      moduleUiColors: cloneCanvasValue(moduleUiColors),
+      selectedLayerModuleKeys: [...selectedLayerModuleKeys],
+      expandedLayerIds: [...expandedLayerIds],
+      activeLayerId,
+      activeWorkspaceId,
+      workspaceTabs: [...workspaceTabs],
+      floatingLayerIds: [...floatingLayerIds],
+      floatingNodeIds: [...floatingNodeIds],
+      draggedNodeIds: [...draggedNodeIds]
+    };
+  }, [
+    activeLayerId,
+    activeModuleTabId,
+    activeWorkspaceId,
+    draggedNodeIds,
+    expandedLayerIds,
+    floatingLayerIds,
+    floatingNodeIds,
+    focusedModuleId,
+    layerModules,
+    moduleInstanceRegistry,
+    moduleNames,
+    moduleTabs,
+    moduleUiColors,
+    selectedLayerModuleKeys,
+    uiColors,
+    uiGroups,
+    uiNodeNames,
+    uiTags,
+    workspaceTabs
+  ]);
+
+  const pushMainHistory = useCallback(() => {
+    const snapshot = mainSnapshotRef.current;
+    if (!snapshot || mainHistoryRef.current.restoring) {
+      return;
+    }
+    mainHistoryRef.current.past = [...mainHistoryRef.current.past.slice(-(CANVAS_HISTORY_LIMIT - 1)), cloneCanvasValue(snapshot)];
+    mainHistoryRef.current.future = [];
+    setMainHistoryVersion((version) => version + 1);
+  }, []);
+
+  useEffect(() => {
+    pushMainHistoryRef.current = pushMainHistory;
+  }, [pushMainHistory]);
+
+  const restoreMainSnapshot = useCallback((snapshot: MainCanvasSnapshot) => {
+    mainHistoryRef.current.restoring = true;
+    setLayerModules(cloneCanvasValue(snapshot.layerModules));
+    setModuleInstanceRegistry(cloneCanvasValue(snapshot.moduleInstanceRegistry));
+    setModuleTabs([...snapshot.moduleTabs]);
+    setActiveModuleTabId(snapshot.activeModuleTabId);
+    setFocusedModuleId(snapshot.focusedModuleId);
+    setModuleNames(cloneCanvasValue(snapshot.moduleNames));
+    setUiNodeNames(cloneCanvasValue(snapshot.uiNodeNames));
+    setUiTags(cloneCanvasValue(snapshot.uiTags));
+    setUiGroups(cloneCanvasValue(snapshot.uiGroups));
+    setUiColors(cloneCanvasValue(snapshot.uiColors));
+    setModuleUiColors(cloneCanvasValue(snapshot.moduleUiColors));
+    setSelectedLayerModuleKeys(new Set(snapshot.selectedLayerModuleKeys));
+    setExpandedLayerIds(new Set(snapshot.expandedLayerIds));
+    setActiveLayerId(snapshot.activeLayerId);
+    setActiveWorkspaceId(snapshot.activeWorkspaceId);
+    setWorkspaceTabs([...snapshot.workspaceTabs]);
+    setFloatingLayerIds([...snapshot.floatingLayerIds]);
+    setFloatingNodeIds([...snapshot.floatingNodeIds]);
+    setDraggedNodeIds(new Set(snapshot.draggedNodeIds));
+    setSaveStatus("dirty");
+    window.queueMicrotask(() => {
+      mainHistoryRef.current.restoring = false;
+    });
+  }, []);
+
+  const undoMainCanvas = useCallback(() => {
+    const current = mainSnapshotRef.current;
+    const previous = mainHistoryRef.current.past.pop();
+    if (!current || !previous) {
+      appendLog(t("status.noUndo", "Nothing to undo"), "warn");
+      return;
+    }
+    mainHistoryRef.current.future = [...mainHistoryRef.current.future.slice(-(CANVAS_HISTORY_LIMIT - 1)), cloneCanvasValue(current)];
+    restoreMainSnapshot(previous);
+    setMainHistoryVersion((version) => version + 1);
+  }, [appendLog, restoreMainSnapshot, t]);
+
+  const redoMainCanvas = useCallback(() => {
+    const current = mainSnapshotRef.current;
+    const next = mainHistoryRef.current.future.pop();
+    if (!current || !next) {
+      appendLog(t("status.noRedo", "Nothing to redo"), "warn");
+      return;
+    }
+    mainHistoryRef.current.past = [...mainHistoryRef.current.past.slice(-(CANVAS_HISTORY_LIMIT - 1)), cloneCanvasValue(current)];
+    restoreMainSnapshot(next);
+    setMainHistoryVersion((version) => version + 1);
+  }, [appendLog, restoreMainSnapshot, t]);
 
   // P1-BRIDGE：在挂载时初始化 store 状态（从 localStorage 恢复）
   useEffect(() => {
@@ -2098,6 +2339,7 @@ export function CanvasShell() {
         uiTags,
         uiGroups,
         uiColors,
+        moduleUiColors,
       });
       
       // P1-BRIDGE：同步到 store
@@ -2109,7 +2351,7 @@ export function CanvasShell() {
       store.setUiColors(uiColors);
     }, 500);
     return () => clearTimeout(timer);
-  }, [moduleTabs, moduleNames, uiNodeNames, uiTags, uiGroups, uiColors, saveModuleCanvasState]);
+  }, [moduleTabs, moduleNames, uiNodeNames, uiTags, uiGroups, uiColors, moduleUiColors, saveModuleCanvasState]);
 
   // Autosave of layer module state to localStorage (persists module instances)
   // P1-BRIDGE：同时同步到 store
@@ -2289,12 +2531,34 @@ export function CanvasShell() {
   }, [loadCompiledDRToPreview]);
 
   const handleUndo = useCallback(() => {
-    appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
-  }, [appendLog, t]);
+    undoMainCanvas();
+  }, [undoMainCanvas]);
 
   const handleRedo = useCallback(() => {
-    appendLog(t("status.schemaOnly", "Schema-only canvas: workflow graph history is disabled."), "warn");
-  }, [appendLog, t]);
+    redoMainCanvas();
+  }, [redoMainCanvas]);
+  const canUndoMain = mainHistoryVersion >= 0 && mainHistoryRef.current.past.length > 0;
+  const canRedoMain = mainHistoryVersion >= 0 && mainHistoryRef.current.future.length > 0;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (activeModuleTabId || shouldUseNativeContextMenu(event.target)) {
+        return;
+      }
+      const action = isUndoRedoShortcut(event);
+      if (!action) {
+        return;
+      }
+      event.preventDefault();
+      if (action === "undo") {
+        undoMainCanvas();
+      } else {
+        redoMainCanvas();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeModuleTabId, redoMainCanvas, undoMainCanvas]);
   // User-facing template list. `persona_builder` is the only one currently wired
   // to a canvas (it reuses the v0.4 module-catalog source); the rest are legacy
   // placeholders. `schema_v04` is the internal data source and is never exposed
@@ -2563,10 +2827,11 @@ export function CanvasShell() {
       if (!nextName?.trim()) {
         return;
       }
+      pushMainHistory();
       setUiNodeNames((current) => ({ ...current, [nodeId]: nextName.trim() }));
       appendLog(`${t("status.nodeRenamed", "Node renamed")}: ${nextName.trim()}`);
     },
-    [appendLog, t]
+    [appendLog, pushMainHistory, t]
   );
 
   const renameUiModule = useCallback(
@@ -2575,10 +2840,11 @@ export function CanvasShell() {
       if (!nextName?.trim()) {
         return;
       }
+      pushMainHistory();
       setModuleNames((current) => ({ ...current, [nodeId]: nextName.trim() }));
       appendLog(`${t("status.moduleRenamed", "Module renamed")}: ${nextName.trim()}`);
     },
-    [appendLog, t]
+    [appendLog, pushMainHistory, t]
   );
 
   const editUiTagsForIds = useCallback((nodeIds: string[], title = t("common.nodeTags", "Node tags")) => {
@@ -2595,6 +2861,7 @@ export function CanvasShell() {
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
+    pushMainHistory();
     setUiTags((current) => {
       const next = { ...current };
       for (const id of nodeIds) {
@@ -2603,7 +2870,7 @@ export function CanvasShell() {
       return next;
     });
     setSaveStatus("dirty");
-  }, [uiTags]);
+  }, [pushMainHistory, uiTags]);
 
   const editUiGroupForIds = useCallback((nodeIds: string[], title = t("common.nodeGroup", "Node group")) => {
     const firstId = nodeIds[0];
@@ -2614,6 +2881,7 @@ export function CanvasShell() {
     if (nextGroup === null) {
       return;
     }
+    pushMainHistory();
     setUiGroups((current) => {
       const next = { ...current };
       for (const id of nodeIds) {
@@ -2622,7 +2890,7 @@ export function CanvasShell() {
       return next;
     });
     setSaveStatus("dirty");
-  }, [uiGroups]);
+  }, [pushMainHistory, uiGroups]);
 
   const renameVisualGroup = useCallback((nodeId: string) => {
     const currentGroup = uiGroups[nodeId] ?? "";
@@ -2630,6 +2898,7 @@ export function CanvasShell() {
     if (nextGroup === null) {
       return;
     }
+    pushMainHistory();
     setUiGroups((current) => {
       const next = { ...current };
       if (!currentGroup) {
@@ -2643,13 +2912,14 @@ export function CanvasShell() {
       }
       return next;
     });
-  }, [uiGroups]);
+  }, [pushMainHistory, t, uiGroups]);
 
   const dissolveVisualGroup = useCallback((nodeId: string) => {
     const currentGroup = uiGroups[nodeId] ?? "";
     if (!currentGroup) {
       return;
     }
+    pushMainHistory();
     setUiGroups((current) => {
       const next = { ...current };
       for (const [id, group] of Object.entries(current)) {
@@ -2659,7 +2929,7 @@ export function CanvasShell() {
       }
       return next;
     });
-  }, [uiGroups]);
+  }, [pushMainHistory, uiGroups]);
 
   const handleModuleContextMenu = useCallback(
     (event: ReactMouseEvent, node: WorkflowNode) => {
@@ -2677,6 +2947,7 @@ export function CanvasShell() {
         { label: t("common.color", "Color"), onSelect: () => {
           const nextColor = window.prompt(t("field.color", "Color"), uiColors[node.node_id] ?? "#4f8cff");
           if (nextColor) {
+            pushMainHistory();
             setUiColors((current) => ({ ...current, [node.node_id]: nextColor.trim() }));
             setSaveStatus("dirty");
           }
@@ -2697,6 +2968,7 @@ export function CanvasShell() {
       handleChildModulePreview,
       language,
       moduleNames,
+      pushMainHistory,
       renameUiModule,
       renameVisualGroup,
       t,
@@ -2975,7 +3247,7 @@ export function CanvasShell() {
         {
           id: `ui-assembly-${layer.layer_id}`,
           type: "layerAssemblyPanel",
-          position: { x: trunkPosition.x + 724, y: trunkPosition.y },
+          position: { x: trunkPosition.x + TRUNK_LAYER_WIDTH + LAYER_ASSEMBLY_PANEL_GAP, y: trunkPosition.y },
           draggable: false,
           selectable: false,
           data: {
@@ -3416,12 +3688,14 @@ export function CanvasShell() {
   }, [appendLog, t]);
 
   const resetMainArrangement = useCallback(() => {
+    pushMainHistory();
     setDraggedNodeIds(new Set());
     appendLog(t("status.canvasArranged", "Canvas arranged"));
-  }, [appendLog, t]);
+  }, [appendLog, pushMainHistory, t]);
 
   const resetMainNodeUiById = useCallback(
     (nodeId: string) => {
+      pushMainHistory();
       setUiColors((current) => ({ ...current, [nodeId]: "" }));
       setUiNodeNames((current) => ({ ...current, [nodeId]: "" }));
       setUiTags((current) => ({ ...current, [nodeId]: [] }));
@@ -3429,7 +3703,7 @@ export function CanvasShell() {
       setSaveStatus("dirty");
       appendLog(`${t("status.nodeReset", "Node reset")}: ${nodeId}`);
     },
-    [appendLog, t]
+    [appendLog, pushMainHistory, t]
   );
 
   const handleMainNodeContextMenu: NodeMouseHandler = useCallback(
@@ -3443,6 +3717,9 @@ export function CanvasShell() {
 	      const group = uiGroups[node.id] ?? "";
 	      const isLayer = schemaNode.type === "layer_container";
       const menu = makeContextMenu(event, [
+        { label: t("toolbar.undo", "撤销"), onSelect: handleUndo, disabled: !canUndoMain },
+        { label: t("toolbar.redo", "重做"), onSelect: handleRedo, disabled: !canRedoMain },
+        { label: t("menu.autoArrangeNodes", "自动整理节点"), onSelect: resetMainArrangement },
         ...(isLayer
           ? [
               { label: t("module.add", "添加模块"), children: buildModuleAddMenu(node.id) },
@@ -3453,6 +3730,7 @@ export function CanvasShell() {
         { label: t("common.color", "颜色"), onSelect: () => {
           const nextColor = window.prompt(t("field.color", "Color"), uiColors[node.id] ?? "#4f8cff");
           if (nextColor) {
+            pushMainHistory();
             setUiColors((current) => ({ ...current, [node.id]: nextColor.trim() }));
             setSaveStatus("dirty");
           }
@@ -3471,15 +3749,21 @@ export function CanvasShell() {
     },
     [
       buildModuleAddMenu,
+      canRedoMain,
+      canUndoMain,
       copyMainNodeById,
       deleteMainNodeById,
       dissolveVisualGroup,
       editUiGroupForIds,
       editUiTagsForIds,
+      handleRedo,
+      handleUndo,
       language,
+      pushMainHistory,
       renameUiNode,
       renameVisualGroup,
       resetMainNodeUiById,
+      resetMainArrangement,
       setSelectedNode,
       t,
       uiColors,
@@ -3557,6 +3841,7 @@ export function CanvasShell() {
     if (!nextColor) {
       return;
     }
+    pushMainHistory();
     setUiColors((current) => {
       const next = { ...current };
       for (const id of selectedCanvasIds) {
@@ -3565,7 +3850,7 @@ export function CanvasShell() {
       return next;
     });
     setSaveStatus("dirty");
-  }, [appendLog, selectedCanvasIds, t, uiColors]);
+  }, [appendLog, pushMainHistory, selectedCanvasIds, t, uiColors]);
 
   const editSelectedMainTags = useCallback(() => {
     if (!selectedMainIds.length) {
@@ -3582,6 +3867,7 @@ export function CanvasShell() {
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
+    pushMainHistory();
     setUiTags((current) => {
       const next = { ...current };
       for (const id of selectedMainIds) {
@@ -3590,7 +3876,7 @@ export function CanvasShell() {
       return next;
     });
     setSaveStatus("dirty");
-  }, [appendLog, selectedMainIds, t, uiTags]);
+  }, [appendLog, pushMainHistory, selectedMainIds, t, uiTags]);
 
   const editSelectedMainGroup = useCallback(() => {
     if (!selectedMainIds.length) {
@@ -3602,6 +3888,7 @@ export function CanvasShell() {
     if (nextGroup === null) {
       return;
     }
+    pushMainHistory();
     setUiGroups((current) => {
       const next = { ...current };
       for (const id of selectedMainIds) {
@@ -3610,7 +3897,7 @@ export function CanvasShell() {
       return next;
     });
     setSaveStatus("dirty");
-  }, [appendLog, selectedMainIds, t, uiGroups]);
+  }, [appendLog, pushMainHistory, selectedMainIds, t, uiGroups]);
 
   // All canvas/toolbar actions are now reached via the blank-canvas right-click
   // menu (the on-screen top toolbar and bottom-left quick-actions were removed).
@@ -3622,6 +3909,9 @@ export function CanvasShell() {
         : { x: 160, y: -160 };
       const hasSelection = selectedCanvasIds.length > 0;
       const items: CanvasContextMenuItem[] = [
+        { label: t("toolbar.undo", "撤销"), onSelect: handleUndo, disabled: !canUndoMain },
+        { label: t("toolbar.redo", "重做"), onSelect: handleRedo, disabled: !canRedoMain },
+        { label: t("menu.autoArrangeNodes", "自动整理节点"), onSelect: resetMainArrangement },
         {
           label: t("menu.addNode", "添加节点"),
           children: libraryNodeTypes.map((type) => ({
@@ -3655,8 +3945,6 @@ export function CanvasShell() {
         { label: t("toolbar.run", "运行"), onSelect: handleMockRun },
         { label: t("toolbar.save", "保存"), onSelect: handleSave },
         { label: t("toolbar.export", "导出"), onSelect: handleExportPreview },
-	        { label: t("toolbar.undo", "撤销"), onSelect: handleUndo, disabled: true },
-	        { label: t("toolbar.redo", "重做"), onSelect: handleRedo, disabled: true },
         { label: t("toolbar.delete", "删除"), onSelect: deleteSelectedMain, disabled: !hasSelection, danger: true }
       ];
       const menu = makeContextMenu(event, items);
@@ -3668,6 +3956,8 @@ export function CanvasShell() {
       addMainNodeAt,
       applyMainAlignment,
       applyMainDistribution,
+      canRedoMain,
+      canUndoMain,
 	      deleteSelectedMain,
       editSelectedMainColor,
       editSelectedMainGroup,
@@ -3685,6 +3975,16 @@ export function CanvasShell() {
       t,
 	    ]
 	  );
+
+  const handleMainFlowContextMenuCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (shouldSkipCanvasContextCapture(event.target) || shouldLetReactFlowElementContextMenuHandle(event.target)) {
+        return;
+      }
+      handleMainPaneContextMenu(event);
+    },
+    [handleMainPaneContextMenu]
+  );
 
   const selectedLayerModuleKey = useMemo(() => [...selectedLayerModuleKeys][0] ?? "", [selectedLayerModuleKeys]);
   const selectedLayerModule = useMemo(() => {
@@ -3766,7 +4066,7 @@ export function CanvasShell() {
         canApplyPatch: false,
         onApplyPatch: handleMainAssistantPatch,
       };
-  const rightPanelExpanded = assistantPanelOpen || residentPreviewPanelOpen;
+  const rightPanelExpanded = assistantPanelOpen || residentPreviewPanelOpen || residentNeuralGraphPanelOpen;
   const templateIsLoading = Boolean(loadingTemplateType);
   const toggleDrawer = useCallback(
     (drawer: DrawerId) => {
@@ -3875,35 +4175,34 @@ export function CanvasShell() {
 	        </div>
       </header>
 
-      <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""} ${rightPanelExpanded ? "has-right-panel-open" : ""}`}>
+      <section className={`workspace-grid ${nodeLibraryCollapsed ? "is-library-collapsed" : ""} ${rightPanelExpanded ? "has-right-panel-open" : ""} ${residentNeuralGraphPanelOpen ? "has-neural-graph-panel-open" : ""}`}>
         <aside className={`panel left-panel ${nodeLibraryCollapsed ? "is-collapsed" : ""}`}>
-          <button
-            className="library-toggle"
-            title={nodeLibraryCollapsed ? t("canvas.sidebar.expand", "Expand") : t("canvas.sidebar.collapse", "Collapse")}
-            aria-label={nodeLibraryCollapsed ? t("canvas.sidebar.expand", "Expand") : t("canvas.sidebar.collapse", "Collapse")}
-            onClick={() => setNodeLibraryCollapsed((collapsed) => !collapsed)}
-          >
-            {nodeLibraryCollapsed ? ">" : "<"}
-          </button>
-          <section className="panel-section">
-            {nodeLibraryCollapsed ? (
-              <div className="sidebar-rail" aria-label={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}>
-                <button
-                  type="button"
-                  className="sidebar-rail__button sidebar-rail__button--node is-active"
-                  title={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}
-                  aria-label={t("canvas.sidebar.nodeLibrary", t("panel.nodeLibrary"))}
-                  onClick={() => {
-                    setNodeLibraryCollapsed(false);
-                    setLibraryBodyCollapsed(false);
-                  }}
-                >
-                  <span className="sidebar-rail__icon sidebar-rail__icon--nodes" aria-hidden="true" />
-                  <span className="sidebar-rail__dot" aria-hidden="true" />
-                </button>
-              </div>
-            ) : (
-              <>
+          <div className="sidebar-rail" aria-label={t("canvas.sidebar.library", "Library")}>
+            <button
+              type="button"
+              className={`sidebar-rail__button sidebar-rail__button--library ${nodeLibraryCollapsed ? "" : "is-active"}`}
+              title={t("canvas.sidebar.library", "Library")}
+              aria-label={t("canvas.sidebar.library", "Library")}
+              aria-pressed={!nodeLibraryCollapsed}
+              onClick={() => {
+                setNodeLibraryCollapsed((collapsed) => {
+                  if (collapsed) {
+                    setLibraryBodyCollapsed(true);
+                  }
+                  return !collapsed;
+                });
+              }}
+            >
+              <svg className="sidebar-rail__svg" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 5h12a2 2 0 0 1 2 2v12H8a2 2 0 0 1-2-2z" />
+                <path d="M4 7h12a2 2 0 0 1 2 2v10" />
+                <path d="M9 10h6M9 14h7" />
+              </svg>
+            </button>
+          </div>
+          {!nodeLibraryCollapsed ? (
+            <div className="left-panel__content">
+              <section className="panel-section">
                 <div className="section-title">
                 <button
                   type="button"
@@ -3973,16 +4272,16 @@ export function CanvasShell() {
                 })}
               </div>
               )}
-              </>
-            )}
-          </section>
-          <ModuleLibrary
-            t={t}
-            collapsed={nodeLibraryCollapsed}
-            layers={moduleCatalog?.layers ?? []}
-            modules={moduleCatalog?.modules ?? []}
-            onExpand={() => setNodeLibraryCollapsed(false)}
-          />
+              </section>
+              <ModuleLibrary
+                t={t}
+                collapsed={false}
+                layers={moduleCatalog?.layers ?? []}
+                modules={moduleCatalog?.modules ?? []}
+                onExpand={() => setNodeLibraryCollapsed(false)}
+              />
+            </div>
+          ) : null}
         </aside>
 
         <section className="canvas-panel" aria-label={t("panel.canvas")}>
@@ -4018,6 +4317,7 @@ export function CanvasShell() {
                     event.dataTransfer.dropEffect = "copy";
                   }}
                   onDrop={handleMainCanvasDrop}
+                  onContextMenuCapture={handleMainFlowContextMenuCapture}
                 >
                   <div className="canvas-hint-pill">
                     <span>
@@ -4045,6 +4345,7 @@ export function CanvasShell() {
 	                    onNodeDoubleClick={handleNodeDoubleClick}
 	                    onPaneClick={handlePaneClick}
 	                    selectionOnDrag
+                    selectionKeyCode="Alt"
                     selectNodesOnDrag={false}
                     deleteKeyCode={["Backspace", "Delete"]}
                   >
@@ -4164,12 +4465,19 @@ export function CanvasShell() {
         <RightStudioPanel
           assistantOpen={assistantPanelOpen}
           residentPreviewOpen={residentPreviewPanelOpen}
+          residentNeuralGraphOpen={residentNeuralGraphPanelOpen}
           activeFloatingDrawer={activeDrawer}
           assistantTitle={assistantPanel.title}
           assistantMeta={assistantPanel.meta}
           assistantRequest={assistantPanel.request}
           assistantCanApplyPatch={assistantPanel.canApplyPatch}
           onAssistantPatch={assistantPanel.onApplyPatch}
+          moduleCatalog={moduleCatalog}
+          moduleGraphs={moduleGraphs}
+          layerModules={layerModules}
+          moduleInstanceRegistry={moduleInstanceRegistry}
+          uiColors={uiColors}
+          moduleUiColors={moduleUiColors}
           resident={residentInstance}
           canLoadCompiledDR={canExportDR}
           loadedDRResult={loadedDRResult}
@@ -4179,14 +4487,22 @@ export function CanvasShell() {
           onToggleAssistant={() => {
             setAssistantPanelOpen((value) => !value);
             setResidentPreviewPanelOpen(false);
+            setResidentNeuralGraphPanelOpen(false);
           }}
           onToggleResidentPreview={() => {
             setResidentPreviewPanelOpen((value) => !value);
             setAssistantPanelOpen(false);
+            setResidentNeuralGraphPanelOpen(false);
+          }}
+          onToggleResidentNeuralGraph={() => {
+            setResidentNeuralGraphPanelOpen((value) => !value);
+            setAssistantPanelOpen(false);
+            setResidentPreviewPanelOpen(false);
           }}
           onToggleFloatingDrawer={toggleDrawer}
           onCloseAssistant={() => setAssistantPanelOpen(false)}
           onCloseResidentPreview={() => setResidentPreviewPanelOpen(false)}
+          onCloseResidentNeuralGraph={() => setResidentNeuralGraphPanelOpen(false)}
           onLoadCompiledDR={handleLoadCompiledDRToPreview}
         />
       </section>
@@ -4425,11 +4741,18 @@ function ModuleFocusPanel({
 function RightStudioPanel({
   assistantOpen,
   residentPreviewOpen,
+  residentNeuralGraphOpen,
   activeFloatingDrawer,
   assistantTitle,
   assistantMeta,
   assistantRequest,
   assistantCanApplyPatch,
+  moduleCatalog,
+  moduleGraphs,
+  layerModules,
+  moduleInstanceRegistry,
+  uiColors,
+  moduleUiColors,
   resident,
   canLoadCompiledDR,
   loadedDRResult,
@@ -4438,19 +4761,28 @@ function RightStudioPanel({
   t,
   onToggleAssistant,
   onToggleResidentPreview,
+  onToggleResidentNeuralGraph,
   onToggleFloatingDrawer,
   onCloseAssistant,
   onCloseResidentPreview,
+  onCloseResidentNeuralGraph,
   onAssistantPatch,
   onLoadCompiledDR
 }: {
   assistantOpen: boolean;
   residentPreviewOpen: boolean;
+  residentNeuralGraphOpen: boolean;
   activeFloatingDrawer: DrawerId | null;
   assistantTitle: string;
   assistantMeta: string;
   assistantRequest: StudioAssistantRequest;
   assistantCanApplyPatch: boolean;
+  moduleCatalog: ModuleCatalogResponseV04 | null;
+  moduleGraphs: ReturnType<typeof useCanvasStore.getState>["moduleGraphs"];
+  layerModules: Record<string, string[]>;
+  moduleInstanceRegistry: Record<string, ModuleInstance>;
+  uiColors: Record<string, string>;
+  moduleUiColors: Record<string, string>;
   resident: ResidentInstance | null;
   canLoadCompiledDR: boolean;
   loadedDRResult: DRLoadResult | null;
@@ -4459,13 +4791,15 @@ function RightStudioPanel({
   t: (key: string, fallback?: string) => string;
   onToggleAssistant: () => void;
   onToggleResidentPreview: () => void;
+  onToggleResidentNeuralGraph: () => void;
   onToggleFloatingDrawer: (drawer: DrawerId) => void;
   onCloseAssistant: () => void;
   onCloseResidentPreview: () => void;
+  onCloseResidentNeuralGraph: () => void;
   onAssistantPatch: (patch: StudioAssistantPatch) => void;
   onLoadCompiledDR: () => Promise<void>;
 }) {
-  const expanded = assistantOpen || residentPreviewOpen;
+  const expanded = assistantOpen || residentPreviewOpen || residentNeuralGraphOpen;
   const floatingItems: { id: DrawerId; label: string }[] = [
     { id: "debugTrace", label: t("panel.debugTrace", "Debug / Trace") },
     { id: "layers", label: t("panel.layerNavigator", "Layers") },
@@ -4496,6 +4830,16 @@ function RightStudioPanel({
             onClick={onToggleResidentPreview}
           >
             <DockIcon id="residentPreview" />
+          </button>
+          <button
+            type="button"
+            className={residentNeuralGraphOpen ? "is-active" : ""}
+            title={t("panel.residentNeuralGraph", "Resident Neural Graph")}
+            aria-label={t("panel.residentNeuralGraph", "Resident Neural Graph")}
+            aria-pressed={residentNeuralGraphOpen}
+            onClick={onToggleResidentNeuralGraph}
+          >
+            <DockIcon id="residentNeuralGraph" />
           </button>
         </div>
         <div className="right-studio-panel__rail-group right-studio-panel__rail-group--floating" aria-label={t("dock.ariaLabel")}>
@@ -4567,6 +4911,35 @@ function RightStudioPanel({
                   loadedDRResult={loadedDRResult}
                   previewLoadStatus={previewLoadStatus}
                   previewLoadError={previewLoadError}
+                />
+              </div>
+            </section>
+          ) : null}
+          {residentNeuralGraphOpen ? (
+            <section className="right-studio-panel__section resident-neural-graph-panel-frame">
+              <div className="right-studio-panel__header">
+                <div>
+                  <h2>{t("neuralGraph.title", "Resident Neural Graph")}</h2>
+                  <span>{t("neuralGraph.subtitle", "3D brain-region view of the digital resident structure")}</span>
+                </div>
+                <button
+                  type="button"
+                  title={t("canvas.sidebar.collapse", "Collapse")}
+                  aria-label={t("canvas.sidebar.collapse", "Collapse")}
+                  onClick={onCloseResidentNeuralGraph}
+                >
+                  x
+                </button>
+              </div>
+              <div className="right-studio-panel__body">
+                <ResidentNeuralGraphPanel
+                  moduleCatalog={moduleCatalog}
+                  moduleGraphs={moduleGraphs}
+                  layerModules={layerModules}
+                  moduleInstanceRegistry={moduleInstanceRegistry}
+                  uiColors={uiColors}
+                  moduleUiColors={moduleUiColors}
+                  t={t}
                 />
               </div>
             </section>
@@ -4682,6 +5055,16 @@ function DockIcon({ id }: { id: DrawerId }) {
         <path d="M8 12.3A4 4 0 1 1 12 5" />
         <path d="M5 20c1.3-3 3.6-4.5 7-4.5s5.7 1.5 7 4.5" />
         <path d="M8 10h.01M16 10h.01" />
+      </svg>
+    );
+  }
+  if (id === "residentNeuralGraph") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="6" cy="7" r="2" />
+        <circle cx="18" cy="7" r="2" />
+        <circle cx="12" cy="17" r="2" />
+        <path d="M8 8l2.5 6.8M16 8l-2.5 6.8M8 7h8" />
       </svg>
     );
   }
@@ -5720,7 +6103,7 @@ function normalizeModuleGraphEdges(edges: unknown[]): Edge[] {
 }
 
 function nodeWidth(node: Node) {
-  return node.measured?.width ?? node.width ?? 364;
+  return node.measured?.width ?? node.width ?? 255;
 }
 
 function nodeHeight(node: Node) {
@@ -5788,8 +6171,8 @@ function arrangeFlowNodes(nodes: Node[]) {
   return nodes.map((node, index) => ({
     ...node,
     position: {
-      x: 120 + (index % columns) * 460,
-      y: 90 + Math.floor(index / columns) * 170
+      x: 120 + (index % columns) * 320,
+      y: 90 + Math.floor(index / columns) * 150
     }
   }));
 }
@@ -5823,14 +6206,42 @@ function CanvasContextMenu({ menu, onClose }: { menu: CanvasContextMenuState; on
 
 function CanvasContextMenuRow({ item, onClose }: { item: CanvasContextMenuItem; onClose: () => void }) {
   const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => setOpen(false), 360);
+  };
+  useEffect(() => cancelClose, []);
   if (item.children?.length) {
     return (
       <div
-        className="canvas-context-menu__group"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
+        className={`canvas-context-menu__group ${open ? "is-open" : ""}`}
+        onMouseEnter={() => {
+          cancelClose();
+          setOpen(true);
+        }}
+        onMouseLeave={scheduleClose}
       >
-        <button type="button" role="menuitem" className="canvas-context-menu__parent" disabled={item.disabled}>
+        <button
+          type="button"
+          role="menuitem"
+          className="canvas-context-menu__parent"
+          disabled={item.disabled}
+          aria-expanded={open}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!item.disabled) {
+              cancelClose();
+              setOpen((value) => !value);
+            }
+          }}
+        >
           <span>{item.label}</span>
           <span className="canvas-context-menu__caret">▸</span>
         </button>
@@ -5951,7 +6362,7 @@ function ModuleCanvasPanel({
   }, [moduleNode, initialSubnodes, storedModuleGraph]);
 
   const [moduleNodes, setModuleNodes, onBaseModuleNodesChange] = useNodesState(initialGraph.nodes);
-  const [moduleEdges, setModuleEdges, onModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
+  const [moduleEdges, setModuleEdges, onBaseModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string>("");
   const [assistantFieldKey, setAssistantFieldKey] = useState("");
   const [executionResult, setExecutionResult] = useState<unknown>(null);
@@ -5963,6 +6374,8 @@ function ModuleCanvasPanel({
 	  const addedRef = useRef(0);
   const moduleNodesRef = useRef(moduleNodes);
   const moduleEdgesRef = useRef(moduleEdges);
+  const moduleHistoryRef = useRef<FlowHistoryState>({ past: [], future: [], restoring: false });
+  const [moduleHistoryVersion, setModuleHistoryVersion] = useState(0);
 
   useEffect(() => {
     moduleNodesRef.current = moduleNodes;
@@ -5991,6 +6404,84 @@ function ModuleCanvasPanel({
     [moduleNode.node_id]
   );
 
+  const pushModuleHistory = useCallback(() => {
+    if (moduleHistoryRef.current.restoring) {
+      return;
+    }
+    moduleHistoryRef.current.past = [
+      ...moduleHistoryRef.current.past.slice(-(CANVAS_HISTORY_LIMIT - 1)),
+      cloneFlowHistorySnapshot(moduleNodesRef.current, moduleEdgesRef.current)
+    ];
+    moduleHistoryRef.current.future = [];
+    setModuleHistoryVersion((version) => version + 1);
+  }, []);
+
+  const restoreModuleHistorySnapshot = useCallback(
+    (snapshot: FlowHistorySnapshot) => {
+      const nextNodes = cloneCanvasValue(snapshot.nodes);
+      const nextEdges = cloneCanvasValue(snapshot.edges);
+      moduleHistoryRef.current.restoring = true;
+      moduleNodesRef.current = nextNodes;
+      moduleEdgesRef.current = nextEdges;
+      setModuleNodes(nextNodes);
+      setModuleEdges(nextEdges);
+      persistModuleGraphNow(nextNodes, nextEdges);
+      window.queueMicrotask(() => {
+        moduleHistoryRef.current.restoring = false;
+      });
+    },
+    [persistModuleGraphNow, setModuleEdges, setModuleNodes]
+  );
+
+  const undoModuleCanvas = useCallback(() => {
+    const previous = moduleHistoryRef.current.past.pop();
+    if (!previous) {
+      return;
+    }
+    moduleHistoryRef.current.future = [
+      ...moduleHistoryRef.current.future.slice(-(CANVAS_HISTORY_LIMIT - 1)),
+      cloneFlowHistorySnapshot(moduleNodesRef.current, moduleEdgesRef.current)
+    ];
+    restoreModuleHistorySnapshot(previous);
+    setModuleHistoryVersion((version) => version + 1);
+  }, [restoreModuleHistorySnapshot]);
+
+  const redoModuleCanvas = useCallback(() => {
+    const next = moduleHistoryRef.current.future.pop();
+    if (!next) {
+      return;
+    }
+    moduleHistoryRef.current.past = [
+      ...moduleHistoryRef.current.past.slice(-(CANVAS_HISTORY_LIMIT - 1)),
+      cloneFlowHistorySnapshot(moduleNodesRef.current, moduleEdgesRef.current)
+    ];
+    restoreModuleHistorySnapshot(next);
+    setModuleHistoryVersion((version) => version + 1);
+  }, [restoreModuleHistorySnapshot]);
+
+  const canUndoModule = moduleHistoryVersion >= 0 && moduleHistoryRef.current.past.length > 0;
+  const canRedoModule = moduleHistoryVersion >= 0 && moduleHistoryRef.current.future.length > 0;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldUseNativeContextMenu(event.target)) {
+        return;
+      }
+      const action = isUndoRedoShortcut(event);
+      if (!action) {
+        return;
+      }
+      event.preventDefault();
+      if (action === "undo") {
+        undoModuleCanvas();
+      } else {
+        redoModuleCanvas();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [redoModuleCanvas, undoModuleCanvas]);
+
   useEffect(() => {
     const flushModuleGraph = () => {
       saveModuleGraphState(moduleNode.node_id, moduleNodesRef.current, moduleEdgesRef.current);
@@ -6006,21 +6497,26 @@ function ModuleCanvasPanel({
 
   const addModuleNode = useCallback((type: ModuleNodeType, position?: { x: number; y: number }) => {
     console.log("[P1-NODE-CRUD] addModuleNode: adding new node", { type, position });
+    pushModuleHistory();
     addedRef.current += 1;
     const seq = addedRef.current;
     const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
     const definition = getNodeDefinition(type);
+    const referenceParams = referenceNodeDefaultParams(type);
+    const referenceColor = referenceNodeDefaultColor(type);
     const schemaNode = ensurePorts({
       node_id: id,
       type,
       category: definition?.category ?? backendNodeCategory(type),
-      title_key: `node.type.${type}`,
+      title_key: type === "reference_output" ? "nodes.referenceOutput.title" : type === "reference_input" ? "nodes.referenceInput.title" : `node.type.${type}`,
       title_fallback: definition?.display_name ?? type,
       position: { x: 0, y: 0 },
       lock_level: "editable",
       locale: null,
       data: {
         parent_module: moduleNode.node_id,
+        ...(referenceColor ? { ui_color: referenceColor } : {}),
+        ...(Object.keys(referenceParams).length ? { params: referenceParams, ...referenceParams } : {}),
         ...Object.fromEntries((definition?.input_schema ?? []).map((field: NodeInputField) => [field.key, field.default ?? ""]))
       },
       input_schema: definition?.input_schema,
@@ -6048,7 +6544,7 @@ function ModuleCanvasPanel({
     });
     setSelectedId(id);
     setAssistantFieldKey("");
-  }, [moduleNode.node_id, setModuleNodes]);
+  }, [moduleNode.node_id, pushModuleHistory, setModuleNodes]);
 
   const handleModuleCanvasDrop = useCallback(
     (event: ReactDragEvent) => {
@@ -6083,14 +6579,18 @@ function ModuleCanvasPanel({
       if (!currentNodeIds.has(connection.source) || !currentNodeIds.has(connection.target)) {
         return;
       }
+      pushModuleHistory();
       setModuleEdges((eds) => addEdge(connection, eds));
     },
-    [moduleNodes, setModuleEdges]
+    [moduleNodes, pushModuleHistory, setModuleEdges]
   );
 
   const onModuleNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const removedIds = changes.filter((change) => change.type === "remove").map((change) => change.id);
+      if (removedIds.length) {
+        pushModuleHistory();
+      }
       onBaseModuleNodesChange(changes);
       if (removedIds.length) {
         const removed = new Set(removedIds);
@@ -6099,7 +6599,17 @@ function ModuleCanvasPanel({
         setAssistantFieldKey("");
       }
     },
-    [onBaseModuleNodesChange, setModuleEdges]
+    [onBaseModuleNodesChange, pushModuleHistory, setModuleEdges]
+  );
+
+  const onModuleEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      if (changes.some((change) => change.type === "remove")) {
+        pushModuleHistory();
+      }
+      onBaseModuleEdgesChange(changes);
+    },
+    [onBaseModuleEdgesChange, pushModuleHistory]
   );
 
   const handleModuleNodesDelete = useCallback(
@@ -6122,6 +6632,7 @@ function ModuleCanvasPanel({
 
   const patchModuleNodeData = useCallback(
     (id: string, patch: Record<string, unknown>) => {
+      pushModuleHistory();
       const nextNodes = moduleNodesRef.current.map((node) => {
         if (node.id !== id) {
           return node;
@@ -6140,7 +6651,7 @@ function ModuleCanvasPanel({
       setModuleNodes(nextNodes);
       persistModuleGraphNow(nextNodes);
     },
-    [persistModuleGraphNow, setModuleNodes]
+    [persistModuleGraphNow, pushModuleHistory, setModuleNodes]
   );
 
   const assistantRequest = useMemo<StudioAssistantRequest>(() => {
@@ -6299,21 +6810,24 @@ function ModuleCanvasPanel({
 
   const applyAlignment = useCallback(
     (action: AlignAction) => {
+      pushModuleHistory();
       setModuleNodes((current) => alignFlowNodes(current, selectedOrAllNodeIds(current), action));
     },
-    [setModuleNodes]
+    [pushModuleHistory, setModuleNodes]
   );
 
   const applyDistribution = useCallback(
     (action: DistributeAction) => {
+      pushModuleHistory();
       setModuleNodes((current) => distributeFlowNodes(current, selectedOrAllNodeIds(current), action));
     },
-    [setModuleNodes]
+    [pushModuleHistory, setModuleNodes]
   );
 
   const arrangeNodes = useCallback(() => {
+    pushModuleHistory();
     setModuleNodes((current) => arrangeFlowNodes(current));
-  }, [setModuleNodes]);
+  }, [pushModuleHistory, setModuleNodes]);
 
   const deleteSelected = useCallback(() => {
     const selectedNodes = moduleNodes.filter((node) => node.selected).map((node) => node.id);
@@ -6325,6 +6839,7 @@ function ModuleCanvasPanel({
       selectedNodeCount: selectedNodes.length,
       selectedEdgeCount: selectedEdges.length
     });
+    pushModuleHistory();
     
     const removedNodes = new Set(selectedNodes);
     const removedEdges = new Set(selectedEdges);
@@ -6352,10 +6867,11 @@ function ModuleCanvasPanel({
     
     setSelectedId((current) => (current && removedNodes.has(current) ? "" : current));
     setAssistantFieldKey("");
-  }, [moduleEdges, moduleNodes, setModuleEdges, setModuleNodes]);
+  }, [moduleEdges, moduleNodes, pushModuleHistory, setModuleEdges, setModuleNodes]);
 
   const updateModuleNodeDataById = useCallback(
     (nodeId: string, updater: (schemaNode: WorkflowNode) => WorkflowNode) => {
+      pushModuleHistory();
       setModuleNodes((current) =>
         current.map((node) => {
           if (node.id !== nodeId) {
@@ -6375,12 +6891,13 @@ function ModuleCanvasPanel({
         })
       );
     },
-    [setModuleNodes]
+    [pushModuleHistory, setModuleNodes]
   );
 
   const deleteModuleNodeById = useCallback(
     (nodeId: string) => {
       console.log("[P1-NODE-CRUD] deleteModuleNodeById:", { nodeId });
+      pushModuleHistory();
       setModuleNodes((current) => {
         const next = current.filter((node) => node.id !== nodeId);
         console.log("[P1-NODE-CRUD] deleteModuleNodeById success:", {
@@ -6403,7 +6920,7 @@ function ModuleCanvasPanel({
       setSelectedId((current) => (current === nodeId ? "" : current));
       setAssistantFieldKey("");
     },
-    [setModuleEdges, setModuleNodes]
+    [pushModuleHistory, setModuleEdges, setModuleNodes]
   );
 
   const resetModuleCanvasNodeById = useCallback(
@@ -6483,6 +7000,7 @@ function ModuleCanvasPanel({
       if (nextGroup === null) {
         return;
       }
+      pushModuleHistory();
       setModuleNodes((current) =>
         current.map((node) => {
           const nodeSchema = (node.data as { schemaNode?: WorkflowNode }).schemaNode;
@@ -6499,7 +7017,7 @@ function ModuleCanvasPanel({
         })
       );
     },
-    [moduleNodes, setModuleNodes]
+    [moduleNodes, pushModuleHistory, setModuleNodes]
   );
 
   const dissolveModuleNodeGroup = useCallback(
@@ -6509,6 +7027,7 @@ function ModuleCanvasPanel({
       if (!currentGroup) {
         return;
       }
+      pushModuleHistory();
       setModuleNodes((current) =>
         current.map((node) => {
           const nodeSchema = (node.data as { schemaNode?: WorkflowNode }).schemaNode;
@@ -6525,7 +7044,7 @@ function ModuleCanvasPanel({
         })
       );
     },
-    [moduleNodes, setModuleNodes]
+    [moduleNodes, pushModuleHistory, setModuleNodes]
   );
 
   const copyModuleNodeById = useCallback(
@@ -6542,6 +7061,7 @@ function ModuleCanvasPanel({
     if (!copiedModuleNode) {
       return;
     }
+    pushModuleHistory();
     const id = `${copiedModuleNode.node_id}_copy_${Date.now()}`;
     const schemaNode = ensurePorts({
       ...copiedModuleNode,
@@ -6564,13 +7084,14 @@ function ModuleCanvasPanel({
     ]);
     setSelectedId(id);
     setAssistantFieldKey("");
-  }, [copiedModuleNode, setModuleNodes]);
+  }, [copiedModuleNode, pushModuleHistory, setModuleNodes]);
 
   const deleteModuleEdgeById = useCallback(
     (edgeId: string) => {
+      pushModuleHistory();
       setModuleEdges((current) => current.filter((edge) => edge.id !== edgeId));
     },
-    [setModuleEdges]
+    [pushModuleHistory, setModuleEdges]
   );
 
   const handleModuleNodeContextMenu: NodeMouseHandler = useCallback(
@@ -6580,8 +7101,25 @@ function ModuleCanvasPanel({
       const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
       const group = typeof schemaNode?.data?.ui_group === "string" ? schemaNode.data.ui_group : "";
       const menu = makeContextMenu(event, [
+        { label: t("toolbar.undo", "撤销"), onSelect: undoModuleCanvas, disabled: !canUndoModule },
+        { label: t("toolbar.redo", "重做"), onSelect: redoModuleCanvas, disabled: !canRedoModule },
+        { label: t("menu.autoArrangeNodes", "自动整理节点"), onSelect: arrangeNodes },
         { label: t("common.rename", "Rename"), onSelect: () => renameModuleCanvasNode(node.id) },
         { label: t("common.reset", "Reset"), onSelect: () => resetModuleCanvasNodeById(node.id) },
+        {
+          label: t("menu.arrangeNodes", "整理排列节点"),
+          children: [
+            { label: t("menu.arrange", "整理节点"), onSelect: arrangeNodes },
+            { label: t("align.left", "左对齐"), onSelect: () => applyAlignment("left") },
+            { label: t("align.right", "右对齐"), onSelect: () => applyAlignment("right") },
+            { label: t("align.top", "上对齐"), onSelect: () => applyAlignment("top") },
+            { label: t("align.bottom", "下对齐"), onSelect: () => applyAlignment("bottom") },
+            { label: t("align.centerX", "水平居中"), onSelect: () => applyAlignment("center-x") },
+            { label: t("align.centerY", "垂直居中"), onSelect: () => applyAlignment("center-y") },
+            { label: t("align.distributeX", "水平分布"), onSelect: () => applyDistribution("horizontal") },
+            { label: t("align.distributeY", "垂直分布"), onSelect: () => applyDistribution("vertical") }
+          ]
+        },
         { label: t("common.deleteNode", "Delete node"), onSelect: () => deleteModuleNodeById(node.id), danger: true },
         { label: t("common.copyNode", "Copy node"), onSelect: () => copyModuleNodeById(node.id) },
         { label: t("common.addEditTags", "Add / edit tags"), onSelect: () => editModuleNodeTags(node.id) },
@@ -6594,6 +7132,11 @@ function ModuleCanvasPanel({
       }
     },
     [
+      applyAlignment,
+      applyDistribution,
+      arrangeNodes,
+      canRedoModule,
+      canUndoModule,
       copyModuleNodeById,
       deleteModuleNodeById,
       dissolveModuleNodeGroup,
@@ -6601,6 +7144,8 @@ function ModuleCanvasPanel({
       editModuleNodeTags,
       renameModuleCanvasNode,
       renameModuleNodeGroup,
+      redoModuleCanvas,
+      undoModuleCanvas,
       resetModuleCanvasNodeById
     ]
   );
@@ -6627,6 +7172,7 @@ function ModuleCanvasPanel({
       if (!selectedId) {
         return;
       }
+      pushModuleHistory();
       setModuleNodes((current) =>
         current.map((node) => {
           if (node.id !== selectedId) {
@@ -6649,7 +7195,7 @@ function ModuleCanvasPanel({
         })
       );
     },
-    [selectedId, setModuleNodes]
+    [pushModuleHistory, selectedId, setModuleNodes]
   );
 
   const editSelectedTags = useCallback(() => {
@@ -6682,6 +7228,9 @@ function ModuleCanvasPanel({
     (event: ContextMenuEvent) => {
       const hasSelection = moduleNodes.some((node) => node.selected);
       const items: CanvasContextMenuItem[] = [
+        { label: t("toolbar.undo", "撤销"), onSelect: undoModuleCanvas, disabled: !canUndoModule },
+        { label: t("toolbar.redo", "重做"), onSelect: redoModuleCanvas, disabled: !canRedoModule },
+        { label: t("menu.autoArrangeNodes", "自动整理节点"), onSelect: arrangeNodes },
         {
           label: t("menu.addNode", "添加节点"),
           children: libraryNodeTypes.map((type) => ({
@@ -6724,6 +7273,8 @@ function ModuleCanvasPanel({
       applyAlignment,
       applyDistribution,
       arrangeNodes,
+      canRedoModule,
+      canUndoModule,
       copiedModuleNode,
       deleteSelected,
       editSelectedGroup,
@@ -6732,9 +7283,21 @@ function ModuleCanvasPanel({
       moduleNodes,
       pasteModuleNode,
       renameModule,
+      redoModuleCanvas,
       selectedSchema,
-      t
+      t,
+      undoModuleCanvas
     ]
+  );
+
+  const handleModuleFlowContextMenuCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (shouldSkipCanvasContextCapture(event.target) || shouldLetReactFlowElementContextMenuHandle(event.target)) {
+        return;
+      }
+      handleModulePaneContextMenu(event);
+    },
+    [handleModulePaneContextMenu]
   );
 
   // Resolve the run input: prefer the module canvas's text_input node, then the
@@ -6783,6 +7346,7 @@ function ModuleCanvasPanel({
       const outputText = typeof response.output_text === "string" ? response.output_text : "";
       const lastRunId = typeof response.run_id === "string" ? response.run_id : "";
       const lastStatus = typeof response.status === "string" ? response.status : "";
+      pushModuleHistory();
       setModuleNodes((current) =>
         current.map((node) => {
           const schemaNode = (node.data as { schemaNode?: WorkflowNode } | undefined)?.schemaNode;
@@ -6810,7 +7374,7 @@ function ModuleCanvasPanel({
       setExecutionError((error as Error).message);
       setRunStatus("error");
     }
-  }, [workflow, resolveModuleInputText, moduleNode.node_id, onExecutionResult, setModuleNodes, t]);
+  }, [workflow, resolveModuleInputText, moduleNode.node_id, onExecutionResult, pushModuleHistory, setModuleNodes, t]);
   const runButtonLabel =
     runStatus === "running"
       ? t("run.running", "Running...")
@@ -6859,6 +7423,7 @@ function ModuleCanvasPanel({
             event.dataTransfer.dropEffect = "copy";
           }}
           onDrop={handleModuleCanvasDrop}
+          onContextMenuCapture={handleModuleFlowContextMenuCapture}
         >
           {!moduleNodes.length ? (
             <div className="module-canvas-panel__empty-state">
@@ -6882,6 +7447,7 @@ function ModuleCanvasPanel({
               onEdgesChange={onModuleEdgesChange}
               onConnect={onConnect}
               onNodesDelete={handleModuleNodesDelete}
+              onNodeDragStart={pushModuleHistory}
               onNodeClick={(_event, node) => {
                 setContextMenu(null);
                 setSelectedId(node.id);
@@ -6895,6 +7461,7 @@ function ModuleCanvasPanel({
                 setAssistantFieldKey("");
               }}
               selectionOnDrag
+              selectionKeyCode="Alt"
               selectNodesOnDrag={false}
               deleteKeyCode={["Backspace", "Delete"]}
             >

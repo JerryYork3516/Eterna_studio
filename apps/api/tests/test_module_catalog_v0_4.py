@@ -13,12 +13,16 @@ from app.registry.module_catalog import (
     BEHAVIOR_SAFETY_OUTPUT_KEY,
     DATA_SAFETY_MODULE_ID,
     DATA_SAFETY_OUTPUT_KEY,
+    DECISION_BEHAVIOR_MODULE_ID,
+    DETAIL_BEHAVIOR_MODULE_ID,
+    INTERACTION_BEHAVIOR_MODULE_ID,
     LAYER2_CATALOG_ONLY_MODULE_IDS,
     LAYER2_PERSONALITY_FORMAL_MODULE_IDS,
     LAYER2_PERSONALITY_MODULE_SPECS,
     LAYER2_PERSONALITY_NODE_TYPES,
     LAYER3_RISK_RESPONSE_OUTPUT_KEYS,
     LAYER3_CATALOG_ONLY_MODULE_IDS,
+    LANGUAGE_BEHAVIOR_MODULE_ID,
     INTERACTION_SAFETY_MODULE_ID,
     INTERACTION_SAFETY_OUTPUT_KEY,
     RISK_POLICY_OUTPUT_KEY,
@@ -26,6 +30,8 @@ from app.registry.module_catalog import (
     RISK_RESPONSE_NODE_IDS,
     RISK_RESPONSE_NODE_ORDER,
     RISK_RESPONSE_NODE_TYPES,
+    SOCIAL_BEHAVIOR_MODULE_ID,
+    TASK_BEHAVIOR_MODULE_ID,
     get_module_catalog,
     validate_module_catalog,
 )
@@ -78,7 +84,7 @@ def _assert_stable_checkbox_storage(module_id: str):
 
 # Stage 7.4 replaces the old seven Layer 1 identity modules plus the former
 # identity anchor module with five blueprint-led identity core modules.
-EXPECTED_TOTAL = 140
+EXPECTED_TOTAL = 142
 IDENTITY_CORE_MODULE_IDS = {
     "module_basic_identity": "basic_identity",
     "module_growth_background": "growth_background",
@@ -768,7 +774,6 @@ def test_placeholder_modules_exist_and_safe():
 
     expected_placeholders = {
         "clone_restriction",
-        "event_memory",
         "rag_slot",
         "builtin_capability",
         "voice_profile",
@@ -1855,6 +1860,25 @@ def test_i18n_keys_present_for_layer1_identity_modules():
     for key in required:
         assert key in zh, f"missing zh i18n key: {key}"
         assert key in en, f"missing en i18n key: {key}"
+
+
+def test_layer8_behavior_modules_declare_dr_write_keys():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    expected = {
+        LANGUAGE_BEHAVIOR_MODULE_ID: "language_behavior",
+        INTERACTION_BEHAVIOR_MODULE_ID: "interaction_behavior",
+        TASK_BEHAVIOR_MODULE_ID: "task_behavior",
+        SOCIAL_BEHAVIOR_MODULE_ID: "social_behavior",
+        DECISION_BEHAVIOR_MODULE_ID: "decision_behavior",
+        DETAIL_BEHAVIOR_MODULE_ID: "detail_behavior",
+    }
+
+    for module_id, policy_key in expected.items():
+        assert catalog_map[module_id].dr_write_keys == [
+            f"payload.behavior_policy.modules.{policy_key}",
+            f"payload.graph_snapshot.layer_outputs.layer_8.behavior_policy.modules.{policy_key}",
+        ]
+    assert catalog_map["behavior_policy_slot"].dr_write_keys == []
 
 
 def test_screen_ui_anchor_module_catalog_and_config():

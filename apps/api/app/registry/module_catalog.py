@@ -165,6 +165,174 @@ def _module(
 
 
 SCREEN_UI_ANCHOR_MODULE = ScreenUiAnchorModuleV04()
+MEMORY_PROVIDER_ROUTER_MODULE_ID = "memory_provider_router"
+MEMORY_PROVIDER_ROUTER_OUTPUT_KEY = "memory_provider_route_policy"
+MEMORY_PROVIDER_ROUTER_NODE_ORDER = (
+    "request_input",
+    "operation_classifier",
+    "resident_resolver",
+    "namespace_resolver",
+    "type_resolver",
+    "access_control",
+    "provider_selector",
+    "engine_binding",
+    "trace_record",
+    "output",
+)
+MEMORY_PROVIDER_ROUTER_NODE_IDS = {
+    "request_input": "memory_router_request_input",
+    "operation_classifier": "memory_router_operation_classifier",
+    "resident_resolver": "memory_router_resident_resolver",
+    "namespace_resolver": "memory_router_namespace_resolver",
+    "type_resolver": "memory_router_type_resolver",
+    "access_control": "memory_router_access_control",
+    "provider_selector": "memory_router_provider_selector",
+    "engine_binding": "memory_router_engine_binding",
+    "trace_record": "memory_router_trace_record",
+    "output": "memory_router_output",
+}
+MEMORY_PROVIDER_ROUTER_NODE_TYPES = {
+    "request_input": "text_config",
+    "operation_classifier": "structure_normalize",
+    "resident_resolver": "validation",
+    "namespace_resolver": "structure_normalize",
+    "type_resolver": "structure_normalize",
+    "access_control": "memory_policy",
+    "provider_selector": "memory_config",
+    "engine_binding": "update_rule",
+    "trace_record": "text_config",
+    "output": "module_output",
+}
+MEMORY_ACCESS_CONTROL_MODULE_ID = "memory_access_control"
+MEMORY_ACCESS_CONTROL_OUTPUT_KEY = "memory_access_policy_result"
+MEMORY_ACCESS_CONTROL_NODE_ORDER = (
+    "request_input",
+    "user_permission_check",
+    "type_classifier",
+    "sensitive_check",
+    "policy_match",
+    "access_decision",
+    "audit",
+    "output",
+)
+MEMORY_ACCESS_CONTROL_NODE_IDS = {
+    "request_input": "memory_access_request_input",
+    "user_permission_check": "memory_user_permission_check",
+    "type_classifier": "memory_type_classifier",
+    "sensitive_check": "memory_sensitive_check",
+    "policy_match": "memory_policy_match",
+    "access_decision": "memory_access_decision",
+    "audit": "memory_access_audit",
+    "output": "memory_access_output",
+}
+MEMORY_ACCESS_CONTROL_NODE_TYPES = {
+    "request_input": "text_config",
+    "user_permission_check": "validation",
+    "type_classifier": "structure_normalize",
+    "sensitive_check": "validation",
+    "policy_match": "memory_policy",
+    "access_decision": "update_rule",
+    "audit": "text_config",
+    "output": "module_output",
+}
+SHORT_TERM_MEMORY_MODULE_ID = "short_term_memory"
+SHORT_TERM_MEMORY_OUTPUT_KEY = "short_term_memory_context"
+SHORT_TERM_MEMORY_NODE_ORDER = (
+    "input",
+    "context_normalize",
+    "retention_policy",
+    "output",
+)
+SHORT_TERM_MEMORY_NODE_IDS = {
+    "input": "short_memory_input",
+    "context_normalize": "short_memory_context_normalize",
+    "retention_policy": "short_memory_retention_policy",
+    "output": "short_memory_output",
+}
+SHORT_TERM_MEMORY_NODE_TYPES = {
+    "input": "text_config",
+    "context_normalize": "structure_normalize",
+    "retention_policy": "memory_policy",
+    "output": "module_output",
+}
+PREFERENCE_MEMORY_MODULE_ID = "preference_memory"
+PREFERENCE_MEMORY_OUTPUT_KEY = "preference_memory"
+PREFERENCE_MEMORY_NODE_ORDER = (
+    "input",
+    "classifier",
+    "confirmation_check",
+    "policy",
+    "output",
+)
+PREFERENCE_MEMORY_NODE_IDS = {
+    "input": "preference_memory_input",
+    "classifier": "preference_classifier",
+    "confirmation_check": "preference_confirmation_check",
+    "policy": "preference_memory_policy",
+    "output": "preference_memory_output",
+}
+PREFERENCE_MEMORY_NODE_TYPES = {
+    "input": "text_config",
+    "classifier": "structure_normalize",
+    "confirmation_check": "validation",
+    "policy": "memory_policy",
+    "output": "module_output",
+}
+EVENT_MEMORY_MODULE_ID = "event_memory"
+EVENT_MEMORY_OUTPUT_KEY = "event_memory"
+EVENT_MEMORY_NODE_ORDER = (
+    "input",
+    "classifier",
+    "importance_evaluation",
+    "summary_policy",
+    "lifecycle_policy",
+    "output",
+)
+EVENT_MEMORY_NODE_IDS = {
+    "input": "event_memory_input",
+    "classifier": "event_classifier",
+    "importance_evaluation": "event_importance_evaluation",
+    "summary_policy": "event_summary_policy",
+    "lifecycle_policy": "event_lifecycle_policy",
+    "output": "event_memory_output",
+}
+EVENT_MEMORY_NODE_TYPES = {
+    "input": "text_config",
+    "classifier": "structure_normalize",
+    "importance_evaluation": "validation",
+    "summary_policy": "memory_policy",
+    "lifecycle_policy": "update_rule",
+    "output": "module_output",
+}
+MEMORY_UPDATE_MODULE_ID = "memory_update"
+MEMORY_UPDATE_OUTPUT_KEY = "memory_update_policy"
+MEMORY_UPDATE_NODE_ORDER = (
+    "request_input",
+    "operation_classifier",
+    "confirmation_check",
+    "conflict_check",
+    "policy_apply",
+    "audit_record",
+    "output",
+)
+MEMORY_UPDATE_NODE_IDS = {
+    "request_input": "memory_update_request_input",
+    "operation_classifier": "memory_update_operation_classifier",
+    "confirmation_check": "memory_update_confirmation_check",
+    "conflict_check": "memory_update_conflict_check",
+    "policy_apply": "memory_update_policy_apply",
+    "audit_record": "memory_update_audit_record",
+    "output": "memory_update_output",
+}
+MEMORY_UPDATE_NODE_TYPES = {
+    "request_input": "text_config",
+    "operation_classifier": "structure_normalize",
+    "confirmation_check": "validation",
+    "conflict_check": "validation",
+    "policy_apply": "memory_policy",
+    "audit_record": "text_config",
+    "output": "module_output",
+}
 
 IDENTITY_CORE_MODULE_SPECS: List[Dict[str, object]] = [
     {
@@ -639,7 +807,7 @@ def _layer2_personality_module(spec: Dict[str, object]) -> ModuleV04:
         "update_rule": {
             "input": node_ids["validation"],
             "boundary_rules": [
-                "no_api_key_or_provider",
+                "no_secret_or_provider_binding",
                 "no_llm_slot_binding",
                 "no_runtime_state",
                 "no_resident_name_resident_id_codename_nickname",
@@ -1740,6 +1908,13 @@ SOCIAL_BEHAVIOR_NODE_IDS = {
 SOCIAL_BEHAVIOR_PRESET_ID = "human_empathy_social_v0_1"
 
 
+def _behavior_dr_write_keys(policy_key: str) -> List[str]:
+    return [
+        f"payload.behavior_policy.modules.{policy_key}",
+        f"payload.graph_snapshot.layer_outputs.layer_8.behavior_policy.modules.{policy_key}",
+    ]
+
+
 def _language_behavior_field(node_key: str, field_id: str, key_suffix: str) -> Dict[str, object]:
     return {
         "field_id": field_id,
@@ -2451,6 +2626,7 @@ def _language_behavior_module() -> ModuleV04:
             "module_type": "layer8.languageBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("language_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -2794,6 +2970,7 @@ def _decision_behavior_module() -> ModuleV04:
             "module_type": "layer8.decisionBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("decision_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -3143,6 +3320,7 @@ def _detail_behavior_module() -> ModuleV04:
             "module_type": "layer8.detailBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("detail_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -3490,6 +3668,7 @@ def _interaction_behavior_module() -> ModuleV04:
             "module_type": "layer8.interactionBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("interaction_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -3833,6 +4012,7 @@ def _task_behavior_module() -> ModuleV04:
             "module_type": "layer8.taskBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("task_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -4176,6 +4356,7 @@ def _social_behavior_module() -> ModuleV04:
             "module_type": "layer8.socialBehavior.module.type",
         },
         outputs={},
+        dr_write_keys=_behavior_dr_write_keys("social_behavior"),
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -4190,6 +4371,1295 @@ def _social_behavior_module() -> ModuleV04:
             "no_runtime_capability": True,
             "no_provider_binding": True,
             "no_slot_binding": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _memory_provider_router_module() -> ModuleV04:
+    module_id = MEMORY_PROVIDER_ROUTER_MODULE_ID
+    output_key = MEMORY_PROVIDER_ROUTER_OUTPUT_KEY
+    node_ids = MEMORY_PROVIDER_ROUTER_NODE_IDS
+    param_i18n_keys = {
+        "validation_rules": {
+            "resident_id_required": "layer5.memoryProviderRouter.param.validation.residentIdRequired",
+            "namespace_default": "layer5.memoryProviderRouter.param.validation.namespaceDefault",
+            "memory_type_allowlist_only": "layer5.memoryProviderRouter.param.validation.memoryTypeAllowlistOnly",
+            "no_cross_resident_access": "layer5.memoryProviderRouter.param.validation.noCrossResidentAccess",
+            "no_cross_resident_write": "layer5.memoryProviderRouter.param.validation.noCrossResidentWrite",
+            "no_secret_in_memory_payload": "layer5.memoryProviderRouter.param.validation.noSecretInMemoryPayload",
+            "no_inferred_fact_as_memory": "layer5.memoryProviderRouter.param.validation.noInferredFactAsMemory",
+        },
+        "operations": {
+            "read": "layer5.memoryProviderRouter.param.operation.read",
+            "write": "layer5.memoryProviderRouter.param.operation.write",
+            "view": "layer5.memoryProviderRouter.param.operation.view",
+            "clear": "layer5.memoryProviderRouter.param.operation.clear",
+        },
+        "trace_fields": {
+            "resident_id": "layer5.memoryProviderRouter.param.traceField.residentId",
+            "namespace": "layer5.memoryProviderRouter.param.traceField.namespace",
+            "memory_type": "layer5.memoryProviderRouter.param.traceField.memoryType",
+            "provider_id": "layer5.memoryProviderRouter.param.traceField.providerId",
+            "engine_id": "layer5.memoryProviderRouter.param.traceField.engineId",
+            "storage_backend": "layer5.memoryProviderRouter.param.traceField.storageBackend",
+        },
+        "output": {
+            output_key: "layer5.memoryProviderRouter.output.memoryProviderRoutePolicy",
+        },
+    }
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+    }
+    route_policy = {
+        "output_key": output_key,
+        "request_contract": {
+            "allowed_runtime_fields": ["operation", "resident_id", "namespace", "memory_type", "content", "limit"],
+            "required_runtime_fields": ["operation", "resident_id"],
+            "operations": ["read", "write", "view", "clear"],
+        },
+        "resident_scope": {
+            "resident_id_required": True,
+            "cross_resident_access": "forbidden",
+        },
+        "namespace_policy": {
+            "default_namespace": "default",
+            "empty_namespace_fallback": "default",
+        },
+        "memory_type_policy": {
+            "allowed_memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "unsupported_memory_type_action": "reject",
+        },
+        "access_policy": {
+            "read": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "write": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "view": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "clear": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "session_only": ["short_term_memory"],
+            "forbidden_memory": ["api_key", "token", "credential", "base_url"],
+        },
+        "provider_policy": {
+            "allowed_backends": ["sqlite", "json", "mock"],
+            "default_backend": "mock",
+            "runtime_provider_ownership": "runtime_owned_not_stored_in_studio",
+        },
+        "engine_binding": {
+            "slot_id": "slot_memory",
+            "engine_id": "memory_mock",
+            "provider_id": "provider_memory_mock",
+        },
+        "trace_policy": {
+            "allowed_fields": ["operation", "resident_id", "namespace", "memory_type", "backend", "result_status"],
+            "forbidden_fields": ["content", "api_key", "token", "credential", "base_url"],
+        },
+        **no_execution_metadata,
+    }
+    node_params = {
+        "request_input": {
+            "i18n_keys": param_i18n_keys,
+            "request_schema": {
+                "required": ["operation", "resident_id"],
+                "optional": ["namespace", "memory_type", "content", "limit"],
+                "operations": ["read", "write", "view", "clear"],
+            },
+            "no_runtime_api_change": True,
+        },
+        "operation_classifier": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["request_input"],
+            "normalize_rules": ["classify_operation", "allow_read_write_view_clear", "reject_unknown_operation"],
+            "operations": ["read", "write", "view", "clear"],
+        },
+        "resident_resolver": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["operation_classifier"],
+            "required_fields": ["resident_id"],
+            "validation_rules": ["resident_id_present", "resident_scope_only", "cross_resident_access_forbidden"],
+        },
+        "namespace_resolver": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["resident_resolver"],
+            "normalize_rules": ["trim_namespace", "default_empty_namespace_to_default"],
+            "default_namespace": "default",
+        },
+        "type_resolver": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["namespace_resolver"],
+            "normalize_rules": ["resolve_memory_type", "allow_declared_memory_types_only"],
+            "allowed_memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+        },
+        "access_control": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["type_resolver"],
+            "retention": "session_or_policy_declared",
+            "isolation": "per_resident_namespace",
+            "read_policy": "declared_memory_types_only",
+            "write_policy": "no_secret_or_credential_memory",
+            "session_only": ["short_term_memory"],
+            "forbidden_memory": ["api_key", "token", "credential", "base_url"],
+        },
+        "provider_selector": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["access_control"],
+            "namespace": "default",
+            "storage_backend": "mock",
+            "allowed_backends": ["sqlite", "json", "mock"],
+            "enabled": True,
+            "credential_storage": "forbidden",
+        },
+        "engine_binding": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["provider_selector"],
+            "slot_binding": "slot_memory",
+            "engine_id": "memory_mock",
+            "provider_id": "provider_memory_mock",
+            "update_rules": ["slot_memory_to_memory_mock", "provider_memory_mock_only", "no_direct_provider_call"],
+        },
+        "trace_record": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["engine_binding"],
+            "trace_fields": ["operation", "resident_id", "namespace", "memory_type", "backend", "result_status"],
+            "forbidden_trace_fields": ["content", "api_key", "token", "credential", "base_url"],
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["trace_record"],
+            "output_key": output_key,
+            "output_schema": {"type": "object", "required": True},
+        },
+    }
+    node_i18n_suffix = {
+        "request_input": "requestInput",
+        "operation_classifier": "operationClassifier",
+        "resident_resolver": "residentResolver",
+        "namespace_resolver": "namespaceResolver",
+        "type_resolver": "typeResolver",
+        "access_control": "accessControl",
+        "provider_selector": "providerSelector",
+        "engine_binding": "engineBinding",
+        "trace_record": "traceRecord",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(MEMORY_PROVIDER_ROUTER_NODE_ORDER):
+        node_type = MEMORY_PROVIDER_ROUTER_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.memoryProviderRouter.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.memoryProviderRouter.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: route_policy, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory_router",
+        "Memory Provider Router",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "router", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(MEMORY_PROVIDER_ROUTER_NODE_ORDER[:-1], MEMORY_PROVIDER_ROUTER_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Memory provider route policy."}],
+        slot_bindings=[
+            {
+                "slot_id": "slot_memory",
+                "slot_type": SlotType.memory.value,
+                "slot_name": "memory.route",
+                "node_role": "memory_router_engine_binding",
+            }
+        ],
+        runtime_mapping={
+            "execution_entry": "runtime_only",
+            "engine_id": "memory_mock",
+            "provider_id": "provider_memory_mock",
+            "operations": ["read", "write", "view", "clear"],
+        },
+        dr_mapping={output_key: "memory_policy.provider_route"},
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.memoryProviderRouter.module.title",
+            "description": "layer5.memoryProviderRouter.module.description",
+            "output": "layer5.memoryProviderRouter.output.memoryProviderRoutePolicy",
+        },
+        outputs={output_key: route_policy, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _memory_access_control_module() -> ModuleV04:
+    module_id = MEMORY_ACCESS_CONTROL_MODULE_ID
+    output_key = MEMORY_ACCESS_CONTROL_OUTPUT_KEY
+    node_ids = MEMORY_ACCESS_CONTROL_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+    }
+    param_i18n_keys = {
+        "fields": {
+            "resident_id": "layer5.memoryAccessControl.field.residentId",
+            "operation": "layer5.memoryAccessControl.field.operation",
+            "namespace": "layer5.memoryAccessControl.field.namespace",
+            "memory_type": "layer5.memoryAccessControl.field.memoryType",
+            "content": "layer5.memoryAccessControl.field.content",
+            "source": "layer5.memoryAccessControl.field.source",
+            "memory_category": "layer5.memoryAccessControl.field.memoryCategory",
+            "sensitive_level": "layer5.memoryAccessControl.field.sensitiveLevel",
+            "decision": "layer5.memoryAccessControl.field.decision",
+            "reason": "layer5.memoryAccessControl.field.reason",
+            "confidence": "layer5.memoryAccessControl.field.confidence",
+            "require_confirmation": "layer5.memoryAccessControl.field.requireConfirmation",
+            "timestamp": "layer5.memoryAccessControl.field.timestamp",
+        },
+        "operations": {
+            "read": "layer5.memoryAccessControl.operation.read",
+            "write": "layer5.memoryAccessControl.operation.write",
+            "update": "layer5.memoryAccessControl.operation.update",
+            "delete": "layer5.memoryAccessControl.operation.delete",
+        },
+        "memory_types": {
+            "short_term_memory": "layer5.memoryAccessControl.memoryType.shortTerm",
+            "preference_memory": "layer5.memoryAccessControl.memoryType.preference",
+            "event_memory": "layer5.memoryAccessControl.memoryType.event",
+            "relationship_memory": "layer5.memoryAccessControl.memoryType.relationship",
+            "interaction_log": "layer5.memoryAccessControl.memoryType.interactionLog",
+        },
+        "decisions": {
+            "allow": "layer5.memoryAccessControl.decision.allow",
+            "confirm": "layer5.memoryAccessControl.decision.confirm",
+            "deny": "layer5.memoryAccessControl.decision.deny",
+            "remember": "layer5.memoryAccessControl.policy.remember",
+            "session_only": "layer5.memoryAccessControl.policy.sessionOnly",
+            "ask_confirmation": "layer5.memoryAccessControl.policy.askConfirmation",
+        },
+        "sensitive_levels": {
+            "safe": "layer5.memoryAccessControl.sensitiveLevel.safe",
+            "confirm_required": "layer5.memoryAccessControl.sensitiveLevel.confirmRequired",
+            "deny": "layer5.memoryAccessControl.sensitiveLevel.deny",
+        },
+        "output": {
+            output_key: "layer5.memoryAccessControl.output.memoryAccessPolicyResult",
+        },
+    }
+    access_policy_result = {
+        "output_key": output_key,
+        "decision": "confirm",
+        "reason": "policy_requires_explicit_user_permission",
+        "confidence": 0.8,
+        "memory_type": "short_term_memory",
+        "require_confirmation": True,
+        "request_contract": {
+            "fields": ["resident_id", "operation", "namespace", "memory_type", "content", "source"],
+            "operations": ["read", "write", "update", "delete"],
+        },
+        "permission_policy": {
+            "user_explicit_remember": "allow",
+            "missing_user_authorization": "confirm",
+            "sensitive_information": "deny",
+        },
+        "memory_categories": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"],
+        "sensitive_policy": {
+            "safe": "allow",
+            "confirm_required": "confirm",
+            "deny": "deny",
+            "default_for_inferred_fact": "deny",
+        },
+        "policy_actions": ["remember", "session_only", "ask_confirmation", "deny"],
+        "audit_policy": {
+            "record_fields": ["operation", "memory_type", "decision", "reason", "timestamp"],
+            "forbidden_fields": ["secret", "raw_sensitive_content", "api_key", "token", "credential"],
+        },
+        **no_execution_metadata,
+    }
+    node_params = {
+        "request_input": {
+            "i18n_keys": param_i18n_keys,
+            "request_fields": ["resident_id", "operation", "namespace", "memory_type", "content", "source"],
+            "operations": ["read", "write", "update", "delete"],
+            "request_scope": "runtime_memory_access_request",
+            "no_runtime_api_change": True,
+        },
+        "user_permission_check": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["request_input"],
+            "required_fields": ["resident_id", "operation"],
+            "validation_rules": ["explicit_user_remember_allows", "missing_user_authorization_requires_confirm", "sensitive_information_denies"],
+            "permission_outcomes": {"explicit_remember": "allow", "unauthorized": "confirm", "sensitive": "deny"},
+        },
+        "type_classifier": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["user_permission_check"],
+            "normalize_rules": ["classify_memory_type", "emit_memory_category", "allow_declared_memory_categories_only"],
+            "memory_categories": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"],
+            "output": "memory_category",
+        },
+        "sensitive_check": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["type_classifier"],
+            "validation_rules": [
+                "identity_sensitive_information_requires_confirm",
+                "medical_information_requires_confirm",
+                "political_preference_requires_confirm",
+                "religious_information_requires_confirm",
+                "financial_privacy_requires_confirm",
+                "unconfirmed_inference_denied",
+            ],
+            "forbidden_default_save": [
+                "identity_sensitive_information",
+                "medical_information",
+                "political_preference",
+                "religious_information",
+                "financial_privacy",
+                "unconfirmed_inference",
+            ],
+            "sensitive_levels": ["safe", "confirm_required", "deny"],
+            "output": "sensitive_level",
+        },
+        "policy_match": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["sensitive_check"],
+            "policy_source": "memory_policy",
+            "policy_actions": ["remember", "session_only", "ask_confirmation", "deny"],
+            "priority": ["explicit_authorization", "user_preference", "normal_dialogue"],
+            "inferred_fact_default": "deny",
+        },
+        "access_decision": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["policy_match"],
+            "decision_values": ["allow", "confirm", "deny"],
+            "outputs": ["decision", "reason", "confidence"],
+            "update_rules": ["combine_permission_type_sensitivity_policy", "deny_overrides_confirm", "confirm_overrides_allow"],
+        },
+        "audit": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["access_decision"],
+            "audit_fields": ["operation", "memory_type", "decision", "reason", "timestamp"],
+            "forbidden_audit_fields": ["secret", "raw_sensitive_content", "api_key", "token", "credential"],
+            "audit_scope": "reason_record_only",
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["audit"],
+            "output_key": output_key,
+            "output_schema": {
+                "decision": "string",
+                "reason": "string",
+                "confidence": "number",
+                "memory_type": "string",
+                "require_confirmation": "boolean",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "request_input": "requestInput",
+        "user_permission_check": "userPermissionCheck",
+        "type_classifier": "typeClassifier",
+        "sensitive_check": "sensitiveCheck",
+        "policy_match": "policyMatch",
+        "access_decision": "accessDecision",
+        "audit": "audit",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(MEMORY_ACCESS_CONTROL_NODE_ORDER):
+        node_type = MEMORY_ACCESS_CONTROL_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.memoryAccessControl.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.memoryAccessControl.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: access_policy_result, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory_policy",
+        "Memory Access Control",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "access_control", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(MEMORY_ACCESS_CONTROL_NODE_ORDER[:-1], MEMORY_ACCESS_CONTROL_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Memory access policy result."}],
+        slot_bindings=[
+            {
+                "slot_id": "slot_memory",
+                "slot_type": SlotType.memory.value,
+                "slot_name": "memory.policy",
+                "node_role": "access_control",
+            }
+        ],
+        runtime_mapping={"execution_entry": "runtime_only", "policy_type": "memory_access_control"},
+        dr_mapping={"memory_access_policy": "memory_policy.access_control"},
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.memoryAccessControl.module.title",
+            "description": "layer5.memoryAccessControl.module.description",
+            "output": "layer5.memoryAccessControl.output.memoryAccessPolicyResult",
+        },
+        outputs={output_key: access_policy_result, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _short_term_memory_module() -> ModuleV04:
+    module_id = SHORT_TERM_MEMORY_MODULE_ID
+    output_key = SHORT_TERM_MEMORY_OUTPUT_KEY
+    node_ids = SHORT_TERM_MEMORY_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+        "session_scoped_only": True,
+    }
+    param_i18n_keys = {
+        "fields": {
+            "current_topic": "layer5.shortTermMemory.field.currentTopic",
+            "current_task": "layer5.shortTermMemory.field.currentTask",
+            "recent_dialogue": "layer5.shortTermMemory.field.recentDialogue",
+            "temporary_state": "layer5.shortTermMemory.field.temporaryState",
+            "temporary_emotion": "layer5.shortTermMemory.field.temporaryEmotion",
+        },
+        "retention": {
+            "session": "layer5.shortTermMemory.retention.session",
+        },
+        "output": {
+            output_key: "layer5.shortTermMemory.output.shortTermMemoryContext",
+        },
+    }
+    short_term_context = {
+        "output_key": output_key,
+        "retention": "session",
+        "fields": {
+            "current_topic": "",
+            "current_task": "",
+            "recent_dialogue": [],
+            "temporary_state": "",
+            "temporary_emotion": "",
+        },
+        "expires_on": "session_end",
+        "allowed_content": ["current_dialogue", "current_task", "temporary_emotion"],
+        "forbidden_content": ["persistent_user_preference", "identity_information", "relationship_state", "sensitive_information", "vector_retrieval"],
+        **no_execution_metadata,
+    }
+    node_params = {
+        "input": {
+            "i18n_keys": param_i18n_keys,
+            "input_scope": "current_session_content",
+            "accepted_fields": ["current_dialogue", "current_task", "recent_interaction", "temporary_state"],
+            "no_persistent_storage": True,
+        },
+        "context_normalize": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["input"],
+            "normalize_rules": ["extract_current_topic", "extract_current_task", "summarize_recent_dialogue", "preserve_temporary_state"],
+            "outputs": ["current_topic", "current_task", "recent_dialogue", "temporary_state"],
+        },
+        "retention_policy": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["context_normalize"],
+            "retention": "session",
+            "save_allowed": ["current_dialogue", "current_task", "temporary_emotion"],
+            "save_forbidden": ["persistent_user_preference", "identity_information", "relationship_state", "sensitive_information"],
+            "expires_on": "session_end",
+            "no_vector_retrieval": True,
+            "no_personality_growth": True,
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["retention_policy"],
+            "output_key": output_key,
+            "output_schema": {
+                "current_topic": "string",
+                "current_task": "string",
+                "recent_dialogue": "array",
+                "temporary_state": "string",
+                "temporary_emotion": "string",
+                "retention": "session",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "input": "input",
+        "context_normalize": "contextNormalize",
+        "retention_policy": "retentionPolicy",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(SHORT_TERM_MEMORY_NODE_ORDER):
+        node_type = SHORT_TERM_MEMORY_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.shortTermMemory.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.shortTermMemory.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: short_term_context, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory",
+        "Short-term Memory",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "short_term", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(SHORT_TERM_MEMORY_NODE_ORDER[:-1], SHORT_TERM_MEMORY_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Short-term session memory context."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.shortTermMemory.module.title",
+            "description": "layer5.shortTermMemory.module.description",
+            "output": "layer5.shortTermMemory.output.shortTermMemoryContext",
+        },
+        outputs={output_key: short_term_context, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+            "session_scoped_only": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _preference_memory_module() -> ModuleV04:
+    module_id = PREFERENCE_MEMORY_MODULE_ID
+    output_key = PREFERENCE_MEMORY_OUTPUT_KEY
+    node_ids = PREFERENCE_MEMORY_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+        "no_personality_core_update": True,
+        "no_safety_boundary_override": True,
+    }
+    param_i18n_keys = {
+        "fields": {
+            "preference_key": "layer5.preferenceMemory.field.preferenceKey",
+            "preference_value": "layer5.preferenceMemory.field.preferenceValue",
+            "source": "layer5.preferenceMemory.field.source",
+            "confidence": "layer5.preferenceMemory.field.confidence",
+        },
+        "decisions": {
+            "allow": "layer5.preferenceMemory.decision.allow",
+            "confirm": "layer5.preferenceMemory.decision.confirm",
+        },
+        "output": {
+            output_key: "layer5.preferenceMemory.output.preferenceMemory",
+        },
+    }
+    preference_policy = {
+        "output_key": output_key,
+        "fields": {
+            "preference_key": "",
+            "preference_value": "",
+            "source": "",
+            "confidence": 0.0,
+        },
+        "decisions": ["allow", "confirm"],
+        "save_allowed": ["expression_preference", "usage_habit", "explicit_interest"],
+        "save_forbidden": ["sensitive_attribute", "inferred_fact", "personality_core", "safety_boundary"],
+        **no_execution_metadata,
+    }
+    node_params = {
+        "input": {
+            "i18n_keys": param_i18n_keys,
+            "input_scope": "candidate_preference",
+            "accepted_fields": ["preference_key", "preference_value", "source", "confidence"],
+        },
+        "classifier": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["input"],
+            "normalize_rules": ["extract_preference_key", "extract_preference_value", "preserve_source", "estimate_confidence"],
+            "outputs": ["preference_key", "preference_value", "source", "confidence"],
+        },
+        "confirmation_check": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["classifier"],
+            "decision_rules": {
+                "explicit_user_preference": "allow",
+                "ambiguous_preference": "confirm",
+            },
+            "decisions": ["allow", "confirm"],
+        },
+        "policy": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["confirmation_check"],
+            "save_allowed": ["expression_preference", "usage_habit", "explicit_interest"],
+            "save_forbidden": ["sensitive_attribute", "inferred_fact"],
+            "protected_boundaries": ["personality_core", "safety_boundary"],
+            "no_personality_core_update": True,
+            "no_safety_boundary_override": True,
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["policy"],
+            "output_key": output_key,
+            "output_schema": {
+                "preference_key": "string",
+                "preference_value": "string",
+                "source": "string",
+                "confidence": "number",
+                "decision": "allow_or_confirm",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "input": "input",
+        "classifier": "classifier",
+        "confirmation_check": "confirmationCheck",
+        "policy": "policy",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(PREFERENCE_MEMORY_NODE_ORDER):
+        node_type = PREFERENCE_MEMORY_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.preferenceMemory.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.preferenceMemory.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: preference_policy, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory",
+        "Preference Memory",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "preference", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(PREFERENCE_MEMORY_NODE_ORDER[:-1], PREFERENCE_MEMORY_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Confirmed long-term user preference memory."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.preferenceMemory.module.title",
+            "description": "layer5.preferenceMemory.module.description",
+            "output": "layer5.preferenceMemory.output.preferenceMemory",
+        },
+        outputs={output_key: preference_policy, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+            "no_personality_core_update": True,
+            "no_safety_boundary_override": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _event_memory_module() -> ModuleV04:
+    module_id = EVENT_MEMORY_MODULE_ID
+    output_key = EVENT_MEMORY_OUTPUT_KEY
+    node_ids = EVENT_MEMORY_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+        "no_personality_auto_change": True,
+    }
+    param_i18n_keys = {
+        "fields": {
+            "event_content": "layer5.eventMemory.field.eventContent",
+            "source": "layer5.eventMemory.field.source",
+            "timestamp": "layer5.eventMemory.field.timestamp",
+            "context": "layer5.eventMemory.field.context",
+            "event_type": "layer5.eventMemory.field.eventType",
+            "event_summary": "layer5.eventMemory.field.eventSummary",
+            "confidence": "layer5.eventMemory.field.confidence",
+            "importance": "layer5.eventMemory.field.importance",
+        },
+        "event_types": {
+            "project": "layer5.eventMemory.eventType.project",
+            "milestone": "layer5.eventMemory.eventType.milestone",
+            "interaction": "layer5.eventMemory.eventType.interaction",
+            "personal_story": "layer5.eventMemory.eventType.personalStory",
+        },
+        "importance": {
+            "high": "layer5.eventMemory.importance.high",
+            "medium": "layer5.eventMemory.importance.medium",
+            "low": "layer5.eventMemory.importance.low",
+        },
+        "lifecycle": {
+            "active": "layer5.eventMemory.lifecycle.active",
+            "archived": "layer5.eventMemory.lifecycle.archived",
+            "forgotten": "layer5.eventMemory.lifecycle.forgotten",
+        },
+        "output": {
+            output_key: "layer5.eventMemory.output.eventMemory",
+        },
+    }
+    event_policy = {
+        "output_key": output_key,
+        "fields": {
+            "event_type": "",
+            "event_summary": "",
+            "source": "",
+            "timestamp": "",
+            "confidence": 0.0,
+            "importance": "medium",
+            "lifecycle_status": "active",
+        },
+        "event_types": ["project", "milestone", "interaction", "personal_story"],
+        "importance_levels": ["high", "medium", "low"],
+        "lifecycle_states": ["active", "archived", "forgotten"],
+        "save_allowed": ["brief_summary", "timestamp", "event_meaning"],
+        "save_forbidden": ["full_chat_log", "one_off_small_talk", "sensitive_event", "unconfirmed_inference", "raw_sensitive_content"],
+        **no_execution_metadata,
+    }
+    node_params = {
+        "input": {
+            "i18n_keys": param_i18n_keys,
+            "input_scope": "candidate_event",
+            "accepted_fields": ["event_content", "source", "timestamp", "context"],
+        },
+        "classifier": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["input"],
+            "normalize_rules": ["extract_event_type", "summarize_event", "preserve_source", "estimate_confidence"],
+            "event_types": ["project", "milestone", "interaction", "personal_story"],
+            "outputs": ["event_type", "event_summary", "source", "confidence"],
+        },
+        "importance_evaluation": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["classifier"],
+            "high_value_rules": ["explicit_user_remember_request", "long_term_goal", "important_experience"],
+            "low_value_rules": ["ordinary_chat", "temporary_emotion"],
+            "importance": ["high", "medium", "low"],
+        },
+        "summary_policy": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["importance_evaluation"],
+            "save_allowed": ["brief_summary", "timestamp", "event_meaning"],
+            "save_forbidden": ["full_chat_log", "raw_sensitive_content", "sensitive_event", "unconfirmed_inference"],
+            "no_full_chat_log": True,
+            "no_sensitive_event_storage": True,
+        },
+        "lifecycle_policy": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["summary_policy"],
+            "lifecycle_states": ["active", "archived", "forgotten"],
+            "long_term_rule": "important_events_persist",
+            "decay_rule": "ordinary_events_may_decay",
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["lifecycle_policy"],
+            "output_key": output_key,
+            "output_schema": {
+                "event_type": "string",
+                "event_summary": "string",
+                "source": "string",
+                "timestamp": "string",
+                "confidence": "number",
+                "importance": "high_medium_or_low",
+                "lifecycle_status": "active_archived_or_forgotten",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "input": "input",
+        "classifier": "classifier",
+        "importance_evaluation": "importanceEvaluation",
+        "summary_policy": "summaryPolicy",
+        "lifecycle_policy": "lifecyclePolicy",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(EVENT_MEMORY_NODE_ORDER):
+        node_type = EVENT_MEMORY_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.eventMemory.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.eventMemory.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: event_policy, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory",
+        "Event Memory",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "event", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(EVENT_MEMORY_NODE_ORDER[:-1], EVENT_MEMORY_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Important shared event memory."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.eventMemory.module.title",
+            "description": "layer5.eventMemory.module.description",
+            "output": "layer5.eventMemory.output.eventMemory",
+        },
+        outputs={output_key: event_policy, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+            "no_personality_auto_change": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
+def _memory_update_module() -> ModuleV04:
+    module_id = MEMORY_UPDATE_MODULE_ID
+    output_key = MEMORY_UPDATE_OUTPUT_KEY
+    node_ids = MEMORY_UPDATE_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_database_write": True,
+        "no_dr_writeback": True,
+        "no_runtime_trace_to_dr": True,
+        "no_secret_storage": True,
+        "no_raw_sensitive_content": True,
+        "no_vector_memory": True,
+        "no_personality_growth": True,
+        "no_multi_resident_memory_share": True,
+    }
+    allowed_operations = ["create", "update", "delete", "confirm", "archive"]
+    param_i18n_keys = {
+        "fields": {
+            "operation": "layer5.memoryUpdate.field.operation",
+            "memory_type": "layer5.memoryUpdate.field.memoryType",
+            "memory_key": "layer5.memoryUpdate.field.memoryKey",
+            "memory_value": "layer5.memoryUpdate.field.memoryValue",
+            "source": "layer5.memoryUpdate.field.source",
+            "confidence": "layer5.memoryUpdate.field.confidence",
+            "decision": "layer5.memoryUpdate.field.decision",
+            "reason": "layer5.memoryUpdate.field.reason",
+            "requires_confirmation": "layer5.memoryUpdate.field.requiresConfirmation",
+            "write_boundary": "layer5.memoryUpdate.field.writeBoundary",
+            "timestamp": "layer5.memoryUpdate.field.timestamp",
+        },
+        "operations": {
+            "create": "layer5.memoryUpdate.operation.create",
+            "update": "layer5.memoryUpdate.operation.update",
+            "delete": "layer5.memoryUpdate.operation.delete",
+            "confirm": "layer5.memoryUpdate.operation.confirm",
+            "archive": "layer5.memoryUpdate.operation.archive",
+        },
+        "decisions": {
+            "allow": "layer5.memoryUpdate.decision.allow",
+            "confirm": "layer5.memoryUpdate.decision.confirm",
+            "deny": "layer5.memoryUpdate.decision.deny",
+        },
+        "output": {
+            output_key: "layer5.memoryUpdate.output.memoryUpdatePolicy",
+        },
+    }
+    update_policy = {
+        "output_key": output_key,
+        "allowed_operations": allowed_operations,
+        "decision_values": ["allow", "confirm", "deny"],
+        "policy_priority": {
+            "explicit_user_request_priority": "highest",
+            "confirmed_preference": "high",
+            "project_context": "high",
+            "relationship_state": "gradual",
+            "temporary_emotion": "session_only",
+            "inferred_fact": "deny",
+        },
+        "confirmation_policy": {
+            "explicit_user_remember_request": "allow_without_second_confirmation",
+            "ambiguous_preference": "confirm",
+            "sensitive_information": "confirm_or_deny",
+            "inferred_fact": "deny",
+        },
+        "conflict_policy": {
+            "new_preference_overwrites_old_preference": "confirm",
+            "relationship_state_large_jump": "deny_or_confirm",
+            "duplicate_event_memory": "deny",
+            "low_confidence_over_high_confidence": "deny",
+        },
+        "audit_policy": {
+            "record_fields": ["operation", "memory_type", "decision", "reason", "source", "confidence", "timestamp"],
+            "forbidden_fields": ["api_key", "token", "credential", "raw_sensitive_content"],
+        },
+        "write_boundary": "local_memory_store_only",
+        **no_execution_metadata,
+    }
+    node_params = {
+        "request_input": {
+            "i18n_keys": param_i18n_keys,
+            "input_scope": "candidate_memory_update",
+            "accepted_fields": ["operation", "memory_type", "memory_key", "memory_value", "source", "confidence"],
+        },
+        "operation_classifier": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["request_input"],
+            "normalize_rules": ["classify_update_operation", "allow_declared_update_operations_only"],
+            "operations": allowed_operations,
+        },
+        "confirmation_check": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["operation_classifier"],
+            "confirmation_rules": {
+                "explicit_user_remember_request": "allow_without_second_confirmation",
+                "ambiguous_preference": "confirm",
+                "sensitive_information": "confirm_or_deny",
+                "inferred_fact": "deny",
+            },
+        },
+        "conflict_check": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["confirmation_check"],
+            "conflict_rules": [
+                "new_preference_overwrites_old_preference",
+                "relationship_state_large_jump",
+                "duplicate_event_memory",
+                "low_confidence_over_high_confidence",
+            ],
+        },
+        "policy_apply": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["conflict_check"],
+            "strategy": {
+                "explicit_user_request_priority": "highest",
+                "confirmed_preference": "high",
+                "project_context": "high",
+                "relationship_state": "gradual",
+                "temporary_emotion": "session_only",
+                "inferred_fact": "deny",
+            },
+            "write_boundary": "local_memory_store_only",
+        },
+        "audit_record": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["policy_apply"],
+            "record_fields": ["operation", "memory_type", "decision", "reason", "source", "confidence", "timestamp"],
+            "forbidden_fields": ["api_key", "token", "credential", "raw_sensitive_content"],
+            "no_runtime_trace_to_dr": True,
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["audit_record"],
+            "output_key": output_key,
+            "output_schema": {
+                "operation": "create/update/delete/confirm/archive",
+                "decision": "allow/confirm/deny",
+                "memory_type": "string",
+                "reason": "string",
+                "confidence": "number",
+                "requires_confirmation": "boolean",
+                "write_boundary": "local_memory_store_only",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "request_input": "requestInput",
+        "operation_classifier": "operationClassifier",
+        "confirmation_check": "confirmationCheck",
+        "conflict_check": "conflictCheck",
+        "policy_apply": "policyApply",
+        "audit_record": "auditRecord",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(MEMORY_UPDATE_NODE_ORDER):
+        node_type = MEMORY_UPDATE_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.memoryUpdate.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.memoryUpdate.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: update_policy, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory",
+        "Memory Update",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "update", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(MEMORY_UPDATE_NODE_ORDER[:-1], MEMORY_UPDATE_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Memory update policy."}],
+        slot_bindings=[
+            {
+                "slot_id": "slot_memory",
+                "slot_type": SlotType.memory.value,
+                "slot_name": "memory.update",
+                "node_role": "memory_update_policy",
+            }
+        ],
+        runtime_mapping={
+            "execution_entry": "runtime_only",
+            "policy_type": "memory_update_policy",
+            "allowed_operations": allowed_operations,
+        },
+        dr_mapping={output_key: "memory_policy.update"},
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.memoryUpdate.module.title",
+            "description": "layer5.memoryUpdate.module.description",
+            "output": "layer5.memoryUpdate.output.memoryUpdatePolicy",
+        },
+        outputs={output_key: update_policy, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_database_write": True,
+            "no_dr_writeback": True,
+            "no_runtime_trace_to_dr": True,
+            "no_secret_storage": True,
+            "no_raw_sensitive_content": True,
+            "no_vector_memory": True,
+            "no_personality_growth": True,
+            "no_multi_resident_memory_share": True,
         },
         mock_only=True,
         no_execution=True,
@@ -4225,17 +5695,19 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("emergency_contact", "permission_future", "Emergency Contact", "layer_4", status=ProtocolStatus.later, category="governance", risk_level=RiskLevel.high, audit_required=True, human_confirm_required=True, color_status="gray"),
 
     # L5 Memory
-    _module("event_memory", "memory", "Event Memory", "layer_5", status=ProtocolStatus.ready, category="memory", slot_type=SlotType.memory, is_placeholder=True, color_status="green"),
+    _event_memory_module(),
     _module("relationship_memory", "memory", "Relationship Memory", "layer_5", status=ProtocolStatus.ready, category="memory", slot_type=SlotType.memory, is_placeholder=True, color_status="green"),
-    _module("memory_access_control", "memory", "Memory Access Control", "layer_5", status=ProtocolStatus.ready, category="memory", is_placeholder=True, color_status="green"),
+    _memory_access_control_module(),
+    _short_term_memory_module(),
     _module("short_term_memory_slot", "memory_slot", "Short Term Memory Slot", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
     _module("long_term_memory_slot", "memory_slot", "Long Term Memory Slot", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
     _module("vector_db_slot", "memory_slot", "Vector DB Slot", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
     _module("memory_recall_slot", "memory_slot", "Memory Recall Slot", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
-    _module("memory_provider_router", "memory_router", "Memory Provider Router", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
-    _module("preference_memory", "memory", "Preference Memory", "layer_5", status=ProtocolStatus.mock, category="memory", slot_type=SlotType.memory, color_status="amber"),
+    _memory_provider_router_module(),
+    _preference_memory_module(),
     _module("self_memory", "memory", "Self Memory", "layer_5", status=ProtocolStatus.mock, category="memory", slot_type=SlotType.memory, color_status="amber"),
     _module("knowledge_memory", "memory", "Knowledge Memory", "layer_5", status=ProtocolStatus.mock, category="memory", slot_type=SlotType.memory, color_status="amber"),
+    _memory_update_module(),
     _module("memory_update_slot", "memory_slot", "Memory Update Slot", "layer_5", status=ProtocolStatus.mock, slot_type=SlotType.memory, category="memory", color_status="amber"),
 
     # L6 Knowledge

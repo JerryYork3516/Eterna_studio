@@ -10,6 +10,16 @@ import { loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphS
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
 
+const MODULE_INSTANCE_SEPARATOR = "::";
+const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
+  "memory_provider_router",
+  "memory_access_control",
+  "short_term_memory",
+  "preference_memory",
+  "event_memory",
+  "memory_update",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -147,6 +157,76 @@ function catalogNodeIdFromGraphNode(node: unknown): string {
   const schemaNode = schemaNodeRecord(node);
   const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
   return String(data.catalog_node_id || schemaNode?.node_id || "");
+}
+
+function graphNodeId(node: unknown): string {
+  const schemaNode = schemaNodeRecord(node);
+  if (schemaNode) {
+    return String(schemaNode.node_id || schemaNode.id || "");
+  }
+  return isRecord(node) ? String(node.node_id || node.id || "") : "";
+}
+
+function catalogNodeIdsFromGraph(nodes: unknown[] | undefined): string[] {
+  return (nodes ?? []).map(catalogNodeIdFromGraphNode).filter(Boolean);
+}
+
+function nodeIdToCatalogNodeId(nodes: unknown[] | undefined) {
+  const idMap = new Map<string, string>();
+  for (const node of nodes ?? []) {
+    const nodeId = graphNodeId(node);
+    const catalogNodeId = catalogNodeIdFromGraphNode(node);
+    if (nodeId && catalogNodeId) {
+      idMap.set(nodeId, catalogNodeId);
+    }
+  }
+  return idMap;
+}
+
+function catalogNodeIdFromEndpoint(endpoint: string, idMap: Map<string, string>) {
+  return idMap.get(endpoint) || endpoint.split(MODULE_INSTANCE_SEPARATOR).pop() || endpoint;
+}
+
+function edgeEndpoint(edge: unknown, key: "source" | "target"): string {
+  if (!isRecord(edge)) {
+    return "";
+  }
+  if (typeof edge[key] === "string") {
+    return edge[key];
+  }
+  const nodeKey = `${key}_node_id`;
+  return typeof edge[nodeKey] === "string" ? edge[nodeKey] : "";
+}
+
+function edgePairsByCatalogNodeId(nodes: unknown[] | undefined, edges: unknown[] | undefined): string[] {
+  const idMap = nodeIdToCatalogNodeId(nodes);
+  return (edges ?? [])
+    .map((edge) => {
+      const source = edgeEndpoint(edge, "source");
+      const target = edgeEndpoint(edge, "target");
+      if (!source || !target) {
+        return "";
+      }
+      return `${catalogNodeIdFromEndpoint(source, idMap)}->${catalogNodeIdFromEndpoint(target, idMap)}`;
+    })
+    .filter(Boolean);
+}
+
+function shouldReplaceWithCatalogGraph(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+) {
+  const catalogModuleId = catalogModuleIdFromSeed(initialNodes);
+  if (!CATALOG_GRAPH_REPLACE_MODULE_IDS.has(catalogModuleId) || !initialNodes?.length) {
+    return false;
+  }
+
+  const seedNodeIds = catalogNodeIdsFromGraph(initialNodes);
+  const graphNodeIds = catalogNodeIdsFromGraph(graph.nodes);
+  const seedEdges = edgePairsByCatalogNodeId(initialNodes, initialEdges);
+  const graphEdges = edgePairsByCatalogNodeId(graph.nodes, graph.edges);
+  return stableJson(graphNodeIds) !== stableJson(seedNodeIds) || stableJson(graphEdges) !== stableJson(seedEdges);
 }
 
 function seedPositionsByCatalogNodeId(initialNodes?: WorkflowNode[]) {
@@ -339,6 +419,18 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
   // 1. 检查 store 中是否已存在
   const existingGraph = store.moduleGraphs[moduleNodeId];
   if (existingGraph) {
+    if (shouldReplaceWithCatalogGraph(existingGraph, initialNodes, initialEdges)) {
+      const graph: ModuleGraph = {
+        moduleNodeId,
+        nodes: initialNodes ?? [],
+        edges: initialEdges ?? [],
+        viewport: existingGraph.viewport,
+      };
+      store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
+      saveModuleGraphState(moduleNodeId, graph.nodes, graph.edges);
+      console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced stale catalog graph with current seed");
+      return graph;
+    }
     const hasExistingGraph = Boolean(existingGraph.nodes?.length || existingGraph.edges?.length);
     if (!hasExistingGraph && hasInitialGraph) {
       const graph: ModuleGraph = {
@@ -370,6 +462,17 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       nodes: legacyGraph.nodes as WorkflowNode[],
       edges: legacyGraph.edges as WorkflowEdge[],
     };
+    if (shouldReplaceWithCatalogGraph(graph, initialNodes, initialEdges)) {
+      const seedGraph: ModuleGraph = {
+        moduleNodeId,
+        nodes: initialNodes ?? [],
+        edges: initialEdges ?? [],
+      };
+      store.updateModuleGraph(moduleNodeId, seedGraph.nodes, seedGraph.edges, seedGraph.viewport);
+      saveModuleGraphState(moduleNodeId, seedGraph.nodes, seedGraph.edges);
+      console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced stale legacy graph with current catalog seed");
+      return seedGraph;
+    }
     const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {

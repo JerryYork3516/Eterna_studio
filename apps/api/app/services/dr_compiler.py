@@ -77,6 +77,18 @@ from ..registry.module_catalog import (
     RISK_RESPONSE_NODE_IDS,
     SAFE_REDIRECT_POLICY_OUTPUT_KEY,
     get_module_catalog,
+    LANGUAGE_BEHAVIOR_MODULE_ID,
+    LANGUAGE_BEHAVIOR_PRESET_ID,
+    INTERACTION_BEHAVIOR_MODULE_ID,
+    INTERACTION_BEHAVIOR_PRESET_ID,
+    TASK_BEHAVIOR_MODULE_ID,
+    TASK_BEHAVIOR_PRESET_ID,
+    SOCIAL_BEHAVIOR_MODULE_ID,
+    SOCIAL_BEHAVIOR_PRESET_ID,
+    DECISION_BEHAVIOR_MODULE_ID,
+    DECISION_BEHAVIOR_PRESET_ID,
+    DETAIL_BEHAVIOR_MODULE_ID,
+    DETAIL_BEHAVIOR_PRESET_ID,
 )
 from ..registry.slot_catalog import get_slot_catalog
 
@@ -202,6 +214,16 @@ _RISK_POLICY_REQUIRED_KEYS = (
 _LAYER3_SAFETY_TOP_LEVEL_OUTPUT_KEYS = tuple(output_key for _module_id, output_key in LAYER3_SAFETY_POLICY_MODULES) + tuple(
     LAYER3_RISK_RESPONSE_OUTPUT_KEYS
 )
+_LAYER8_BEHAVIOR_MODULES: tuple[tuple[str, str, str], ...] = (
+    (LANGUAGE_BEHAVIOR_MODULE_ID, "language_behavior", LANGUAGE_BEHAVIOR_PRESET_ID),
+    (INTERACTION_BEHAVIOR_MODULE_ID, "interaction_behavior", INTERACTION_BEHAVIOR_PRESET_ID),
+    (TASK_BEHAVIOR_MODULE_ID, "task_behavior", TASK_BEHAVIOR_PRESET_ID),
+    (SOCIAL_BEHAVIOR_MODULE_ID, "social_behavior", SOCIAL_BEHAVIOR_PRESET_ID),
+    (DECISION_BEHAVIOR_MODULE_ID, "decision_behavior", DECISION_BEHAVIOR_PRESET_ID),
+    (DETAIL_BEHAVIOR_MODULE_ID, "detail_behavior", DETAIL_BEHAVIOR_PRESET_ID),
+)
+_LAYER8_CORE_BEHAVIOR_MODULE_IDS = tuple(module_id for module_id, _policy_key, _preset_id in _LAYER8_BEHAVIOR_MODULES)
+_LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
 _LAYER3_SAFETY_POLICY_CONFIGS = {
     CONTENT_SAFETY_MODULE_ID: {
         "output_key": CONTENT_SAFETY_OUTPUT_KEY,
@@ -1033,6 +1055,150 @@ def _merge_layer3_safety_into_safety_policy(payload: Dict[str, Any]) -> None:
     )
     safety_policy.update(layer3_policies)
     payload["safety_policy"] = safety_policy
+
+
+def _module_nodes_by_type(module: Dict[str, Any], node_type: str) -> List[Dict[str, Any]]:
+    return [node for node in _module_graph_nodes(module) if node.get("node_type") == node_type]
+
+
+def _checkbox_config_from_node(node: Dict[str, Any]) -> Dict[str, Any]:
+    params = _as_dict(node.get("params"))
+    return _as_dict(params.get("checkbox_config") or params.get("checklist_config"))
+
+
+def _behavior_reference_payload(reference: Dict[str, Any]) -> Dict[str, Any]:
+    layer_id = _nonempty_str(reference.get("layer_id"))
+    module_id = _nonempty_str(reference.get("module_id"))
+    field_id = _nonempty_str(reference.get("field_id"))
+    path = _nonempty_str(reference.get("path")) or "/".join(item for item in (layer_id, module_id, field_id) if item)
+    return {
+        "reference_id": _nonempty_str(reference.get("reference_id")),
+        "reference_type": _nonempty_str(reference.get("reference_type")) or "optional",
+        "layer_id": layer_id,
+        "module_id": module_id,
+        "field_id": field_id,
+        "path": path,
+        "usage": _nonempty_str(reference.get("usage")),
+        "usage_key": _nonempty_str(reference.get("usage_key")),
+    }
+
+
+def _behavior_field_references(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+    field_reference_nodes = _module_nodes_by_type(module, "field_reference")
+    references: List[Dict[str, Any]] = []
+    for node in field_reference_nodes:
+        params = _as_dict(node.get("params"))
+        outputs = _as_dict(node.get("outputs"))
+        raw_references = outputs.get("field_references") or params.get("references")
+        if not isinstance(raw_references, list) or not raw_references:
+            raw_references = params.get("recommended_references")
+        if not isinstance(raw_references, list):
+            continue
+        for reference in raw_references:
+            if not isinstance(reference, dict):
+                continue
+            if reference.get("reference_type") == "forbidden":
+                continue
+            payload = _behavior_reference_payload(reference)
+            if payload["layer_id"] and payload["module_id"] and payload["field_id"]:
+                references.append(payload)
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for reference in references:
+        key = str(reference.get("path") or reference.get("reference_id"))
+        if key:
+            deduped[key] = reference
+    return list(deduped.values())
+
+
+def _behavior_checkbox_summary(module: Dict[str, Any]) -> Dict[str, Any]:
+    selected_options: List[str] = []
+    validation_rules: List[str] = []
+    custom_texts: List[str] = []
+    preset_id = ""
+
+    for node in _module_nodes_by_type(module, "text_config"):
+        checkbox_config = _checkbox_config_from_node(node)
+        if not checkbox_config:
+            continue
+        if not preset_id:
+            preset_id = _nonempty_str(checkbox_config.get("preset_id"))
+        node_selected = checkbox_config.get("selected_options")
+        if isinstance(node_selected, list):
+            selected_options.extend(str(option) for option in node_selected if isinstance(option, str) and option)
+            if str(node.get("node_id", "")).endswith("_validation"):
+                validation_rules.extend(str(option) for option in node_selected if isinstance(option, str) and option)
+        custom_text = _nonempty_str(checkbox_config.get("custom_text"))
+        if custom_text:
+            custom_texts.append(custom_text)
+
+    return {
+        "preset_id": preset_id,
+        "selected_options": list(dict.fromkeys(selected_options)),
+        "custom_text": "\n\n".join(custom_texts),
+        "validation_rules": list(dict.fromkeys(validation_rules)),
+    }
+
+
+def _behavior_module_policy(module: Dict[str, Any], policy_key: str, default_preset_id: str) -> Dict[str, Any]:
+    checkbox_summary = _behavior_checkbox_summary(module)
+    source_nodes = [
+        str(node.get("node_id"))
+        for node in _module_graph_nodes(module)
+        if isinstance(node.get("node_id"), str) and node.get("node_id")
+    ]
+    return {
+        "module_id": module.get("module_id"),
+        "source_module_id": module.get("module_id"),
+        "module_type": module.get("module_type"),
+        "policy_key": policy_key,
+        "preset_id": checkbox_summary["preset_id"] or default_preset_id,
+        "selected_options": checkbox_summary["selected_options"],
+        "custom_text": checkbox_summary["custom_text"],
+        "field_references": _behavior_field_references(module),
+        "validation_rules": checkbox_summary["validation_rules"],
+        "tags": [str(tag) for tag in module.get("tags", []) if isinstance(tag, str)],
+        "source_nodes": source_nodes,
+    }
+
+
+def _assemble_layer8_behavior_outputs(collection: Dict[str, Any]) -> Dict[str, Any]:
+    modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
+    behavior_modules: Dict[str, Any] = {}
+    for module_id, policy_key, preset_id in _LAYER8_BEHAVIOR_MODULES:
+        module = modules.get(module_id)
+        if isinstance(module, dict):
+            behavior_modules[policy_key] = _behavior_module_policy(module, policy_key, preset_id)
+
+    if not behavior_modules:
+        return {}
+
+    behavior_policy = {
+        "schema_version": "0.1",
+        "source_layer": "layer_8",
+        "modules": behavior_modules,
+    }
+    return {
+        "behavior_policy": behavior_policy,
+        "layer_8": {
+            "behavior_policy": behavior_policy,
+            "module_count": len(behavior_modules),
+            "core_module_ids": list(_LAYER8_CORE_BEHAVIOR_MODULE_IDS),
+            "excluded_modules": [module_id for module_id in _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS if module_id in modules],
+            "validation_result": "pass" if len(behavior_modules) == len(_LAYER8_BEHAVIOR_MODULES) else "partial",
+        },
+    }
+
+
+def _merge_layer8_behavior_into_payload(payload: Dict[str, Any]) -> None:
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+    layer_outputs = _as_dict(graph_snapshot.get("layer_outputs"))
+    behavior_policy = _as_dict(layer_outputs.get("behavior_policy")) or _as_dict(_as_dict(layer_outputs.get("layer_8")).get("behavior_policy"))
+    if not behavior_policy:
+        return
+    payload["behavior_policy"] = behavior_policy
+    resident_blueprint = _as_dict(payload.get("resident_blueprint"))
+    resident_blueprint["behavior_policy"] = behavior_policy
+    payload["resident_blueprint"] = resident_blueprint
 
 
 def _v3_identity_sync_from_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1949,6 +2115,8 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     )
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer3_safety_outputs(collection))
     _merge_layer3_safety_into_safety_policy(payload)
+    payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer8_behavior_outputs(collection))
+    _merge_layer8_behavior_into_payload(payload)
     identity_sync = _v3_identity_sync_from_profile(payload)
     if identity_sync.get("resident_id"):
         resident_id = identity_sync["resident_id"]
@@ -2027,6 +2195,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         },
         "voice_config": payload.get("voice_config"),
         "safety_policy": payload.get("safety_policy"),
+        "behavior_policy": payload.get("behavior_policy"),
         "screen_capability_declaration": payload.get("screen_capability_declaration"),
         "multi_resident_lattice_state": {
             "resident_ids": [resident_id],
@@ -2077,6 +2246,7 @@ def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] =
         "screen_capability_declaration": v03.get("screen_capability_declaration"),
         "voice_config": v03.get("voice_config"),
         "safety_policy": v03.get("safety_policy"),
+        "behavior_policy": v03.get("behavior_policy"),
         "filename": filename,
         "metadata": {
             "filename": filename,

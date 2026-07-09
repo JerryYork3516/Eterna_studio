@@ -19,18 +19,24 @@ from app.registry.module_catalog import (
     CONTENT_SAFETY_OUTPUT_KEY,
     DATA_SAFETY_MODULE_ID,
     DATA_SAFETY_OUTPUT_KEY,
+    DECISION_BEHAVIOR_MODULE_ID,
+    DETAIL_BEHAVIOR_MODULE_ID,
     AUDIT_LOG_POLICY_OUTPUT_KEY,
     HARD_BLOCK_POLICY_OUTPUT_KEY,
     HUMAN_REVIEW_POLICY_OUTPUT_KEY,
+    INTERACTION_BEHAVIOR_MODULE_ID,
     INTERACTION_SAFETY_MODULE_ID,
     INTERACTION_SAFETY_OUTPUT_KEY,
     LAYER2_CATALOG_ONLY_MODULE_IDS,
     LAYER2_PERSONALITY_FORMAL_MODULE_IDS,
     LAYER3_CATALOG_ONLY_MODULE_IDS,
     LAYER3_FORMAL_SAFETY_MODULE_IDS,
+    LANGUAGE_BEHAVIOR_MODULE_ID,
     RISK_POLICY_OUTPUT_KEY,
     RISK_RESPONSE_MODULE_ID,
     SAFE_REDIRECT_POLICY_OUTPUT_KEY,
+    SOCIAL_BEHAVIOR_MODULE_ID,
+    TASK_BEHAVIOR_MODULE_ID,
     get_module_catalog,
 )
 
@@ -114,6 +120,15 @@ LAYER3_SAFETY_POLICY_KEYS = {
         "compile_validation_status",
         "identity_context_ref",
     ),
+}
+
+LAYER8_BEHAVIOR_POLICY_KEYS = {
+    "language_behavior": LANGUAGE_BEHAVIOR_MODULE_ID,
+    "interaction_behavior": INTERACTION_BEHAVIOR_MODULE_ID,
+    "task_behavior": TASK_BEHAVIOR_MODULE_ID,
+    "social_behavior": SOCIAL_BEHAVIOR_MODULE_ID,
+    "decision_behavior": DECISION_BEHAVIOR_MODULE_ID,
+    "detail_behavior": DETAIL_BEHAVIOR_MODULE_ID,
 }
 
 
@@ -325,6 +340,50 @@ def test_layer3_safety_policies_assembled_into_layer3_and_top_safety_policy():
     assert dr["payload"]["safety_policy"]["no_secret_in_dr"] is True
     assert dr["payload"]["safety_policy"]["no_direct_provider_binding"] is True
     assert dr["payload"]["safety_policy"]["not_executable"] is True
+
+
+def test_layer8_behavior_policy_assembled_into_layer8_and_top_payload():
+    dr = compile_dr_v0_3(_canvas_13())
+    layer_outputs = dr["payload"]["graph_snapshot"]["layer_outputs"]
+    layer_8 = layer_outputs["layer_8"]
+    behavior_policy = dr["payload"]["behavior_policy"]
+
+    assert dr["behavior_policy"] == behavior_policy
+    assert dr["payload"]["resident_blueprint"]["behavior_policy"] == behavior_policy
+    assert layer_outputs["behavior_policy"] == behavior_policy
+    assert layer_8["behavior_policy"] == behavior_policy
+    assert layer_8["module_count"] == 6
+    assert layer_8["core_module_ids"] == list(LAYER8_BEHAVIOR_POLICY_KEYS.values())
+    assert "behavior_policy_slot" in layer_8["excluded_modules"]
+    assert layer_8["validation_result"] == "pass"
+
+    assert behavior_policy["schema_version"] == "0.1"
+    assert behavior_policy["source_layer"] == "layer_8"
+    assert set(behavior_policy["modules"]) == set(LAYER8_BEHAVIOR_POLICY_KEYS)
+    serialized_policy = json.dumps(behavior_policy, ensure_ascii=False)
+    for forbidden in ("林瑄", "linxuan", "resident_id", "codename", "display_alias"):
+        assert forbidden not in serialized_policy
+
+    for policy_key, module_id in LAYER8_BEHAVIOR_POLICY_KEYS.items():
+        module_policy = behavior_policy["modules"][policy_key]
+        assert module_policy["module_id"] == module_id
+        assert module_policy["source_module_id"] == module_id
+        assert module_policy["module_type"].endswith("_behavior_config")
+        assert module_policy["preset_id"]
+        assert module_policy["selected_options"]
+        assert isinstance(module_policy["custom_text"], str)
+        assert module_policy["field_references"]
+        assert module_policy["validation_rules"]
+        assert module_policy["tags"]
+        assert len(module_policy["source_nodes"]) == 5
+        for reference in module_policy["field_references"]:
+            assert reference["reference_type"] != "forbidden"
+            assert reference["layer_id"]
+            assert reference["module_id"]
+            assert reference["field_id"]
+            assert reference["path"] == "/".join((reference["layer_id"], reference["module_id"], reference["field_id"]))
+            assert "label" not in reference
+            assert "value" not in reference
 
 
 def test_layer3_formal_module_ids_exclude_catalog_only_legacy_modules():

@@ -11,18 +11,19 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .studio_assistant_deepseek_client import StudioAssistantDeepSeekClient, env_flag
+from .studio_assistant_config import load_studio_assistant_config
+from .studio_assistant_llm_client import StudioAssistantLLMClient
 
 AssistantMode = Literal["explain", "recommend", "audit", "check_conflicts"]
 
 SYSTEM_PROMPT = """你是 Eterna Studio 的字段填写与审核助手。
 你只辅助 Studio 配置，不参与 Runtime 执行。
-不要生成 Runtime、Provider、Slot、Engine 代码。
-不要建议把 API Key 写入前端、Canvas 或 DR。
-不要硬编码居民姓名到非 Layer 1。
-只输出结构化建议。
-任何修改必须用户确认。
-优先保持身份稳定、边界稳定、语言稳定、记忆稳定。
+你不能建议修改 Runtime、Provider、Slot、Engine。
+你不能建议把 API Key 写入前端、Canvas、DR 文件或 GitHub。
+你不能在非 Layer 1 硬编码居民姓名、resident_id、codename、昵称。
+你必须保持身份稳定、语言稳定、边界稳定、记忆稳定。
+你的输出必须是结构化 JSON。
+任何修改都必须等待用户确认。
 
 安全限制：
 - 不允许自动大面积重写 13 层。
@@ -53,6 +54,8 @@ class StudioAssistantPatch(BaseModel):
 
 class StudioAssistantResponse(BaseModel):
     ok: bool
+    provider: str = ""
+    model: str = ""
     mode: AssistantMode
     summary: str = ""
     suggestions: List[Any] = Field(default_factory=list)
@@ -63,7 +66,7 @@ class StudioAssistantResponse(BaseModel):
 
 
 def studio_assistant_enabled() -> bool:
-    return env_flag("STUDIO_ASSISTANT_ENABLED", default=True)
+    return load_studio_assistant_config().enabled
 
 
 def _action_instruction(mode: AssistantMode) -> str:
@@ -118,6 +121,11 @@ def _patch_value(raw_patch: Any, fallback_field: Optional[str]) -> Optional[Stud
     return StudioAssistantPatch(target_field=str(target), proposed_value=proposed)
 
 
+def _provider_model(diagnostics: Dict[str, Any]) -> tuple[str, str]:
+    config = load_studio_assistant_config()
+    return str(diagnostics.get("provider") or config.provider), str(diagnostics.get("model") or config.model)
+
+
 def _normalize_success(request: StudioAssistantRequest, content: Dict[str, Any], diagnostics: Dict[str, Any]) -> StudioAssistantResponse:
     content_diagnostics = content.get("diagnostics")
     merged_diagnostics = {
@@ -125,8 +133,11 @@ def _normalize_success(request: StudioAssistantRequest, content: Dict[str, Any],
         **(content_diagnostics if isinstance(content_diagnostics, dict) else {}),
         "status": "ok",
     }
+    provider, model = _provider_model(merged_diagnostics)
     return StudioAssistantResponse(
         ok=True,
+        provider=provider,
+        model=model,
         mode=request.mode,
         summary=str(content.get("summary") or ""),
         suggestions=_list_value(content.get("suggestions")),
@@ -138,8 +149,11 @@ def _normalize_success(request: StudioAssistantRequest, content: Dict[str, Any],
 
 
 def _structured_error(request: StudioAssistantRequest, code: str, message: str, diagnostics: Optional[Dict[str, Any]] = None) -> StudioAssistantResponse:
+    provider, model = _provider_model(diagnostics or {})
     return StudioAssistantResponse(
         ok=False,
+        provider=provider,
+        model=model,
         mode=request.mode,
         summary=message,
         suggestions=[],
@@ -153,25 +167,17 @@ def _structured_error(request: StudioAssistantRequest, code: str, message: str, 
 def run_studio_assistant(
     request: StudioAssistantRequest,
     *,
-    client: Optional[StudioAssistantDeepSeekClient] = None,
+    client: Optional[StudioAssistantLLMClient] = None,
 ) -> StudioAssistantResponse:
-    if not studio_assistant_enabled():
-        return _structured_error(
-            request,
-            "disabled",
-            "Studio Assistant is disabled by STUDIO_ASSISTANT_ENABLED=false",
-            {"enabled": False},
-        )
-
-    assistant_client = client or StudioAssistantDeepSeekClient()
+    assistant_client = client or StudioAssistantLLMClient()
     result = assistant_client.complete_json(system_prompt=SYSTEM_PROMPT, user_prompt=_request_prompt(request))
     diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
     if not result.get("ok"):
         error = result.get("error") if isinstance(result.get("error"), dict) else {}
         return _structured_error(
             request,
-            str(error.get("code") or "deepseek_error"),
-            str(error.get("message") or "DeepSeek request failed"),
+            str(error.get("code") or "assistant_llm_error"),
+            str(error.get("message") or "Assistant LLM request failed"),
             diagnostics,
         )
 
@@ -179,4 +185,3 @@ def run_studio_assistant(
     if not isinstance(content, dict):
         return _structured_error(request, "invalid_assistant_output", "Assistant output was not structured JSON", diagnostics)
     return _normalize_success(request, content, diagnostics)
-

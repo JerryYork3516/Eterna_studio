@@ -98,7 +98,7 @@ export function LayerContainerNode({ data, selected }: NodeProps) {
                 onOpenAssembly();
               }}
             >
-              {translate(language, "assembly.action.viewDetails")}
+              {translate(language, "assembly.action.detailsShort", translate(language, "assembly.action.viewDetails"))}
             </button>
           ) : null}
         </div>
