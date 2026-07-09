@@ -9,6 +9,7 @@ import { useCanvasStore, type ModuleGraph, type ModuleGraphsState } from "./canv
 import { loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphState } from "@/lib/canvas-persistence";
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
+import { translate } from "@/i18n";
 
 const MODULE_INSTANCE_SEPARATOR = "::";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
@@ -66,6 +67,13 @@ function stableJson(value: unknown) {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function zhText(key: string) {
+  if (!key) return "";
+  const marker = `__missing__${key}`;
+  const value = translate("zh", key, marker);
+  return value === marker ? "" : value;
 }
 
 function prettyValue(value: unknown) {
@@ -176,6 +184,81 @@ function legacyTextValue(data: Record<string, unknown>, params: Record<string, u
   return typeof candidate === "string" ? candidate : "";
 }
 
+function fieldI18nKey(field: Record<string, unknown>, keyName: "label" | "description" | "help" | "placeholder" | "field") {
+  const i18n = isRecord(field.i18n_keys) ? field.i18n_keys : {};
+  return stringValue(i18n[keyName]) || stringValue(field[`${keyName}_key`]);
+}
+
+function legacyFieldId(field: Record<string, unknown>) {
+  return stringValue(field.field_id) || stringValue(field.field_key) || stringValue(field.key) || stringValue(field.id);
+}
+
+function legacyFieldDisplayName(field: Record<string, unknown>, fallback: string) {
+  const fieldId = legacyFieldId(field);
+  return (
+    zhText(fieldI18nKey(field, "label")) ||
+    zhText(fieldI18nKey(field, "field")) ||
+    zhText(fieldId ? `field.identity.${fieldId}.label` : "") ||
+    stringValue(field.field_name) ||
+    stringValue(field.label) ||
+    stringValue(field.name) ||
+    fallback
+  );
+}
+
+function legacyFieldDescription(field: Record<string, unknown>) {
+  const fieldId = legacyFieldId(field);
+  return (
+    zhText(fieldI18nKey(field, "description")) ||
+    zhText(fieldI18nKey(field, "help")) ||
+    zhText(fieldId ? `field.identity.${fieldId}.help` : "") ||
+    stringValue(field.description) ||
+    stringValue(field.help)
+  );
+}
+
+function legacyFieldLookup(fields: Record<string, unknown>[]) {
+  const lookup = new Map<string, Record<string, unknown>>();
+  fields.forEach((field) => {
+    [
+      legacyFieldId(field),
+      stringValue(field.field_key),
+      stringValue(field.key),
+      stringValue(field.id),
+      stringValue(field.field_name),
+      stringValue(field.label),
+      stringValue(field.name),
+    ]
+      .filter(Boolean)
+      .forEach((key) => lookup.set(key, field));
+  });
+  return lookup;
+}
+
+function refineGenericFieldsFromLegacy(genericFields: Record<string, unknown>[], legacyFields: Record<string, unknown>[]) {
+  if (!legacyFields.length) {
+    return genericFields;
+  }
+  const lookup = legacyFieldLookup(legacyFields);
+  return genericFields.map((field, index) => {
+    const fieldKey = stringValue(field.field_key);
+    const legacyField =
+      lookup.get(fieldKey) ||
+      lookup.get(stringValue(field.field_name)) ||
+      legacyFields[index];
+    if (!legacyField) {
+      return field;
+    }
+    const fallbackName = stringValue(field.field_name) || fieldKey || `field_${index + 1}`;
+    const description = legacyFieldDescription(legacyField);
+    return {
+      ...field,
+      field_name: legacyFieldDisplayName(legacyField, fallbackName),
+      description: description || stringValue(field.description),
+    };
+  });
+}
+
 function genericFieldsFromLegacyNode(
   data: Record<string, unknown>,
   params: Record<string, unknown>,
@@ -186,8 +269,8 @@ function genericFieldsFromLegacyNode(
   const sourceFields = fieldsFromData(data);
   if (sourceFields.length) {
     return sourceFields.map((field, index) => {
-      const rawName = stringValue(field.field_name) || stringValue(field.label) || stringValue(field.name) || stringValue(field.field_id) || stringValue(field.key) || stringValue(field.id) || `field_${index + 1}`;
-      const existingKey = stringValue(field.field_key) || stringValue(field.field_id) || stringValue(field.key) || stringValue(field.id);
+      const existingKey = stringValue(field.field_key) || legacyFieldId(field);
+      const rawName = legacyFieldDisplayName(field, existingKey || `field_${index + 1}`);
       const fieldKey = existingKey ? uniqueGenericFieldKey(existingKey, usedKeys) : uniqueGenericFieldKey(rawName, usedKeys);
       const value = "value" in field ? field.value : field.field_value;
       return {
@@ -195,7 +278,7 @@ function genericFieldsFromLegacyNode(
         field_name: rawName || fieldKey,
         field_value: typeof value === "string" ? value : prettyValue(value),
         field_type: inferGenericFieldType(value),
-        description: stringValue(field.description) || stringValue(field.help),
+        description: legacyFieldDescription(field),
         dr_mapping: stringValue(field.dr_mapping) || genericFieldDrMapping(layerId, moduleId, fieldKey),
         reference_enabled: false,
         field_key_auto: !existingKey,
@@ -208,12 +291,13 @@ function genericFieldsFromLegacyNode(
     .filter(([key, value]) => !GENERIC_FIELD_RESERVED_PARAM_KEYS.has(key) && !isEmptyDisplayValue(value))
     .map(([key, value]) => {
       const fieldKey = uniqueGenericFieldKey(key, usedKeys);
+      const label = zhText(`field.identity.${key}.label`);
       return {
         field_key: fieldKey,
-        field_name: key,
+        field_name: label || key,
         field_value: typeof value === "string" ? value : prettyValue(value),
         field_type: inferGenericFieldType(value),
-        description: "",
+        description: zhText(`field.identity.${key}.help`),
         dr_mapping: genericFieldDrMapping(layerId, moduleId, fieldKey),
         reference_enabled: false,
         field_key_auto: false,
@@ -537,13 +621,19 @@ function migrateLayer1GenericFieldsGraph(
     }
     const params = isRecord(data.params) ? { ...data.params } : {};
     const alreadyGeneric = params.mode === "generic_fields" && Array.isArray(params.fields);
-    if (nodeType === "text_input" && alreadyGeneric) {
+    const legacyFields = fieldsFromData(data);
+    const genericFields = alreadyGeneric
+      ? refineGenericFieldsFromLegacy(cloneJson((params.fields as unknown[]).filter(isRecord)), legacyFields)
+      : genericFieldsFromLegacyNode(data, params, identity.layerId, identity.moduleId);
+    const needsLegacyDataBackup = Array.isArray(data.fields) && !Array.isArray(params.legacy_data_fields);
+    if (
+      nodeType === "text_input" &&
+      alreadyGeneric &&
+      stableJson(genericFields) === stableJson(params.fields) &&
+      !needsLegacyDataBackup
+    ) {
       return nextNode;
     }
-
-    const genericFields = alreadyGeneric
-      ? cloneJson((params.fields as unknown[]).filter(isRecord))
-      : genericFieldsFromLegacyNode(data, params, identity.layerId, identity.moduleId);
     if (nodeType === "field_input") {
       data.legacy_node_type = data.legacy_node_type || nodeType;
       data.node_type = "text_input";
@@ -556,7 +646,7 @@ function migrateLayer1GenericFieldsGraph(
     if (Array.isArray(params.fields) && !Array.isArray(params.legacy_fields)) {
       params.legacy_fields = cloneJson(params.fields);
     }
-    if (Array.isArray(data.fields) && !Array.isArray(params.legacy_data_fields)) {
+    if (needsLegacyDataBackup) {
       params.legacy_data_fields = cloneJson(data.fields);
     }
     params.fields = genericFields;
