@@ -105,18 +105,19 @@ function backendNodeCategory(type: NodeType): string {
   }
 }
 
-function referenceNodeDefaultParams(type: ModuleNodeType): Record<string, unknown> {
+function referenceNodeDefaultParams(type: ModuleNodeType, layerId?: string): Record<string, unknown> {
+  const isLayer1 = layerId === "layer_1";
   if (type === "reference_output") {
     return {
       export_name: "",
       export_description: "",
-      export_scope: "field",
+      export_scope: isLayer1 ? "module" : "field",
       export_scopes: ["module", "node", "field"],
       allow_module_level_reference: true,
       export_fields: [],
       allow_layers: [],
       forbidden_layers: [],
-      is_core_source: false,
+      is_core_source: isLayer1,
       override_allowed: false
     };
   }
@@ -630,6 +631,31 @@ function stableJson(value: unknown) {
   return JSON.stringify(value ?? null);
 }
 
+function drCompileValueHasValue(value: unknown) {
+  return !(value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) || (isRecord(value) && Object.keys(value).length === 0));
+}
+
+function sanitizeDrCompileValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeDrCompileValue);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key, item]) => {
+        const keyLower = key.toLowerCase();
+        return !drCompileValueHasValue(item) || !DR_COMPILE_FORBIDDEN_KEYS.has(keyLower) || DR_COMPILE_SECRET_REF_KEYS.has(keyLower);
+      })
+      .map(([key, item]) => [key, sanitizeDrCompileValue(item)])
+  );
+}
+
+function sanitizeWorkflowForDrCompile(workflow: Workflow): Workflow {
+  return sanitizeDrCompileValue(workflow) as Workflow;
+}
+
 function moduleGraphChangedFieldScore(
   graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined,
   module: ModuleCatalogEntryV04 | null | undefined
@@ -759,6 +785,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const IDENTITY_COMPILE_NODE_ORDER = ["field_input", "structure_normalize", "validation", "update_rule", "module_output"];
+const DR_COMPILE_FORBIDDEN_KEYS = new Set([
+  "api_key",
+  "token",
+  "access_token",
+  "refresh_token",
+  "base_url",
+  "credential",
+  "credentials",
+  "secret",
+  "client_secret",
+  "provider",
+  "provider_binding",
+]);
+const DR_COMPILE_SECRET_REF_KEYS = new Set(["key_ref", "secret_ref", "credential_ref", "api_key_ref"]);
 
 function cloneRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? safeClone(value) : {};
@@ -790,6 +830,27 @@ function moduleGraphOutputKey(module: ModuleCatalogEntryV04): string {
 
 function catalogNodeType(node: Record<string, unknown>) {
   return String(node.node_type || node.type || "transform");
+}
+
+function moduleRecordHasFieldInput(module: Record<string, unknown>) {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
+  return nodes.some((node) => catalogNodeType(node) === "field_input");
+}
+
+function withoutLegacyModuleOutputFallback(module: Record<string, unknown>) {
+  if (moduleRecordHasFieldInput(module)) {
+    return module;
+  }
+  const outputs = isRecord(module.outputs) ? { ...module.outputs } : {};
+  if (!outputs.module_output) {
+    return module;
+  }
+  delete outputs.module_output;
+  return {
+    ...module,
+    outputs,
+  };
 }
 
 function catalogNodeId(node: Record<string, unknown>, index: number) {
@@ -949,6 +1010,58 @@ function compileTimeFieldMatches(field: Record<string, unknown>, index: number, 
   return candidates.includes(key);
 }
 
+function genericFieldValueByKey(fields: Record<string, unknown>[]) {
+  const values = new Map<string, unknown>();
+  fields.forEach((field, index) => {
+    const key = String(field.field_key || field.field_id || field.key || field.id || `field_${index + 1}`);
+    if (!key) {
+      return;
+    }
+    values.set(key, "field_value" in field ? field.field_value : field.value);
+  });
+  return values;
+}
+
+function legacyFieldInputFieldsForCompile(data: Record<string, unknown>, params: Record<string, unknown>) {
+  const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+  const genericValues = genericFieldValueByKey(genericFields);
+  const legacyFields = Array.isArray(params.legacy_data_fields)
+    ? params.legacy_data_fields.filter(isRecord)
+    : Array.isArray(data.fields)
+      ? data.fields.filter(isRecord)
+      : [];
+
+  if (legacyFields.length) {
+    return safeClone(legacyFields).map((field, index) => {
+      const fieldId = String(field.field_id || field.field_key || field.key || field.id || `field_${index + 1}`);
+      if (!genericValues.has(fieldId)) {
+        return field;
+      }
+      return {
+        ...field,
+        value: genericValues.get(fieldId),
+      };
+    });
+  }
+
+  return genericFields.map((field, index) => {
+    const fieldId = String(field.field_key || field.field_id || field.key || field.id || `field_${index + 1}`);
+    return {
+      field_id: fieldId,
+      value: "field_value" in field ? field.field_value : field.value,
+      required: false,
+      edit_scope: "user_editable",
+      update_level: "versioned_core",
+      requires_recompile: true,
+      i18n_keys: {
+        label: `field.identity.${fieldId}.label`,
+        placeholder: `field.identity.${fieldId}.placeholder`,
+        help: `field.identity.${fieldId}.help`,
+      },
+    };
+  });
+}
+
 function updateFieldValue(fields: Record<string, unknown>[], index: number, value: unknown) {
   return fields.map((field, fieldIndex) => (fieldIndex === index ? { ...field, value } : field));
 }
@@ -957,12 +1070,18 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   const data = isRecord(schemaNode.data) ? schemaNode.data : {};
   const nodeType = String(data.node_type || schemaNode.type);
   const params = cloneRecord(data.params);
-  if (nodeType === "field_input" || nodeType === "text_config") {
+  const compileNodeType =
+    module.layer_id === "layer_1" && nodeType === "text_input" && data.legacy_node_type === "field_input"
+      ? "field_input"
+      : nodeType;
+  if (compileNodeType === "field_input" && nodeType === "text_input") {
+    params.fields = legacyFieldInputFieldsForCompile(data, params);
+  } else if (compileNodeType === "field_input" || compileNodeType === "text_config") {
     params.fields = fieldInputFields(schemaNode);
   }
   return {
     node_id: String(data.catalog_node_id || schemaNode.node_id),
-    node_type: nodeType,
+    node_type: compileNodeType,
     module_id: module.module_id,
     layer_id: module.layer_id,
     params,
@@ -1007,6 +1126,7 @@ function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unkn
   const fieldParams = isRecord(fieldInput?.params) ? fieldInput.params : {};
   const fields = Array.isArray(fieldParams.fields) ? fieldParams.fields.filter(isRecord) : [];
   const fieldValues = Object.fromEntries(fields.map((field) => [String(field.field_id || ""), field.value]).filter(([key]) => key));
+  const hasFieldInput = Boolean(fieldInput);
   let outputValue: Record<string, unknown> | null = null;
   for (const node of compiledNodes) {
     if (node.node_type !== "module_output" || !outputKey) {
@@ -1029,9 +1149,13 @@ function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unkn
   const outputs = cloneRecord(module.outputs);
   if (outputKey && outputValue) {
     outputs[outputKey] = outputValue;
-    outputs.module_output = outputKey;
+    if (hasFieldInput) {
+      outputs.module_output = outputKey;
+    } else {
+      delete outputs.module_output;
+    }
   }
-  return {
+  return withoutLegacyModuleOutputFallback({
     ...safeClone(module),
     outputs,
     module_graph: {
@@ -1039,7 +1163,7 @@ function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unkn
       nodes: compiledNodes,
       edges: compileEdgesFromModuleGraph(graphNodes, graphEdges),
     },
-  };
+  });
 }
 
 function extractResidentInstance(value: unknown): ResidentInstance | null {
@@ -3321,8 +3445,9 @@ export function CanvasShell() {
       }
       const modules: Workflow["modules"] = moduleCatalog.modules.map((module) => {
         const compiled = overrides.get(module.module_id);
+        const baseModule = compiled ?? withoutLegacyModuleOutputFallback(safeClone(module) as Record<string, unknown>);
         return {
-          ...(compiled ?? safeClone(module)),
+          ...baseModule,
           module_id: module.module_id,
           module_name: module.module_name,
           layer_id: module.layer_id,
@@ -3409,7 +3534,7 @@ export function CanvasShell() {
     }
     setBottomTab("logs");
     setActiveDrawer("logs");
-    await compileDR(currentWorkflow);
+    await compileDR(sanitizeWorkflowForDrCompile(currentWorkflow));
   }, [compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
 
   // Stage 6.3.3 step 2 — Export .digital_resident: download the already-validated
@@ -6502,7 +6627,7 @@ function ModuleCanvasPanel({
     const seq = addedRef.current;
     const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
     const definition = getNodeDefinition(type);
-    const referenceParams = referenceNodeDefaultParams(type);
+    const referenceParams = referenceNodeDefaultParams(type, layerIdFromInstanceId(moduleNode.node_id));
     const referenceColor = referenceNodeDefaultColor(type);
     const schemaNode = ensurePorts({
       node_id: id,

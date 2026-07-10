@@ -542,13 +542,18 @@ const GENERIC_FIELD_NAME_KEY_MAP: Record<string, string> = {
   "主语言": "primary_language",
   "居民类型": "resident_type",
   "性别感": "gender_presentation",
+  "身份锚点": "identity_anchor",
+  "事实源规则": "source_of_truth_rule",
+  "身份稳定规则": "identity_stability_rule",
   "成长背景": "growth_background",
   "家庭背景": "family_background",
   "教育背景": "education_background",
   "生活经历": "life_experience",
   "关键人生事件": "key_life_events",
+  "文化背景": "cultural_background",
   "职业身份": "career_identity",
   "职业": "occupation",
+  "专业领域": "professional_domain",
   "服务对象": "service_target",
   "职业边界": "professional_boundary",
   "存在模式": "existence_mode",
@@ -556,6 +561,35 @@ const GENERIC_FIELD_NAME_KEY_MAP: Record<string, string> = {
   "不可见形态": "invisible_form",
   "运行形态": "runtime_form",
   "设备形态": "device_form",
+  "归属边界": "ownership_boundary",
+};
+const GENERIC_FIELD_KEY_NAME_MAP: Record<string, string> = {
+  resident_name: "姓名",
+  age_profile: "年龄设定",
+  primary_language: "主语言",
+  resident_type: "居民类型",
+  gender_presentation: "性别感",
+  identity_anchor: "身份锚点",
+  city_anchor: "城市锚点",
+  source_of_truth_rule: "事实源规则",
+  identity_stability_rule: "身份稳定规则",
+  growth_background: "成长背景",
+  family_background: "家庭背景",
+  education_background: "教育背景",
+  life_experience: "生活经历",
+  key_life_events: "关键人生事件",
+  cultural_background: "文化背景",
+  career_identity: "职业身份",
+  occupation: "职业",
+  professional_domain: "专业领域",
+  service_target: "服务对象",
+  professional_boundary: "职业边界",
+  existence_mode: "存在模式",
+  visible_form: "可视形态",
+  invisible_form: "不可见形态",
+  runtime_form: "运行形态",
+  device_form: "设备形态",
+  ownership_boundary: "归属边界",
 };
 
 function safeGenericFieldKey(value: string) {
@@ -592,22 +626,52 @@ function genericFieldDrMapping(layerId: string, moduleId: string, fieldKey: stri
   return layerId && moduleId && fieldKey ? `payload.layers.${layerId}.modules.${moduleId}.fields.${fieldKey}` : "";
 }
 
+function fieldTextValue(field: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (key in field) {
+      return typeof field[key] === "string" ? field[key] as string : prettyValue(field[key]);
+    }
+  }
+  return "";
+}
+
+function normalizeGenericField(field: Record<string, unknown>, index: number): GenericField {
+  const fieldKeySource =
+    stringValue(field.field_key) ||
+    stringValue(field.field_id) ||
+    stringValue(field.key) ||
+    stringValue(field.id);
+  const fallbackName = stringValue(field.name) || stringValue(field.title) || stringValue(field.label);
+  const generatedKey = fieldKeySource || (fallbackName ? safeGenericFieldKey(fallbackName) : `field_${index + 1}`);
+  const fieldKey = generatedKey || `field_${index + 1}`;
+  const fieldName =
+    stringValue(field.field_name) ||
+    GENERIC_FIELD_KEY_NAME_MAP[fieldKey] ||
+    fallbackName ||
+    fieldKey;
+  return {
+    field_key: fieldKey,
+    field_name: fieldName,
+    field_value: fieldTextValue(field, ["field_value", "value", "text", "content"]),
+    field_type: GENERIC_FIELD_TYPES.includes(field.field_type as GenericFieldType) ? (field.field_type as GenericFieldType) : "long_text",
+    description: stringValue(field.description),
+    dr_mapping: stringValue(field.dr_mapping),
+    reference_enabled: field.reference_enabled === true,
+    field_key_auto: field.field_key_auto === true,
+    dr_mapping_auto: field.dr_mapping_auto === true,
+  };
+}
+
 function genericFieldsFromParams(value: unknown): GenericField[] {
   return Array.isArray(value)
     ? value
         .filter(isRecord)
-        .map((field, index) => ({
-          field_key: stringValue(field.field_key) || `field_${index + 1}`,
-          field_name: stringValue(field.field_name) || stringValue(field.field_key) || `field_${index + 1}`,
-          field_value: typeof field.field_value === "string" ? field.field_value : prettyValue(field.field_value),
-          field_type: GENERIC_FIELD_TYPES.includes(field.field_type as GenericFieldType) ? (field.field_type as GenericFieldType) : "long_text",
-          description: stringValue(field.description),
-          dr_mapping: stringValue(field.dr_mapping),
-          reference_enabled: field.reference_enabled !== false,
-          field_key_auto: field.field_key_auto === true,
-          dr_mapping_auto: field.dr_mapping_auto === true,
-        }))
+        .map((field, index) => normalizeGenericField(field, index))
     : [];
+}
+
+function standardGenericFields(fields: GenericField[]) {
+  return fields.map((field, index) => normalizeGenericField(field as unknown as Record<string, unknown>, index));
 }
 
 function textInputLegacyText(data: Record<string, unknown>, params: Record<string, unknown>) {
@@ -1133,13 +1197,22 @@ function GenericTextInputRenderer({
     }
   };
   const commitFields = (nextFields: GenericField[]) => {
+    const standardFields = standardGenericFields(nextFields);
     commitParams({
       ...params,
       mode: "generic_fields",
       text: stringValue(params.text) || legacyText,
-      fields: nextFields,
+      fields: standardFields,
     });
   };
+  const rawFieldsSnapshot = JSON.stringify(params.fields ?? []);
+  const normalizedFieldsSnapshot = JSON.stringify(genericFields);
+  useEffect(() => {
+    if (!onInput || mode !== "generic_fields" || layerId !== "layer_1" || rawFieldsSnapshot === normalizedFieldsSnapshot) {
+      return;
+    }
+    commitFields(genericFields);
+  }, [genericFields, layerId, mode, normalizedFieldsSnapshot, onInput, rawFieldsSnapshot]);
   const convertToFields = () => {
     const sourceFields = genericFields.length ? genericFields : genericFieldsFromLegacy(data, params);
     const nextFields = sourceFields.map((field, index) => {
@@ -1649,6 +1722,19 @@ function referenceFieldLabel(field: ReferenceExportField) {
   return field.display_name || field.field_path || field.field_key;
 }
 
+function referenceFieldDisplayName(field: ReferenceExportField, language: Language) {
+  const key = field.field_key || field.field_path;
+  return field.display_name || translateIfPresent(language, `field.identity.${key}.label`) || GENERIC_FIELD_KEY_NAME_MAP[key] || field.field_path || field.field_key;
+}
+
+function referenceLayerDisplayName(layerId: string, language: Language) {
+  return translateIfPresent(language, `layer.${layerId}`) || layerId;
+}
+
+function referenceModuleDisplayName(moduleId: string, language: Language) {
+  return translateIfPresent(language, `module.${moduleId}`) || moduleId;
+}
+
 function schemaNodeFromGraphNode(value: unknown): WorkflowNode | null {
   const record = isRecord(value) ? value : {};
   const data = isRecord(record.data) ? record.data : {};
@@ -1674,13 +1760,14 @@ function referenceOutputSourcesFromNodes(
     .map((node) => {
       const data = workflowNodeData(node);
       const params = paramsFromNodeData(data);
+      const label = translateIfPresent(useCanvasStore.getState().language, node.title_key) || node.title_fallback || node.node_id;
       return {
         layerId,
         moduleId,
         moduleInstanceId,
         nodeId: node.node_id,
-        label: translateIfPresent(useCanvasStore.getState().language, node.title_key) || node.title_fallback || node.node_id,
-        exportName: stringValue(params.export_name) || stringValue(data.export_name) || node.title_fallback || node.node_id,
+        label,
+        exportName: stringValue(params.export_name) || stringValue(data.export_name) || label,
         exportScope: referenceScope(params.export_scope ?? data.export_scope),
         exportScopes: referenceScopes(params.export_scopes ?? data.export_scopes),
         allowModuleLevelReference: Boolean(params.allow_module_level_reference ?? data.allow_module_level_reference ?? referenceScopes(params.export_scopes ?? data.export_scopes).includes("module")),
@@ -1728,16 +1815,16 @@ function ReferenceOutputRenderer({
   const moduleNames = useCanvasStore((state) => state.moduleNames);
   const currentModuleInstanceId = stringValue(data.parent_module);
   const currentModule = moduleInstanceRegistry[currentModuleInstanceId];
+  const currentModuleId = currentModule?.moduleId || moduleInstanceParts(currentModuleInstanceId).moduleId;
   const currentModuleName =
     moduleNames[currentModuleInstanceId] ||
-    moduleNames[currentModule?.moduleId ?? ""] ||
-    currentModule?.moduleId ||
-    moduleInstanceParts(currentModuleInstanceId).moduleId ||
+    moduleNames[currentModuleId] ||
+    referenceModuleDisplayName(currentModuleId, language) ||
     currentModuleInstanceId ||
     i18nText(language, "common.unknown");
   const activeScopes = referenceScopes(params.export_scopes);
   const autoExportName = stringValue(params.export_name) || currentModuleName;
-  const fieldSummary = fields.map(referenceFieldLabel).filter(Boolean).join(", ");
+  const fieldSummary = fields.map((field) => referenceFieldDisplayName(field, language)).filter(Boolean).join(", ");
   const autoExportDescription =
     stringValue(params.export_description) ||
     (fieldSummary
@@ -1920,6 +2007,7 @@ function ReferenceInputRenderer({
   const currentNodes = useModuleWorkflowNodes();
   const currentModuleInstanceId = stringValue(data.parent_module);
   const currentLayerId = moduleInstanceRegistry[currentModuleInstanceId]?.layerId || moduleInstanceParts(currentModuleInstanceId).layerId;
+  const isLayer1ReferenceInput = currentLayerId === "layer_1";
   const sources = useMemo(
     () => referenceOutputSources(moduleGraphs, moduleInstanceRegistry, currentModuleInstanceId, currentNodes),
     [currentModuleInstanceId, currentNodes, moduleGraphs, moduleInstanceRegistry]
@@ -1956,7 +2044,7 @@ function ReferenceInputRenderer({
         source_field_paths: [],
         reference_type: "references",
         usage_reason: "",
-        required: false,
+        required: isLayer1ReferenceInput,
       },
     ]);
   };
@@ -2047,7 +2135,7 @@ function ReferenceInputRenderer({
                   <option value="">{i18nText(language, "common.notGenerated")}</option>
                   {layerOptions.map((layerId) => (
                     <option key={layerId} value={layerId}>
-                      {layerId}
+                      {referenceLayerDisplayName(layerId, language)}
                     </option>
                   ))}
                 </select>
@@ -2072,7 +2160,7 @@ function ReferenceInputRenderer({
                   <option value="">{i18nText(language, "common.notGenerated")}</option>
                   {moduleChoices.map((source) => (
                     <option key={`${source.layerId}:${source.moduleId}`} value={source.moduleId}>
-                      {source.moduleId}
+                      {referenceModuleDisplayName(source.moduleId, language)}
                     </option>
                   ))}
                 </select>
@@ -2137,7 +2225,7 @@ function ReferenceInputRenderer({
                     const value = field.field_path || field.field_key;
                     return (
                       <option key={value} value={value}>
-                        {field.display_name || value}
+                        {referenceFieldDisplayName(field, language)}
                       </option>
                     );
                   })}
@@ -3138,8 +3226,10 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
               <dt>{i18nText(language, "reference.referenceType")}</dt>
               <dd>
                 {Array.isArray(compileTimeParams.references)
-                  ? [...new Set(compileTimeParams.references.filter(isRecord).map((reference) => stringValue(reference.reference_type) || "references"))].join(", ")
-                  : "references"}
+                  ? [...new Set(compileTimeParams.references.filter(isRecord).map((reference) => stringValue(reference.reference_type) || "references"))]
+                      .map((type) => i18nText(language, `reference.type.${type}`))
+                      .join(", ")
+                  : i18nText(language, "reference.type.references")}
               </dd>
             </div>
           </dl>

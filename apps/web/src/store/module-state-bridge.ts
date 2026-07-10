@@ -37,13 +37,18 @@ const GENERIC_FIELD_NAME_KEY_MAP: Record<string, string> = {
   "主语言": "primary_language",
   "居民类型": "resident_type",
   "性别感": "gender_presentation",
+  "身份锚点": "identity_anchor",
+  "事实源规则": "source_of_truth_rule",
+  "身份稳定规则": "identity_stability_rule",
   "成长背景": "growth_background",
   "家庭背景": "family_background",
   "教育背景": "education_background",
   "生活经历": "life_experience",
   "关键人生事件": "key_life_events",
+  "文化背景": "cultural_background",
   "职业身份": "career_identity",
   "职业": "occupation",
+  "专业领域": "professional_domain",
   "服务对象": "service_target",
   "职业边界": "professional_boundary",
   "存在模式": "existence_mode",
@@ -51,6 +56,35 @@ const GENERIC_FIELD_NAME_KEY_MAP: Record<string, string> = {
   "不可见形态": "invisible_form",
   "运行形态": "runtime_form",
   "设备形态": "device_form",
+  "归属边界": "ownership_boundary",
+};
+const GENERIC_FIELD_KEY_NAME_MAP: Record<string, string> = {
+  resident_name: "姓名",
+  age_profile: "年龄设定",
+  primary_language: "主语言",
+  resident_type: "居民类型",
+  gender_presentation: "性别感",
+  identity_anchor: "身份锚点",
+  city_anchor: "城市锚点",
+  source_of_truth_rule: "事实源规则",
+  identity_stability_rule: "身份稳定规则",
+  growth_background: "成长背景",
+  family_background: "家庭背景",
+  education_background: "教育背景",
+  life_experience: "生活经历",
+  key_life_events: "关键人生事件",
+  cultural_background: "文化背景",
+  career_identity: "职业身份",
+  occupation: "职业",
+  professional_domain: "专业领域",
+  service_target: "服务对象",
+  professional_boundary: "职业边界",
+  existence_mode: "存在模式",
+  visible_form: "可视形态",
+  invisible_form: "不可见形态",
+  runtime_form: "运行形态",
+  device_form: "设备形态",
+  ownership_boundary: "归属边界",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -235,27 +269,54 @@ function legacyFieldLookup(fields: Record<string, unknown>[]) {
   return lookup;
 }
 
-function refineGenericFieldsFromLegacy(genericFields: Record<string, unknown>[], legacyFields: Record<string, unknown>[]) {
-  if (!legacyFields.length) {
-    return genericFields;
+function fieldTextValue(field: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (key in field) {
+      return typeof field[key] === "string" ? field[key] as string : prettyValue(field[key]);
+    }
   }
+  return "";
+}
+
+function normalizeGenericField(
+  field: Record<string, unknown>,
+  index: number,
+  legacyField?: Record<string, unknown>
+) {
+  const fieldKeySource =
+    stringValue(field.field_key) ||
+    stringValue(field.field_id) ||
+    stringValue(field.key) ||
+    stringValue(field.id) ||
+    (legacyField ? legacyFieldId(legacyField) : "");
+  const fallbackName = stringValue(field.name) || stringValue(field.title) || stringValue(field.label);
+  const fieldKey = fieldKeySource || (fallbackName ? safeGenericFieldKey(fallbackName) : `field_${index + 1}`);
+  const existingName = stringValue(field.field_name);
+  const legacyName = legacyField ? legacyFieldDisplayName(legacyField, fieldKey) : "";
+  const shouldUseMappedName = !existingName || existingName === fieldKey || existingName === stringValue(field.field_id);
+  const description = stringValue(field.description) || (legacyField ? legacyFieldDescription(legacyField) : "");
+  return {
+    field_key: fieldKey,
+    field_name: shouldUseMappedName ? legacyName || GENERIC_FIELD_KEY_NAME_MAP[fieldKey] || fallbackName || fieldKey : existingName,
+    field_value: fieldTextValue(field, ["field_value", "value", "text", "content"]),
+    field_type: ["text", "long_text", "number", "boolean", "list", "object", "unknown"].includes(String(field.field_type)) ? field.field_type : "long_text",
+    description,
+    dr_mapping: stringValue(field.dr_mapping),
+    reference_enabled: field.reference_enabled === true,
+    field_key_auto: field.field_key_auto === true,
+    dr_mapping_auto: field.dr_mapping_auto === true,
+  };
+}
+
+function refineGenericFieldsFromLegacy(genericFields: Record<string, unknown>[], legacyFields: Record<string, unknown>[]) {
   const lookup = legacyFieldLookup(legacyFields);
   return genericFields.map((field, index) => {
-    const fieldKey = stringValue(field.field_key);
+    const fieldKey = stringValue(field.field_key) || stringValue(field.field_id);
     const legacyField =
       lookup.get(fieldKey) ||
       lookup.get(stringValue(field.field_name)) ||
       legacyFields[index];
-    if (!legacyField) {
-      return field;
-    }
-    const fallbackName = stringValue(field.field_name) || fieldKey || `field_${index + 1}`;
-    const description = legacyFieldDescription(legacyField);
-    return {
-      ...field,
-      field_name: legacyFieldDisplayName(legacyField, fallbackName),
-      description: description || stringValue(field.description),
-    };
+    return normalizeGenericField(field, index, legacyField);
   });
 }
 
