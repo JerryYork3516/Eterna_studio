@@ -20,7 +20,14 @@ const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "event_memory",
   "memory_update",
 ]);
-const LAYER1_GENERIC_FIELD_MIGRATION_NODE_TYPES = new Set(["field_input", "text_input"]);
+const GENERIC_FIELD_MIGRATION_NODE_TYPES = new Set(["field_input", "text_input"]);
+const LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS = new Set([
+  "humanistic_content_safety_config_v0_1",
+  "humanistic_behavior_boundary_config_v0_1",
+  "humanistic_data_boundary_config_v0_1",
+  "humanistic_interaction_boundary_config_v0_1",
+  "humanistic_risk_response_config_v0_1",
+]);
 const GENERIC_FIELD_RESERVED_PARAM_KEYS = new Set([
   "mode",
   "text",
@@ -269,10 +276,10 @@ function legacyFieldLookup(fields: Record<string, unknown>[]) {
   return lookup;
 }
 
-function fieldTextValue(field: Record<string, unknown>, keys: string[]) {
+function fieldValue(field: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     if (key in field) {
-      return typeof field[key] === "string" ? field[key] as string : prettyValue(field[key]);
+      return field[key];
     }
   }
   return "";
@@ -298,7 +305,7 @@ function normalizeGenericField(
   return {
     field_key: fieldKey,
     field_name: shouldUseMappedName ? legacyName || GENERIC_FIELD_KEY_NAME_MAP[fieldKey] || fallbackName || fieldKey : existingName,
-    field_value: fieldTextValue(field, ["field_value", "value", "text", "content"]),
+    field_value: fieldValue(field, ["field_value", "value", "text", "content"]),
     field_type: ["text", "long_text", "number", "boolean", "list", "object", "unknown"].includes(String(field.field_type)) ? field.field_type : "long_text",
     description,
     dr_mapping: stringValue(field.dr_mapping),
@@ -337,7 +344,7 @@ function genericFieldsFromLegacyNode(
       return {
         field_key: fieldKey,
         field_name: rawName || fieldKey,
-        field_value: typeof value === "string" ? value : prettyValue(value),
+        field_value: value,
         field_type: inferGenericFieldType(value),
         description: legacyFieldDescription(field),
         dr_mapping: stringValue(field.dr_mapping) || genericFieldDrMapping(layerId, moduleId, fieldKey),
@@ -356,7 +363,7 @@ function genericFieldsFromLegacyNode(
       return {
         field_key: fieldKey,
         field_name: label || key,
-        field_value: typeof value === "string" ? value : prettyValue(value),
+        field_value: value,
         field_type: inferGenericFieldType(value),
         description: zhText(`field.identity.${key}.help`),
         dr_mapping: genericFieldDrMapping(layerId, moduleId, fieldKey),
@@ -659,12 +666,34 @@ function layerModuleIdentity(moduleNodeId: string, registry: Record<string, Modu
   return { instanceId: moduleNodeId, layerId, moduleId };
 }
 
-function migrateLayer1GenericFieldsGraph(
+function shouldMigrateGenericFieldsGraph(identity: ModuleInstance) {
+  if (identity.layerId === "layer_1") {
+    return true;
+  }
+  return identity.layerId === "layer_3" && LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS.has(identity.moduleId);
+}
+
+function shouldMigrateGenericFieldNode(
+  identity: ModuleInstance,
+  nodeType: string,
+  data: Record<string, unknown>,
+  params: Record<string, unknown>
+) {
+  if (GENERIC_FIELD_MIGRATION_NODE_TYPES.has(nodeType)) {
+    return true;
+  }
+  if (identity.layerId !== "layer_3" || identity.moduleId !== "humanistic_risk_response_config_v0_1") {
+    return false;
+  }
+  return nodeType !== "module_output" && (Array.isArray(params.fields) || Array.isArray(data.fields));
+}
+
+function migrateGenericFieldsGraph(
   graph: ModuleGraph,
   registry: Record<string, ModuleInstance>
 ): ModuleGraph | null {
   const identity = layerModuleIdentity(graph.moduleNodeId, registry);
-  if (identity.layerId !== "layer_1") {
+  if (!shouldMigrateGenericFieldsGraph(identity)) {
     return null;
   }
 
@@ -677,10 +706,10 @@ function migrateLayer1GenericFieldsGraph(
     }
     const data = schemaDataRecord(schemaNode);
     const nodeType = String(data.node_type || schemaNode.type || "");
-    if (!LAYER1_GENERIC_FIELD_MIGRATION_NODE_TYPES.has(nodeType)) {
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (!shouldMigrateGenericFieldNode(identity, nodeType, data, params)) {
       return nextNode;
     }
-    const params = isRecord(data.params) ? { ...data.params } : {};
     const alreadyGeneric = params.mode === "generic_fields" && Array.isArray(params.fields);
     const legacyFields = fieldsFromData(data);
     const genericFields = alreadyGeneric
@@ -695,7 +724,7 @@ function migrateLayer1GenericFieldsGraph(
     ) {
       return nextNode;
     }
-    if (nodeType === "field_input") {
+    if (nodeType !== "text_input") {
       data.legacy_node_type = data.legacy_node_type || nodeType;
       data.node_type = "text_input";
       schemaNode.type = "text_input";
@@ -719,24 +748,24 @@ function migrateLayer1GenericFieldsGraph(
   return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
-function applyLayer1GenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
+function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
   const store = useCanvasStore.getState();
-  const migratedGraph = migrateLayer1GenericFieldsGraph(graph, store.moduleInstanceRegistry);
+  const migratedGraph = migrateGenericFieldsGraph(graph, store.moduleInstanceRegistry);
   if (!migratedGraph) {
     return graph;
   }
   store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
   saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
-  console.log("[P1-BRIDGE] migrated Layer 1 field/text input nodes to generic_fields", {
+  console.log("[P1-BRIDGE] migrated field/text input nodes to generic_fields", {
     moduleNodeId: migratedGraph.moduleNodeId,
   });
   return migratedGraph;
 }
 
-function migrateExistingLayer1GenericFieldsGraphs() {
+function migrateExistingGenericFieldsGraphs() {
   const store = useCanvasStore.getState();
   for (const graph of Object.values(store.moduleGraphs)) {
-    applyLayer1GenericFieldsMigration(graph);
+    applyGenericFieldsMigration(graph);
   }
 }
 
@@ -797,7 +826,7 @@ export function initializeModuleState() {
   store.setModuleUiColors(moduleState.moduleUiColors);
   store.setLayerModules(moduleState.layerModules);
   store.setModuleInstanceRegistry(moduleState.moduleInstanceRegistry);
-  migrateExistingLayer1GenericFieldsGraphs();
+  migrateExistingGenericFieldsGraphs();
   
   console.log("[P1-BRIDGE] initializeModuleState: hydration completed", {
     tabCount: moduleState.moduleTabs.length,
@@ -832,7 +861,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
       saveModuleGraphState(moduleNodeId, graph.nodes, graph.edges);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced stale catalog graph with current seed");
-      return applyLayer1GenericFieldsMigration(graph);
+      return applyGenericFieldsMigration(graph);
     }
     const hasExistingGraph = Boolean(existingGraph.nodes?.length || existingGraph.edges?.length);
     if (!hasExistingGraph && hasInitialGraph) {
@@ -844,16 +873,16 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       };
       store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced empty graph with catalog seed");
-      return applyLayer1GenericFieldsMigration(graph);
+      return applyGenericFieldsMigration(graph);
     }
     const mergedGraph = mergeCatalogSeed(existingGraph, initialNodes, initialEdges);
     if (mergedGraph) {
       store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
-      return applyLayer1GenericFieldsMigration(mergedGraph);
+      return applyGenericFieldsMigration(mergedGraph);
     }
     console.log("[P1-BRIDGE] ensureModuleGraphExists: graph already in store");
-    return applyLayer1GenericFieldsMigration(existingGraph);
+    return applyGenericFieldsMigration(existingGraph);
   }
   
   // 2. 尝试从 localStorage 恢复（旧的单个 graph 存储）
@@ -874,14 +903,14 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       store.updateModuleGraph(moduleNodeId, seedGraph.nodes, seedGraph.edges, seedGraph.viewport);
       saveModuleGraphState(moduleNodeId, seedGraph.nodes, seedGraph.edges);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced stale legacy graph with current catalog seed");
-      return applyLayer1GenericFieldsMigration(seedGraph);
+      return applyGenericFieldsMigration(seedGraph);
     }
     const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");
     }
-    return applyLayer1GenericFieldsMigration(mergedGraph);
+    return applyGenericFieldsMigration(mergedGraph);
   }
   
   // 3. 创建新的空 graph
@@ -893,7 +922,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
   store.updateModuleGraph(moduleNodeId, newGraph.nodes, newGraph.edges);
   console.log(hasInitialGraph ? "[P1-BRIDGE] ensureModuleGraphExists: created graph from catalog seed" : "[P1-BRIDGE] ensureModuleGraphExists: created new empty graph");
   
-  return applyLayer1GenericFieldsMigration(newGraph);
+  return applyGenericFieldsMigration(newGraph);
 }
 
 /**

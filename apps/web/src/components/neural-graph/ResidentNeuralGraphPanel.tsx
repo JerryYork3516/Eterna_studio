@@ -37,7 +37,7 @@ export function ResidentNeuralGraphPanel({
     modules: true,
     moduleLabels: false,
     nodes: true,
-    edges: false,
+    edges: true,
   });
   const graph = useMemo(
     () => buildResidentNeuralGraph({ moduleCatalog, moduleGraphs, layerModules, moduleInstanceRegistry, uiColors, moduleUiColors, t }),

@@ -626,10 +626,10 @@ function genericFieldDrMapping(layerId: string, moduleId: string, fieldKey: stri
   return layerId && moduleId && fieldKey ? `payload.layers.${layerId}.modules.${moduleId}.fields.${fieldKey}` : "";
 }
 
-function fieldTextValue(field: Record<string, unknown>, keys: string[]) {
+function fieldValue(field: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     if (key in field) {
-      return typeof field[key] === "string" ? field[key] as string : prettyValue(field[key]);
+      return field[key];
     }
   }
   return "";
@@ -652,7 +652,7 @@ function normalizeGenericField(field: Record<string, unknown>, index: number): G
   return {
     field_key: fieldKey,
     field_name: fieldName,
-    field_value: fieldTextValue(field, ["field_value", "value", "text", "content"]),
+    field_value: fieldValue(field, ["field_value", "value", "text", "content"]),
     field_type: GENERIC_FIELD_TYPES.includes(field.field_type as GenericFieldType) ? (field.field_type as GenericFieldType) : "long_text",
     description: stringValue(field.description),
     dr_mapping: stringValue(field.dr_mapping),
@@ -695,7 +695,7 @@ function genericFieldsFromLegacy(data: Record<string, unknown>, params: Record<s
     .map(([key, value]) => ({
       field_key: key,
       field_name: key,
-      field_value: typeof value === "string" ? value : prettyValue(value),
+      field_value: value,
       field_type: inferGenericFieldType(value),
       description: "",
       dr_mapping: "",
@@ -767,6 +767,49 @@ function genericFieldWarnings(fields: GenericField[], field: GenericField, langu
     warnings.push(i18nText(language, "genericFields.validation.duplicateKey"));
   }
   return warnings;
+}
+
+function genericFieldValueText(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function genericFieldListText(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => (typeof item === "string" ? item : genericFieldValueText(item))).join("\n");
+  }
+  return genericFieldValueText(value);
+}
+
+function genericFieldListValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Fall back to newline list editing.
+  }
+  return value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function genericFieldObjectValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isRecord(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
 }
 
 function compileTimeFieldKey(field: Record<string, unknown>, index: number) {
@@ -1208,7 +1251,7 @@ function GenericTextInputRenderer({
   const rawFieldsSnapshot = JSON.stringify(params.fields ?? []);
   const normalizedFieldsSnapshot = JSON.stringify(genericFields);
   useEffect(() => {
-    if (!onInput || mode !== "generic_fields" || layerId !== "layer_1" || rawFieldsSnapshot === normalizedFieldsSnapshot) {
+    if (!onInput || mode !== "generic_fields" || !["layer_1", "layer_3"].includes(layerId) || rawFieldsSnapshot === normalizedFieldsSnapshot) {
       return;
     }
     commitFields(genericFields);
@@ -1303,6 +1346,69 @@ function GenericTextInputRenderer({
       return next;
     });
   };
+  const renderFieldValueControl = (field: GenericField, index: number) => {
+    if (field.field_type === "boolean") {
+      return (
+        <div className="generic-fields-editor__toggle generic-fields-editor__value-toggle">
+          <input
+            className="nodrag"
+            type="checkbox"
+            checked={field.field_value === true}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => patchField(index, { field_value: event.target.checked })}
+          />
+        </div>
+      );
+    }
+    if (field.field_type === "number") {
+      return (
+        <NodeTextInput
+          className="nodrag"
+          type="number"
+          value={genericFieldValueText(field.field_value)}
+          onValueChange={(value) => patchField(index, { field_value: value.trim() === "" ? "" : Number(value) })}
+        />
+      );
+    }
+    if (field.field_type === "text") {
+      return (
+        <NodeTextInput
+          className="nodrag"
+          value={genericFieldValueText(field.field_value)}
+          onValueChange={(value) => patchField(index, { field_value: value })}
+        />
+      );
+    }
+    if (field.field_type === "list") {
+      return (
+        <NodeTextarea
+          className="nodrag"
+          rows={3}
+          value={genericFieldListText(field.field_value)}
+          onValueChange={(value) => patchField(index, { field_value: genericFieldListValue(value) })}
+        />
+      );
+    }
+    if (field.field_type === "object") {
+      return (
+        <NodeTextarea
+          className="nodrag"
+          rows={3}
+          value={genericFieldValueText(field.field_value)}
+          onValueChange={(value) => patchField(index, { field_value: genericFieldObjectValue(value) })}
+        />
+      );
+    }
+    return (
+      <NodeTextarea
+        className="nodrag"
+        rows={3}
+        value={genericFieldValueText(field.field_value)}
+        onValueChange={(value) => patchField(index, { field_value: value })}
+      />
+    );
+  };
 
   if (mode !== "generic_fields") {
     return (
@@ -1354,7 +1460,7 @@ function GenericTextInputRenderer({
               </div>
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.fieldValue")}</span>
-                <NodeTextarea className="nodrag" rows={3} value={field.field_value} onValueChange={(value) => patchField(index, { field_value: value })} />
+                {renderFieldValueControl(field, index)}
               </label>
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.description")}</span>
@@ -1651,7 +1757,7 @@ type ReferenceExportField = {
 type GenericField = {
   field_key: string;
   field_name: string;
-  field_value: string;
+  field_value: unknown;
   field_type: GenericFieldType;
   description?: string;
   dr_mapping?: string;
@@ -1774,7 +1880,7 @@ function referenceOutputSourcesFromNodes(
         exportFields: referenceExportFields(params.export_fields ?? data.export_fields),
         allowLayers: referenceStringArray(params.allow_layers ?? data.allow_layers),
         forbiddenLayers: referenceStringArray(params.forbidden_layers ?? data.forbidden_layers),
-        isCoreSource: Boolean(params.is_core_source ?? data.is_core_source),
+        isCoreSource: Boolean(params.is_core_source ?? data.is_core_source ?? true),
         overrideAllowed: Boolean(params.override_allowed ?? data.override_allowed),
       };
     });
@@ -1930,7 +2036,7 @@ function ReferenceOutputRenderer({
       </div>
       <div className="reference-node-editor__toggles">
         <label>
-          <input className="nodrag" type="checkbox" checked={Boolean(params.is_core_source)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ is_core_source: event.target.checked })} />
+          <input className="nodrag" type="checkbox" checked={Boolean(params.is_core_source ?? true)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ is_core_source: event.target.checked })} />
           <span>{i18nText(language, "reference.isCoreSource")}</span>
         </label>
         <label>
@@ -2007,7 +2113,6 @@ function ReferenceInputRenderer({
   const currentNodes = useModuleWorkflowNodes();
   const currentModuleInstanceId = stringValue(data.parent_module);
   const currentLayerId = moduleInstanceRegistry[currentModuleInstanceId]?.layerId || moduleInstanceParts(currentModuleInstanceId).layerId;
-  const isLayer1ReferenceInput = currentLayerId === "layer_1";
   const sources = useMemo(
     () => referenceOutputSources(moduleGraphs, moduleInstanceRegistry, currentModuleInstanceId, currentNodes),
     [currentModuleInstanceId, currentNodes, moduleGraphs, moduleInstanceRegistry]
@@ -2044,7 +2149,7 @@ function ReferenceInputRenderer({
         source_field_paths: [],
         reference_type: "references",
         usage_reason: "",
-        required: isLayer1ReferenceInput,
+        required: true,
       },
     ]);
   };
@@ -3202,7 +3307,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
             </div>
             <div>
               <dt>{i18nText(language, "reference.isCoreSource")}</dt>
-              <dd>{translate(language, compileTimeParams.is_core_source ? "common.yes" : "common.no", compileTimeParams.is_core_source ? "Yes" : "No")}</dd>
+              <dd>{translate(language, (compileTimeParams.is_core_source ?? true) ? "common.yes" : "common.no", (compileTimeParams.is_core_source ?? true) ? "Yes" : "No")}</dd>
             </div>
             <div>
               <dt>{i18nText(language, "reference.overrideAllowed")}</dt>

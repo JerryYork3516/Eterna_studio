@@ -106,18 +106,18 @@ function backendNodeCategory(type: NodeType): string {
 }
 
 function referenceNodeDefaultParams(type: ModuleNodeType, layerId?: string): Record<string, unknown> {
-  const isLayer1 = layerId === "layer_1";
+  void layerId;
   if (type === "reference_output") {
     return {
       export_name: "",
       export_description: "",
-      export_scope: isLayer1 ? "module" : "field",
+      export_scope: "module",
       export_scopes: ["module", "node", "field"],
       allow_module_level_reference: true,
       export_fields: [],
       allow_layers: [],
       forbidden_layers: [],
-      is_core_source: isLayer1,
+      is_core_source: true,
       override_allowed: false
     };
   }
@@ -1070,11 +1070,9 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   const data = isRecord(schemaNode.data) ? schemaNode.data : {};
   const nodeType = String(data.node_type || schemaNode.type);
   const params = cloneRecord(data.params);
-  const compileNodeType =
-    module.layer_id === "layer_1" && nodeType === "text_input" && data.legacy_node_type === "field_input"
-      ? "field_input"
-      : nodeType;
-  if (compileNodeType === "field_input" && nodeType === "text_input") {
+  const legacyNodeType = typeof data.legacy_node_type === "string" ? data.legacy_node_type : "";
+  const compileNodeType = nodeType === "text_input" && legacyNodeType ? legacyNodeType : nodeType;
+  if (nodeType === "text_input" && legacyNodeType && Array.isArray(params.fields)) {
     params.fields = legacyFieldInputFieldsForCompile(data, params);
   } else if (compileNodeType === "field_input" || compileNodeType === "text_config") {
     params.fields = fieldInputFields(schemaNode);

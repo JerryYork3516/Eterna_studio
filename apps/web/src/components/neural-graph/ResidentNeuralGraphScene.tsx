@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Html, Line, OrbitControls } from "@react-three/drei";
-import { Vector3 } from "three";
+import { Html, OrbitControls } from "@react-three/drei";
+import { BufferGeometry, Float32BufferAttribute, Vector3 } from "three";
 import type { ThreeEvent } from "@react-three/fiber";
 import type { NeuralGraphNode, NeuralGraphSelection, NeuralGraphToggles, ResidentNeuralGraph } from "./neuralGraphTypes";
 
@@ -37,6 +37,128 @@ function edgeColor(kind: ResidentNeuralGraph["edges"][number]["kind"], fallback:
   if (kind === "conflicts_with") return "#ef4444";
   if (kind === "overrides_forbidden") return "#f97316";
   return fallback;
+}
+
+function stableHash(id: string) {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) % 997;
+  }
+  return hash;
+}
+
+function stableEdgeArcSign(id: string) {
+  const hash = stableHash(id);
+  return hash % 2 === 0 ? 1 : -1;
+}
+
+function neuralCurvePoints(
+  sourcePosition: [number, number, number],
+  targetPosition: [number, number, number],
+  edgeId: string
+): [number, number, number][] {
+  const start = new Vector3(...sourcePosition);
+  const end = new Vector3(...targetPosition);
+  const distance = Math.max(0.001, start.distanceTo(end));
+  const direction = new Vector3().subVectors(end, start).normalize();
+  const up = Math.abs(direction.dot(new Vector3(0, 1, 0))) > 0.9 ? new Vector3(1, 0, 0) : new Vector3(0, 1, 0);
+  const normal = new Vector3().crossVectors(direction, up).normalize().multiplyScalar(stableEdgeArcSign(edgeId));
+  const binormal = new Vector3().crossVectors(direction, normal).normalize();
+  const lift = Math.min(0.86, Math.max(0.24, distance * 0.2));
+  const wobble = 0.62 + (stableHash(edgeId) % 23) / 100;
+  const controlA = start
+    .clone()
+    .add(direction.clone().multiplyScalar(distance * 0.3))
+    .add(normal.clone().multiplyScalar(lift))
+    .add(binormal.clone().multiplyScalar(lift * 0.24));
+  const controlB = start
+    .clone()
+    .add(direction.clone().multiplyScalar(distance * 0.72))
+    .add(normal.clone().multiplyScalar(-lift * wobble))
+    .add(binormal.clone().multiplyScalar(lift * 0.36));
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const t = index / 41;
+    const a = (1 - t) * (1 - t) * (1 - t);
+    const b = 3 * (1 - t) * (1 - t) * t;
+    const c = 3 * (1 - t) * t * t;
+    const d = t * t * t;
+    const point = start
+      .clone()
+      .multiplyScalar(a)
+      .add(controlA.clone().multiplyScalar(b))
+      .add(controlB.clone().multiplyScalar(c))
+      .add(end.clone().multiplyScalar(d));
+    return [point.x, point.y, point.z] as [number, number, number];
+  });
+}
+
+function smoothTaperRadius(t: number, baseRadius: number) {
+  const endpoint = Math.pow(Math.abs(t - 0.5) * 2, 1.35);
+  return baseRadius * (0.42 + endpoint * 0.86);
+}
+
+function buildNeuralTubeGeometry(points: [number, number, number][], baseRadius: number) {
+  const ringPoints = points.map((point) => new Vector3(...point));
+  const radialSegments = 10;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const indices: number[] = [];
+  let previousNormal = new Vector3(0, 1, 0);
+
+  ringPoints.forEach((point, index) => {
+    const prev = ringPoints[Math.max(0, index - 1)];
+    const next = ringPoints[Math.min(ringPoints.length - 1, index + 1)];
+    const tangent = new Vector3().subVectors(next, prev).normalize();
+    if (Math.abs(tangent.dot(previousNormal)) > 0.92) {
+      previousNormal = new Vector3(1, 0, 0);
+    }
+    const binormal = new Vector3().crossVectors(tangent, previousNormal).normalize();
+    const normal = new Vector3().crossVectors(binormal, tangent).normalize();
+    previousNormal = normal;
+    const radius = smoothTaperRadius(index / Math.max(1, ringPoints.length - 1), baseRadius);
+
+    for (let side = 0; side < radialSegments; side += 1) {
+      const angle = (side / radialSegments) * Math.PI * 2;
+      const ringNormal = normal.clone().multiplyScalar(Math.cos(angle)).add(binormal.clone().multiplyScalar(Math.sin(angle))).normalize();
+      const vertex = point.clone().add(ringNormal.clone().multiplyScalar(radius));
+      positions.push(vertex.x, vertex.y, vertex.z);
+      normals.push(ringNormal.x, ringNormal.y, ringNormal.z);
+    }
+  });
+
+  for (let ring = 0; ring < ringPoints.length - 1; ring += 1) {
+    for (let side = 0; side < radialSegments; side += 1) {
+      const current = ring * radialSegments + side;
+      const nextSide = ring * radialSegments + ((side + 1) % radialSegments);
+      const nextRing = (ring + 1) * radialSegments + side;
+      const nextRingSide = (ring + 1) * radialSegments + ((side + 1) % radialSegments);
+      indices.push(current, nextRing, nextSide, nextSide, nextRing, nextRingSide);
+    }
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function NeuralEdgeMesh({ points, color, active }: { points: [number, number, number][]; color: string; active: boolean }) {
+  const glowGeometry = useMemo(() => buildNeuralTubeGeometry(points, active ? 0.04 : 0.026), [active, points]);
+  const coreGeometry = useMemo(() => buildNeuralTubeGeometry(points, active ? 0.018 : 0.012), [active, points]);
+
+  return (
+    <group>
+      <mesh geometry={glowGeometry}>
+        <meshBasicMaterial color={color} transparent opacity={active ? 0.18 : 0.1} depthWrite={false} />
+      </mesh>
+      <mesh geometry={coreGeometry}>
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={active ? 0.85 : 0.5} transparent opacity={active ? 0.86 : 0.62} roughness={0.48} />
+      </mesh>
+    </group>
+  );
 }
 
 function targetForCamera(focusedNode: NeuralGraphNode | null, orbitNode: NeuralGraphNode | null, coverNode: NeuralGraphNode | null) {
@@ -386,7 +508,7 @@ export function ResidentNeuralGraphScene({
       if (activeLayerId && source.layerId !== activeLayerId && target.layerId !== activeLayerId) {
         return false;
       }
-      if (selectedModuleId) {
+      if (selectedModuleId && !toggles.edges) {
         return edge.source === selectedModuleId || edge.target === selectedModuleId;
       }
       return toggles.edges;
@@ -514,13 +636,8 @@ export function ResidentNeuralGraphScene({
           if (!source || !target) return null;
           const active = selection?.id === source.id || selection?.id === target.id || focusedModuleId === source.id;
           const color = edgeColor(edge.kind, source.color ?? "#60a5fa");
-          const points = [renderPosition(source), renderPosition(target)] as [[number, number, number], [number, number, number]];
-          return (
-            <group key={edge.id}>
-              <Line points={points} color={color} lineWidth={active ? 6.2 : 3.2} transparent opacity={active ? 0.28 : 0.12} depthWrite={false} />
-              <Line points={points} color={color} lineWidth={active ? 2.6 : 1.45} transparent opacity={active ? 0.92 : 0.48} depthWrite={false} />
-            </group>
-          );
+          const points = neuralCurvePoints(renderPosition(source), renderPosition(target), edge.id);
+          return <NeuralEdgeMesh key={edge.id} points={points} color={color} active={active} />;
         })}
         {visibleNodes.map((node) => (
           <GraphNodeMesh
