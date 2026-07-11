@@ -5040,7 +5040,9 @@ dd {
 }
 .workflow-node__params dd {
   margin: 0;
-  word-break: break-all;
+  min-width: 0;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 .workflow-node__param-pair {
   display: contents;
@@ -5083,7 +5085,7 @@ dd {
   line-height: 1.45;
   color: var(--text);
   white-space: normal;
-  word-break: break-word;
+  word-break: normal;
   overflow-wrap: anywhere;
 }
 .core-params__empty {
@@ -5092,18 +5094,25 @@ dd {
 }
 .core-params__list {
   margin: 0;
-  padding-left: 16px;
+  padding: 0;
+  list-style: none;
   display: grid;
   gap: 2px;
   min-width: 0;
   max-width: 100%;
 }
 .core-params__list li {
+  display: block;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.2);
   font-size: 11px;
   line-height: 1.45;
   color: var(--text);
   white-space: normal;
-  word-break: break-word;
+  word-break: normal;
   overflow-wrap: anywhere;
 }
 .core-params__object {
@@ -5116,8 +5125,8 @@ dd {
 }
 .core-params__object-row {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 2px;
+  grid-template-columns: minmax(112px, 140px) minmax(0, 1fr);
+  gap: 8px;
   align-items: start;
   min-width: 0;
 }
@@ -5126,7 +5135,7 @@ dd {
   font-size: 10px;
   line-height: 1.45;
   white-space: normal;
-  word-break: break-word;
+  word-break: normal;
   overflow-wrap: anywhere;
 }
 .core-params__object dd {

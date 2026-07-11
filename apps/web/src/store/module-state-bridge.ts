@@ -32,6 +32,19 @@ const LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS = new Set([
 const RISK_RESPONSE_LAYER_ID = "layer_3";
 const RISK_RESPONSE_MODULE_ID = "humanistic_risk_response_config_v0_1";
 const RISK_RESPONSE_MODULE_INSTANCE_ID = `${RISK_RESPONSE_LAYER_ID}${MODULE_INSTANCE_SEPARATOR}${RISK_RESPONSE_MODULE_ID}`;
+const MEMORY_PROVIDER_ROUTER_LAYER_ID = "layer_5";
+const MEMORY_PROVIDER_ROUTER_MODULE_ID = "memory_provider_router";
+const MEMORY_ROUTER_TYPE_RESOLVER_NODE_ID = "memory_router_type_resolver";
+const MEMORY_ROUTER_REQUEST_INPUT_NODE_ID = "memory_router_request_input";
+const MEMORY_ROUTER_OPERATION_CLASSIFIER_NODE_ID = "memory_router_operation_classifier";
+const LEGACY_MEMORY_ROUTER_ALLOWED_MEMORY_TYPES = ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"];
+const MEMORY_ROUTER_ALLOWED_MEMORY_TYPES = ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"];
+const LEGACY_MEMORY_ROUTER_OPERATIONS = ["read", "write", "view", "clear"];
+const MEMORY_ROUTER_CANONICAL_OPERATIONS = ["read", "write", "update", "delete"];
+const MEMORY_ROUTER_ACCEPTED_OPERATIONS = [...MEMORY_ROUTER_CANONICAL_OPERATIONS, "view", "clear"];
+const MEMORY_ROUTER_OPERATION_ALIASES = { view: "read", clear: "delete" };
+const LEGACY_MEMORY_ROUTER_NORMALIZE_RULES = ["classify_operation", "allow_read_write_view_clear", "reject_unknown_operation"];
+const MEMORY_ROUTER_NORMALIZE_RULES = ["normalize_operation_alias", "classify_operation", "allow_declared_operations_only", "reject_unknown_operation"];
 const GENERIC_FIELD_RESERVED_PARAM_KEYS = new Set([
   "mode",
   "text",
@@ -108,6 +121,10 @@ function cloneJson<T>(value: T): T {
 
 function stableJson(value: unknown) {
   return JSON.stringify(value ?? null);
+}
+
+function hasExactStringList(value: unknown, expected: string[]) {
+  return Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index]);
 }
 
 function stringValue(value: unknown): string {
@@ -924,6 +941,121 @@ function migrateRiskResponseReferenceGraph(
   };
 }
 
+function migrateMemoryProviderRouterTypeResolverGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (identity.layerId !== MEMORY_PROVIDER_ROUTER_LAYER_ID || identity.moduleId !== MEMORY_PROVIDER_ROUTER_MODULE_ID) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    if (catalogNodeId !== MEMORY_ROUTER_TYPE_RESOLVER_NODE_ID) {
+      return nextNode;
+    }
+
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const paramsNeedsMigration = hasExactStringList(params.allowed_memory_types, LEGACY_MEMORY_ROUTER_ALLOWED_MEMORY_TYPES);
+    const dataNeedsMigration = hasExactStringList(data.allowed_memory_types, LEGACY_MEMORY_ROUTER_ALLOWED_MEMORY_TYPES);
+    if (!paramsNeedsMigration && !dataNeedsMigration) {
+      return nextNode;
+    }
+    if (paramsNeedsMigration) {
+      params.allowed_memory_types = [...MEMORY_ROUTER_ALLOWED_MEMORY_TYPES];
+      data.params = params;
+    }
+    if (dataNeedsMigration) {
+      data.allowed_memory_types = [...MEMORY_ROUTER_ALLOWED_MEMORY_TYPES];
+    }
+    changed = true;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
+function normalizeMemoryRouterOperationParams(params: Record<string, unknown>, catalogNodeId: string) {
+  if (catalogNodeId === MEMORY_ROUTER_REQUEST_INPUT_NODE_ID) {
+    const requestSchema = isRecord(params.request_schema) ? { ...params.request_schema } : null;
+    if (!requestSchema || !hasExactStringList(requestSchema.operations, LEGACY_MEMORY_ROUTER_OPERATIONS)) {
+      return params;
+    }
+    requestSchema.operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    if (!Array.isArray(requestSchema.canonical_operations)) {
+      requestSchema.canonical_operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    }
+    if (!Array.isArray(requestSchema.accepted_operations)) {
+      requestSchema.accepted_operations = [...MEMORY_ROUTER_ACCEPTED_OPERATIONS];
+    }
+    if (!isRecord(requestSchema.operation_aliases)) {
+      requestSchema.operation_aliases = { ...MEMORY_ROUTER_OPERATION_ALIASES };
+    }
+    return { ...params, request_schema: requestSchema };
+  }
+  if (catalogNodeId === MEMORY_ROUTER_OPERATION_CLASSIFIER_NODE_ID) {
+    const oldOperations = hasExactStringList(params.operations, LEGACY_MEMORY_ROUTER_OPERATIONS);
+    const oldRules = hasExactStringList(params.normalize_rules, LEGACY_MEMORY_ROUTER_NORMALIZE_RULES);
+    if (!oldOperations && !oldRules) {
+      return params;
+    }
+    const nextParams = { ...params };
+    if (oldOperations) {
+      nextParams.operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    }
+    if (oldRules) {
+      nextParams.normalize_rules = [...MEMORY_ROUTER_NORMALIZE_RULES];
+    }
+    if (!Array.isArray(nextParams.canonical_operations)) {
+      nextParams.canonical_operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    }
+    if (!isRecord(nextParams.operation_aliases)) {
+      nextParams.operation_aliases = { ...MEMORY_ROUTER_OPERATION_ALIASES };
+    }
+    return nextParams;
+  }
+  return params;
+}
+
+function migrateMemoryProviderRouterOperationsGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (identity.layerId !== MEMORY_PROVIDER_ROUTER_LAYER_ID || identity.moduleId !== MEMORY_PROVIDER_ROUTER_MODULE_ID) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const nextParams = normalizeMemoryRouterOperationParams(params, catalogNodeId);
+    if (stableJson(nextParams) === stableJson(params)) {
+      return nextNode;
+    }
+    data.params = nextParams;
+    changed = true;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
 function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
   if (!nodeIdMap.size) {
     return;
@@ -971,7 +1103,30 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
   }
   const graphAfterRiskMigration = riskMigration?.graph ?? graph;
-  const migratedGraph = migrateGenericFieldsGraph(graphAfterRiskMigration, store.moduleInstanceRegistry);
+  const memoryRouterMigration = migrateMemoryProviderRouterTypeResolverGraph(graphAfterRiskMigration, store.moduleInstanceRegistry);
+  if (memoryRouterMigration) {
+    store.updateModuleGraph(memoryRouterMigration.moduleNodeId, memoryRouterMigration.nodes, memoryRouterMigration.edges, memoryRouterMigration.viewport);
+    saveModuleGraphState(memoryRouterMigration.moduleNodeId, memoryRouterMigration.nodes, memoryRouterMigration.edges);
+    console.log("[P1-BRIDGE] migrated memory provider router allowed memory types", {
+      moduleNodeId: memoryRouterMigration.moduleNodeId,
+    });
+  }
+  const graphAfterMemoryRouterMigration = memoryRouterMigration ?? graphAfterRiskMigration;
+  const memoryRouterOperationsMigration = migrateMemoryProviderRouterOperationsGraph(graphAfterMemoryRouterMigration, store.moduleInstanceRegistry);
+  if (memoryRouterOperationsMigration) {
+    store.updateModuleGraph(
+      memoryRouterOperationsMigration.moduleNodeId,
+      memoryRouterOperationsMigration.nodes,
+      memoryRouterOperationsMigration.edges,
+      memoryRouterOperationsMigration.viewport
+    );
+    saveModuleGraphState(memoryRouterOperationsMigration.moduleNodeId, memoryRouterOperationsMigration.nodes, memoryRouterOperationsMigration.edges);
+    console.log("[P1-BRIDGE] migrated memory provider router operations", {
+      moduleNodeId: memoryRouterOperationsMigration.moduleNodeId,
+    });
+  }
+  const graphAfterMemoryRouterOperationsMigration = memoryRouterOperationsMigration ?? graphAfterMemoryRouterMigration;
+  const migratedGraph = migrateGenericFieldsGraph(graphAfterMemoryRouterOperationsMigration, store.moduleInstanceRegistry);
   if (migratedGraph) {
     store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
     saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
@@ -980,7 +1135,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
     return migratedGraph;
   }
-  return graphAfterRiskMigration;
+  return graphAfterMemoryRouterOperationsMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {

@@ -1163,6 +1163,29 @@ function referenceInputItemsFromModule(module: Record<string, unknown>): Record<
   return references;
 }
 
+function referenceOutputFieldPaths(module: Record<string, unknown>, sourceNodeId: string): Set<string> | null {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
+  const layerId = String(module.layer_id || "");
+  const moduleId = String(module.module_id || "");
+  for (const node of nodes) {
+    if (String(node.node_type || "") !== "reference_output") continue;
+    const data = isRecord(node.data) ? node.data : {};
+    const nodeId = String(node.node_id || "");
+    const catalogNodeId = String(data.catalog_node_id || "");
+    const aliases = new Set([nodeId, catalogNodeId].filter(Boolean));
+    if (layerId && moduleId) {
+      if (nodeId) aliases.add(`${layerId}${MODULE_INSTANCE_SEPARATOR}${moduleId}${MODULE_INSTANCE_SEPARATOR}${nodeId}`);
+      if (catalogNodeId) aliases.add(`${layerId}${MODULE_INSTANCE_SEPARATOR}${moduleId}${MODULE_INSTANCE_SEPARATOR}${catalogNodeId}`);
+    }
+    if (!aliases.has(sourceNodeId)) continue;
+    const params = isRecord(node.params) ? node.params : isRecord(data.params) ? data.params : {};
+    const fields = Array.isArray(params.export_fields) ? params.export_fields.filter(isRecord) : [];
+    return new Set(fields.map((field) => String(field.field_path || field.field_key || "")).filter(Boolean));
+  }
+  return null;
+}
+
 function detectReferenceCycles(edges: Array<{ source: string; target: string }>): number {
   const adjacency = new Map<string, string[]>();
   for (const edge of edges) {
@@ -1244,6 +1267,16 @@ function validateReferenceInputs(workflow: Workflow, stats: ReferenceInputNormal
       }
       if (sourceScope === "field" && sourceFieldPaths.length === 0) {
         invalidate(`${targetModuleId}: field reference missing source_field_paths`);
+      } else if (sourceScope === "field" && sourceModule && sourceNodeId) {
+        const availableFieldPaths = referenceOutputFieldPaths(sourceModule, sourceNodeId);
+        if (!availableFieldPaths) {
+          invalidate(`${targetModuleId}: field reference source_node_id ${sourceNodeId} is not a reference_output`);
+        } else {
+          const missingFieldPaths = sourceFieldPaths.filter((fieldPath) => !availableFieldPaths.has(fieldPath));
+          if (missingFieldPaths.length) {
+            invalidate(`${targetModuleId}: missing source_field_paths ${missingFieldPaths.join(", ")}`);
+          }
+        }
       }
       if (invalidReference) {
         stats.invalidCount += 1;
@@ -1543,6 +1576,85 @@ function syncPrimaryLanguageCompatibilityFields(params: Record<string, unknown>)
   return nextParams;
 }
 
+const LEGACY_MEMORY_ROUTER_ALLOWED_MEMORY_TYPES = ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"];
+const MEMORY_ROUTER_ALLOWED_MEMORY_TYPES = ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"];
+const LEGACY_MEMORY_ROUTER_OPERATIONS = ["read", "write", "view", "clear"];
+const MEMORY_ROUTER_CANONICAL_OPERATIONS = ["read", "write", "update", "delete"];
+const MEMORY_ROUTER_ACCEPTED_OPERATIONS = [...MEMORY_ROUTER_CANONICAL_OPERATIONS, "view", "clear"];
+const MEMORY_ROUTER_OPERATION_ALIASES = { view: "read", clear: "delete" };
+const LEGACY_MEMORY_ROUTER_NORMALIZE_RULES = ["classify_operation", "allow_read_write_view_clear", "reject_unknown_operation"];
+const MEMORY_ROUTER_NORMALIZE_RULES = ["normalize_operation_alias", "classify_operation", "allow_declared_operations_only", "reject_unknown_operation"];
+
+function hasExactMemoryTypeList(value: unknown, expected: string[]) {
+  return Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index]);
+}
+
+function normalizeMemoryRouterTypeResolverParams(
+  params: Record<string, unknown>,
+  nodeId: string,
+  moduleId: string
+) {
+  if (moduleId !== "memory_provider_router" || nodeId !== "memory_router_type_resolver") {
+    return params;
+  }
+  if (!hasExactMemoryTypeList(params.allowed_memory_types, LEGACY_MEMORY_ROUTER_ALLOWED_MEMORY_TYPES)) {
+    return params;
+  }
+  return {
+    ...params,
+    allowed_memory_types: [...MEMORY_ROUTER_ALLOWED_MEMORY_TYPES],
+  };
+}
+
+function normalizeMemoryRouterOperationParams(
+  params: Record<string, unknown>,
+  nodeId: string,
+  moduleId: string
+) {
+  if (moduleId !== "memory_provider_router") {
+    return params;
+  }
+  if (nodeId === "memory_router_request_input") {
+    const requestSchema = isRecord(params.request_schema) ? { ...params.request_schema } : null;
+    if (!requestSchema || !hasExactMemoryTypeList(requestSchema.operations, LEGACY_MEMORY_ROUTER_OPERATIONS)) {
+      return params;
+    }
+    requestSchema.operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    if (!Array.isArray(requestSchema.canonical_operations)) {
+      requestSchema.canonical_operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+    }
+    if (!Array.isArray(requestSchema.accepted_operations)) {
+      requestSchema.accepted_operations = [...MEMORY_ROUTER_ACCEPTED_OPERATIONS];
+    }
+    if (!isRecord(requestSchema.operation_aliases)) {
+      requestSchema.operation_aliases = { ...MEMORY_ROUTER_OPERATION_ALIASES };
+    }
+    return { ...params, request_schema: requestSchema };
+  }
+  if (nodeId !== "memory_router_operation_classifier") {
+    return params;
+  }
+  const oldOperations = hasExactMemoryTypeList(params.operations, LEGACY_MEMORY_ROUTER_OPERATIONS);
+  const oldRules = hasExactMemoryTypeList(params.normalize_rules, LEGACY_MEMORY_ROUTER_NORMALIZE_RULES);
+  if (!oldOperations && !oldRules) {
+    return params;
+  }
+  const nextParams = { ...params };
+  if (oldOperations) {
+    nextParams.operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+  }
+  if (oldRules) {
+    nextParams.normalize_rules = [...MEMORY_ROUTER_NORMALIZE_RULES];
+  }
+  if (!Array.isArray(nextParams.canonical_operations)) {
+    nextParams.canonical_operations = [...MEMORY_ROUTER_CANONICAL_OPERATIONS];
+  }
+  if (!isRecord(nextParams.operation_aliases)) {
+    nextParams.operation_aliases = { ...MEMORY_ROUTER_OPERATION_ALIASES };
+  }
+  return nextParams;
+}
+
 function legacyFieldInputFieldsForCompile(data: Record<string, unknown>, params: Record<string, unknown>) {
   const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
   const genericValues = genericFieldValueByKey(genericFields);
@@ -1592,6 +1704,9 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   const nodeType = String(data.node_type || schemaNode.type);
   let params = cloneRecord(data.params);
   params = syncPrimaryLanguageCompatibilityFields(params);
+  const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id);
+  params = normalizeMemoryRouterTypeResolverParams(params, catalogNodeId, module.module_id);
+  params = normalizeMemoryRouterOperationParams(params, catalogNodeId, module.module_id);
   const legacyNodeType = typeof data.legacy_node_type === "string" ? data.legacy_node_type : "";
   const compileNodeType = nodeType === "text_input" && legacyNodeType ? legacyNodeType : nodeType;
   const compileLayerId =
@@ -1611,7 +1726,7 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
     params = normalizeReferenceInputParams(params);
   }
   return {
-    node_id: String(data.catalog_node_id || schemaNode.node_id),
+    node_id: catalogNodeId,
     node_type: compileNodeType,
     module_id: module.module_id,
     layer_id: compileLayerId,

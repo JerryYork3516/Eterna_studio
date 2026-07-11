@@ -1952,6 +1952,88 @@ def test_identity_catalog_contains_no_linxuan_content():
         assert forbidden not in serialized
 
 
+def test_relationship_memory_module_declares_six_read_only_policy_nodes():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["relationship_memory"]
+    graph = module.module_graph
+
+    assert module.layer_id == "layer_5"
+    assert module.is_placeholder is False
+    assert module.mock_only is True
+    assert module.no_execution is True
+    assert [node["node_id"] for node in graph["nodes"]] == [
+        "relationship_memory_input",
+        "relationship_pattern_analysis",
+        "relationship_state_evaluation",
+        "relationship_boundary_policy",
+        "relationship_state_update",
+        "relationship_memory_output",
+    ]
+    assert [node["node_type"] for node in graph["nodes"]] == [
+        "text_config",
+        "structure_normalize",
+        "validation",
+        "memory_policy",
+        "update_rule",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in graph["edges"]] == [
+        ("relationship_memory_input", "relationship_pattern_analysis"),
+        ("relationship_pattern_analysis", "relationship_state_evaluation"),
+        ("relationship_state_evaluation", "relationship_boundary_policy"),
+        ("relationship_boundary_policy", "relationship_state_update"),
+        ("relationship_state_update", "relationship_memory_output"),
+    ]
+    boundary_policy = graph["nodes"][3]["params"]
+    assert "dependency_induction" in boundary_policy["save_forbidden"]
+    assert "real_relationship_replacement" in boundary_policy["save_forbidden"]
+
+
+def test_memory_provider_router_type_resolver_uses_current_memory_type_allowlist():
+    module = next(module for module in get_module_catalog() if module.module_id == "memory_provider_router")
+    graph = module.module_graph
+    type_resolver = next(node for node in graph["nodes"] if node["node_id"] == "memory_router_type_resolver")
+    expected = [
+        "short_term_memory",
+        "preference_memory",
+        "event_memory",
+        "relationship_memory",
+        "interaction_log",
+    ]
+
+    assert type_resolver["params"]["allowed_memory_types"] == expected
+    route_policy = graph["nodes"][-1]["outputs"]["memory_provider_route_policy"]
+    assert route_policy["memory_type_policy"]["allowed_memory_types"] == expected
+    assert route_policy["access_policy"]["read"] == expected
+    assert "profile_memory" not in str(type_resolver["params"])
+
+
+def test_memory_provider_router_normalizes_legacy_operations_to_canonical_operations():
+    module = next(module for module in get_module_catalog() if module.module_id == "memory_provider_router")
+    graph = module.module_graph
+    request_input = next(node for node in graph["nodes"] if node["node_id"] == "memory_router_request_input")
+    classifier = next(node for node in graph["nodes"] if node["node_id"] == "memory_router_operation_classifier")
+    route_policy = next(node for node in graph["nodes"] if node["node_id"] == "memory_router_output")["outputs"]["memory_provider_route_policy"]
+    canonical = ["read", "write", "update", "delete"]
+    accepted = ["read", "write", "update", "delete", "view", "clear"]
+    aliases = {"view": "read", "clear": "delete"}
+
+    assert request_input["params"]["request_schema"]["operations"] == canonical
+    assert request_input["params"]["request_schema"]["accepted_operations"] == accepted
+    assert request_input["params"]["request_schema"]["operation_aliases"] == aliases
+    assert classifier["params"]["operations"] == canonical
+    assert classifier["params"]["normalize_rules"] == [
+        "normalize_operation_alias",
+        "classify_operation",
+        "allow_declared_operations_only",
+        "reject_unknown_operation",
+    ]
+    assert classifier["params"]["operation_aliases"] == aliases
+    assert route_policy["request_contract"]["operations"] == canonical
+    assert route_policy["request_contract"]["accepted_operations"] == accepted
+    assert set(route_policy["access_policy"]) == set(canonical) | {"session_only", "forbidden_memory"}
+
+
 def test_module_catalog_validation_passes():
     catalog = get_module_catalog()
     errors = validate_module_catalog(catalog)

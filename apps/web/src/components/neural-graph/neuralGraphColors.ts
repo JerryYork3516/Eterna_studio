@@ -14,6 +14,12 @@ const FALLBACK_LAYER_COLORS = [
   "#eab308",
 ];
 
+// The Memory layer needs a brighter visual anchor in the neural graph. This is
+// intentionally graph-only so the Studio canvas palette remains unchanged.
+const NEURAL_GRAPH_LAYER_COLOR_OVERRIDES: Record<string, string> = {
+  layer_5: "#fde047",
+};
+
 type Rgb = {
   r: number;
   g: number;
@@ -70,7 +76,12 @@ export function fallbackLayerColor(layerOrder?: number) {
 }
 
 export function resolveLayerColor(layerId: string, layerOrder: number | undefined, uiColors?: Record<string, string>) {
-  return normalizeHex(uiColors?.[layerId] ?? "") || normalizeHex(uiColors?.[`ui-folder-${layerId}`] ?? "") || fallbackLayerColor(layerOrder);
+  return (
+    NEURAL_GRAPH_LAYER_COLOR_OVERRIDES[layerId] ||
+    normalizeHex(uiColors?.[layerId] ?? "") ||
+    normalizeHex(uiColors?.[`ui-folder-${layerId}`] ?? "") ||
+    fallbackLayerColor(layerOrder)
+  );
 }
 
 export function resolveModuleColor({
@@ -86,6 +97,9 @@ export function resolveModuleColor({
   layerColor: string;
   moduleUiColors?: Record<string, string>;
 }) {
+  if (NEURAL_GRAPH_LAYER_COLOR_OVERRIDES[layerId]) {
+    return NEURAL_GRAPH_LAYER_COLOR_OVERRIDES[layerId];
+  }
   const suffixMatch = Object.entries(moduleUiColors ?? {}).find(([key, value]) => key.endsWith(`:${moduleId}`) && normalizeHex(value));
   return (
     normalizeHex(moduleUiColors?.[`${layerId}:${moduleId}`] ?? "") ||

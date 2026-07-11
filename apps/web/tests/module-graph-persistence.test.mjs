@@ -6,6 +6,7 @@ import {
   preserveStoredModuleNodePosition,
   filterDanglingModuleGraphEdges,
 } from "../src/store/module-graph-merge.ts";
+import { resolveLayerColor, resolveModuleColor } from "../src/components/neural-graph/neuralGraphColors.ts";
 
 test("a manually connected module edge survives switching modules and project hydration", () => {
   const catalogEdges = [{ id: "seed", source: "input", target: "output" }];
@@ -68,4 +69,18 @@ test("dangling module edges are pruned while valid edges keep their order", () =
     { source: "old_input_basis", target: "normalize" },
     { source: "normalize", target: "old_core_rules" },
   ]);
+});
+
+test("the neural graph reserves a distinct bright color for Layer 5 modules", () => {
+  assert.equal(resolveLayerColor("layer_5", 5, { layer_5: "#314a77" }), "#fde047");
+  assert.equal(
+    resolveModuleColor({
+      moduleId: "memory_access_control",
+      layerId: "layer_5",
+      storedLayerId: "layer_5",
+      layerColor: "#fde047",
+      moduleUiColors: { "layer_5:memory_access_control": "#314a77" },
+    }),
+    "#fde047"
+  );
 });

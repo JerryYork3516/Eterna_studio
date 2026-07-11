@@ -1856,6 +1856,85 @@ function referenceExportFields(value: unknown): ReferenceExportField[] {
     : [];
 }
 
+function referenceValueTypeFromGenericField(type: GenericFieldType): ReferenceValueType {
+  if (type === "long_text") return "text";
+  if (type === "list") return "array";
+  return REFERENCE_VALUE_TYPES.includes(type as ReferenceValueType) ? (type as ReferenceValueType) : "unknown";
+}
+
+function referenceValueTypeFromValue(value: unknown): ReferenceValueType {
+  if (Array.isArray(value)) return "array";
+  if (value === null || value === undefined) return "unknown";
+  if (typeof value === "string") return "text";
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "object") return "object";
+  return "unknown";
+}
+
+function automaticReferenceExportFields(nodes: WorkflowNode[]): ReferenceExportField[] {
+  const candidates = new Map<string, ReferenceExportField>();
+  const blockedFieldPaths = new Set<string>();
+  for (const node of nodes) {
+    const data = workflowNodeData(node);
+    const params = paramsFromNodeData(data);
+    if (workflowNodeType(node) === "text_input" && params.mode === "generic_fields") {
+      for (const field of genericFieldsFromParams(params.fields)) {
+        if (!field.field_key) continue;
+        if (field.reference_enabled === false) {
+          blockedFieldPaths.add(field.field_key);
+          candidates.delete(field.field_key);
+          continue;
+        }
+        candidates.set(field.field_key, {
+          field_key: field.field_key,
+          field_path: field.field_key,
+          display_name: field.field_name || field.field_key,
+          description: field.description || "",
+          value_type: referenceValueTypeFromGenericField(field.field_type),
+          required: false,
+        });
+      }
+    }
+  }
+  for (const node of nodes) {
+    const data = workflowNodeData(node);
+    if (workflowNodeType(node) !== "module_output") continue;
+    const outputs = isRecord(data.outputs) ? data.outputs : {};
+    for (const output of Object.values(outputs)) {
+      if (!isRecord(output) || !isRecord(output.fields)) continue;
+      for (const [fieldKey, fieldValue] of Object.entries(output.fields)) {
+        if (!fieldKey || blockedFieldPaths.has(fieldKey) || candidates.has(fieldKey)) continue;
+        candidates.set(fieldKey, {
+          field_key: fieldKey,
+          field_path: fieldKey,
+          display_name: fieldKey,
+          description: "",
+          value_type: referenceValueTypeFromValue(fieldValue),
+          required: false,
+        });
+      }
+    }
+  }
+  return [...candidates.values()];
+}
+
+function appendMissingReferenceExportFields(value: unknown, candidates: ReferenceExportField[]): Record<string, unknown>[] {
+  const existing = Array.isArray(value) ? value.filter(isRecord).map((field) => ({ ...field })) : [];
+  const existingPaths = new Set(
+    existing
+      .map((field) => stringValue(field.field_path) || stringValue(field.field_key))
+      .filter(Boolean)
+  );
+  for (const candidate of candidates) {
+    const path = candidate.field_path || candidate.field_key;
+    if (!path || existingPaths.has(path)) continue;
+    existing.push(candidate);
+    existingPaths.add(path);
+  }
+  return existing;
+}
+
 function referenceStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => stringValue(item)).filter(Boolean) : [];
 }
@@ -1997,11 +2076,14 @@ function ReferenceOutputRenderer({
   const rawParams = paramsFromNodeData(data);
   const moduleInstanceRegistry = useCanvasStore((state) => state.moduleInstanceRegistry);
   const moduleNames = useCanvasStore((state) => state.moduleNames);
+  const currentNodes = useModuleWorkflowNodes();
   const currentModuleInstanceId = stringValue(data.parent_module);
   const currentModule = moduleInstanceRegistry[currentModuleInstanceId];
   const currentLayerId = currentModule?.layerId || moduleInstanceParts(currentModuleInstanceId).layerId;
   const currentModuleId = currentModule?.moduleId || moduleInstanceParts(currentModuleInstanceId).moduleId;
-  const params = normalizeReferenceOutputParams(rawParams, currentLayerId);
+  const autoExportFields = useMemo(() => automaticReferenceExportFields(currentNodes), [currentNodes]);
+  const mergedExportFields = appendMissingReferenceExportFields(rawParams.export_fields, autoExportFields);
+  const params = normalizeReferenceOutputParams({ ...rawParams, export_fields: mergedExportFields }, currentLayerId);
   const fields = referenceExportFields(params.export_fields);
   const currentModuleName =
     moduleNames[currentModuleInstanceId] ||
@@ -2839,6 +2921,7 @@ function CoreParamsPanel({
   }
   if (type === "structure_normalize") {
     const rules = Array.isArray(valueByCandidateKeys([data, params], ["normalize_rules", "rules"])) ? (valueByCandidateKeys([data, params], ["normalize_rules", "rules"]) as unknown[]) : [];
+    const allowedMemoryTypes = valueByCandidateKeys([data, params], ["allowed_memory_types"]);
     const normalizedOutput = normalizedResultValue(data, siblingOutput);
     const outputKeys = Array.isArray(params.outputs)
       ? uniqueStrings(params.outputs)
@@ -2853,6 +2936,9 @@ function CoreParamsPanel({
         <CoreParamSection titleKey="node.normalization.resultTitle" titleFallback="Normalization result" value={normalizedFields} language={language} />
         <CoreParamSection titleKey="node.normalization.fields" titleFallback="Normalized fields" value={outputKeys} language={language} />
         <CoreParamSection titleKey="node.normalization.rules" titleFallback="Normalization rules" value={rules} language={language} />
+        {!isEmptyDisplayValue(allowedMemoryTypes) ? (
+          <CoreParamSection titleKey="node.normalization.allowedMemoryTypes" titleFallback="Allowed memory types" value={allowedMemoryTypes} language={language} />
+        ) : null}
       </div>
     );
   }

@@ -167,6 +167,19 @@ def _module(
 SCREEN_UI_ANCHOR_MODULE = ScreenUiAnchorModuleV04()
 MEMORY_PROVIDER_ROUTER_MODULE_ID = "memory_provider_router"
 MEMORY_PROVIDER_ROUTER_OUTPUT_KEY = "memory_provider_route_policy"
+MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES = [
+    "short_term_memory",
+    "preference_memory",
+    "event_memory",
+    "relationship_memory",
+    "interaction_log",
+]
+MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS = ["read", "write", "update", "delete"]
+MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES = {"view": "read", "clear": "delete"}
+MEMORY_PROVIDER_ROUTER_ACCEPTED_OPERATIONS = [
+    *MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+    *MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES.keys(),
+]
 MEMORY_PROVIDER_ROUTER_NODE_ORDER = (
     "request_input",
     "operation_classifier",
@@ -302,6 +315,32 @@ EVENT_MEMORY_NODE_TYPES = {
     "importance_evaluation": "validation",
     "summary_policy": "memory_policy",
     "lifecycle_policy": "update_rule",
+    "output": "module_output",
+}
+RELATIONSHIP_MEMORY_MODULE_ID = "relationship_memory"
+RELATIONSHIP_MEMORY_OUTPUT_KEY = "relationship_memory"
+RELATIONSHIP_MEMORY_NODE_ORDER = (
+    "input",
+    "pattern_analysis",
+    "state_evaluation",
+    "boundary_policy",
+    "state_update",
+    "output",
+)
+RELATIONSHIP_MEMORY_NODE_IDS = {
+    "input": "relationship_memory_input",
+    "pattern_analysis": "relationship_pattern_analysis",
+    "state_evaluation": "relationship_state_evaluation",
+    "boundary_policy": "relationship_boundary_policy",
+    "state_update": "relationship_state_update",
+    "output": "relationship_memory_output",
+}
+RELATIONSHIP_MEMORY_NODE_TYPES = {
+    "input": "text_config",
+    "pattern_analysis": "structure_normalize",
+    "state_evaluation": "validation",
+    "boundary_policy": "memory_policy",
+    "state_update": "update_rule",
     "output": "module_output",
 }
 MEMORY_UPDATE_MODULE_ID = "memory_update"
@@ -4394,8 +4433,8 @@ def _memory_provider_router_module() -> ModuleV04:
         "operations": {
             "read": "layer5.memoryProviderRouter.param.operation.read",
             "write": "layer5.memoryProviderRouter.param.operation.write",
-            "view": "layer5.memoryProviderRouter.param.operation.view",
-            "clear": "layer5.memoryProviderRouter.param.operation.clear",
+            "update": "layer5.memoryProviderRouter.param.operation.update",
+            "delete": "layer5.memoryProviderRouter.param.operation.delete",
         },
         "trace_fields": {
             "resident_id": "layer5.memoryProviderRouter.param.traceField.residentId",
@@ -4423,7 +4462,10 @@ def _memory_provider_router_module() -> ModuleV04:
         "request_contract": {
             "allowed_runtime_fields": ["operation", "resident_id", "namespace", "memory_type", "content", "limit"],
             "required_runtime_fields": ["operation", "resident_id"],
-            "operations": ["read", "write", "view", "clear"],
+            "operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+            "canonical_operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+            "accepted_operations": MEMORY_PROVIDER_ROUTER_ACCEPTED_OPERATIONS,
+            "operation_aliases": MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES,
         },
         "resident_scope": {
             "resident_id_required": True,
@@ -4434,14 +4476,14 @@ def _memory_provider_router_module() -> ModuleV04:
             "empty_namespace_fallback": "default",
         },
         "memory_type_policy": {
-            "allowed_memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "allowed_memory_types": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
             "unsupported_memory_type_action": "reject",
         },
         "access_policy": {
-            "read": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
-            "write": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
-            "view": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
-            "clear": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "read": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
+            "write": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
+            "update": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
+            "delete": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
             "session_only": ["short_term_memory"],
             "forbidden_memory": ["api_key", "token", "credential", "base_url"],
         },
@@ -4467,15 +4509,20 @@ def _memory_provider_router_module() -> ModuleV04:
             "request_schema": {
                 "required": ["operation", "resident_id"],
                 "optional": ["namespace", "memory_type", "content", "limit"],
-                "operations": ["read", "write", "view", "clear"],
+                "operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+                "canonical_operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+                "accepted_operations": MEMORY_PROVIDER_ROUTER_ACCEPTED_OPERATIONS,
+                "operation_aliases": MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES,
             },
             "no_runtime_api_change": True,
         },
         "operation_classifier": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["request_input"],
-            "normalize_rules": ["classify_operation", "allow_read_write_view_clear", "reject_unknown_operation"],
-            "operations": ["read", "write", "view", "clear"],
+            "normalize_rules": ["normalize_operation_alias", "classify_operation", "allow_declared_operations_only", "reject_unknown_operation"],
+            "operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+            "canonical_operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+            "operation_aliases": MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES,
         },
         "resident_resolver": {
             "i18n_keys": param_i18n_keys,
@@ -4493,7 +4540,7 @@ def _memory_provider_router_module() -> ModuleV04:
             "i18n_keys": param_i18n_keys,
             "input": node_ids["namespace_resolver"],
             "normalize_rules": ["resolve_memory_type", "allow_declared_memory_types_only"],
-            "allowed_memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "allowed_memory_types": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
         },
         "access_control": {
             "i18n_keys": param_i18n_keys,
@@ -4609,7 +4656,7 @@ def _memory_provider_router_module() -> ModuleV04:
             "execution_entry": "runtime_only",
             "engine_id": "memory_mock",
             "provider_id": "provider_memory_mock",
-            "operations": ["read", "write", "view", "clear"],
+            "operations": MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
         },
         dr_mapping={output_key: "memory_policy.provider_route"},
         ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
@@ -5415,6 +5462,202 @@ def _event_memory_module() -> ModuleV04:
     )
 
 
+def _relationship_memory_module() -> ModuleV04:
+    module_id = RELATIONSHIP_MEMORY_MODULE_ID
+    output_key = RELATIONSHIP_MEMORY_OUTPUT_KEY
+    node_ids = RELATIONSHIP_MEMORY_NODE_IDS
+    no_execution_metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_provider_call": True,
+        "no_memory_read_write": True,
+        "no_credential_storage": True,
+        "no_real_human_emotion_simulation": True,
+        "no_dependency_induction": True,
+        "no_default_romantic_relationship": True,
+        "no_real_relationship_replacement": True,
+        "no_identity_modification": True,
+    }
+    param_i18n_keys = {
+        "fields": {
+            "interaction_context": "layer5.relationshipMemory.field.interactionContext",
+            "user_feedback": "layer5.relationshipMemory.field.userFeedback",
+            "communication_pattern": "layer5.relationshipMemory.field.communicationPattern",
+            "interaction_frequency": "layer5.relationshipMemory.field.interactionFrequency",
+            "communication_style": "layer5.relationshipMemory.field.communicationStyle",
+            "user_preference": "layer5.relationshipMemory.field.userPreference",
+            "familiarity_signal": "layer5.relationshipMemory.field.familiaritySignal",
+            "familiarity": "layer5.relationshipMemory.field.familiarity",
+            "trust": "layer5.relationshipMemory.field.trust",
+            "comfort_level": "layer5.relationshipMemory.field.comfortLevel",
+            "interaction_style": "layer5.relationshipMemory.field.interactionStyle",
+        },
+        "output": {
+            output_key: "layer5.relationshipMemory.output.relationshipMemory",
+        },
+    }
+    relationship_policy = {
+        "output_key": output_key,
+        "fields": {
+            "familiarity": "",
+            "trust": "",
+            "comfort_level": "",
+            "interaction_style": "",
+        },
+        "allowed_content": ["communication_habit", "user_preference", "interaction_history"],
+        "forbidden_content": [
+            "emotional_binding",
+            "dependency_induction",
+            "default_romantic_relationship",
+            "real_relationship_replacement",
+            "private_secret",
+            "inferred_real_emotion",
+            "inferred_dependency",
+            "inferred_private_relationship_state",
+        ],
+        "change_policy": "gradual_only",
+        **no_execution_metadata,
+    }
+    node_params = {
+        "input": {
+            "i18n_keys": param_i18n_keys,
+            "input_scope": "candidate_interaction_event",
+            "accepted_fields": ["interaction_context", "user_feedback", "communication_pattern"],
+        },
+        "pattern_analysis": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["input"],
+            "normalize_rules": [
+                "extract_interaction_frequency",
+                "extract_communication_style",
+                "extract_explicit_user_preference",
+                "detect_familiarity_signal",
+            ],
+            "outputs": ["interaction_frequency", "communication_style", "user_preference", "familiarity_signal"],
+        },
+        "state_evaluation": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["pattern_analysis"],
+            "evaluated_fields": ["familiarity", "trust", "comfort_level"],
+            "decision_rules": ["explicit_interaction_only", "no_inferred_real_emotion", "no_inferred_dependency", "no_inferred_private_relationship_state"],
+            "forbidden_inference": ["user_real_emotion", "user_dependency_level", "user_private_relationship_state"],
+        },
+        "boundary_policy": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["state_evaluation"],
+            "save_allowed": ["communication_habit", "user_preference", "interaction_history"],
+            "save_forbidden": ["emotional_binding", "dependency_induction", "default_romantic_relationship", "real_relationship_replacement"],
+            "no_real_human_emotion_simulation": True,
+            "no_dependency_induction": True,
+            "no_default_romantic_relationship": True,
+            "no_real_relationship_replacement": True,
+        },
+        "state_update": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["boundary_policy"],
+            "update_fields": ["familiarity", "trust", "interaction_style"],
+            "update_policy": "gradual_only",
+            "single_event_large_change": "deny",
+        },
+        "output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["state_update"],
+            "output_key": output_key,
+            "output_schema": {
+                "familiarity": "string",
+                "trust": "string",
+                "comfort_level": "string",
+                "interaction_style": "string",
+            },
+        },
+    }
+    node_i18n_suffix = {
+        "input": "input",
+        "pattern_analysis": "patternAnalysis",
+        "state_evaluation": "stateEvaluation",
+        "boundary_policy": "boundaryPolicy",
+        "state_update": "stateUpdate",
+        "output": "output",
+    }
+    nodes = []
+    for index, role in enumerate(RELATIONSHIP_MEMORY_NODE_ORDER):
+        node_type = RELATIONSHIP_MEMORY_NODE_TYPES[role]
+        node_id = node_ids[role]
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": node_type,
+                "module_id": module_id,
+                "layer_id": "layer_5",
+                "params": node_params[role],
+                "position": {"x": 120 + index * 300, "y": 120},
+                "i18n_keys": {
+                    "name": f"layer5.relationshipMemory.node.{node_i18n_suffix[role]}.title",
+                    "description": f"layer5.relationshipMemory.node.{node_i18n_suffix[role]}.description",
+                    "type_name": f"node.type.{node_type}",
+                },
+                "outputs": {output_key: relationship_policy, "module_output": output_key} if role == "output" else {},
+                "metadata": no_execution_metadata,
+            }
+        )
+
+    return _module(
+        module_id,
+        "memory",
+        "Relationship Memory",
+        "layer_5",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.memory,
+        category="memory",
+        is_placeholder=False,
+        color_status="green",
+        tags=["memory", "relationship", "stage7_4_7"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(RELATIONSHIP_MEMORY_NODE_ORDER[:-1], RELATIONSHIP_MEMORY_NODE_ORDER[1:])
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Relationship memory policy."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
+        i18n_keys={
+            "display_name": "layer5.relationshipMemory.module.title",
+            "description": "layer5.relationshipMemory.module.description",
+            "output": "layer5.relationshipMemory.output.relationshipMemory",
+        },
+        outputs={output_key: relationship_policy, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "mock_only": True,
+            "no_execution": True,
+            "no_provider_call": True,
+            "no_memory_read_write": True,
+            "no_credential_storage": True,
+            "no_real_human_emotion_simulation": True,
+            "no_dependency_induction": True,
+            "no_default_romantic_relationship": True,
+            "no_real_relationship_replacement": True,
+            "no_identity_modification": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
 def _memory_update_module() -> ModuleV04:
     module_id = MEMORY_UPDATE_MODULE_ID
     output_key = MEMORY_UPDATE_OUTPUT_KEY
@@ -5696,7 +5939,7 @@ MODULE_CATALOG: List[ModuleV04] = [
 
     # L5 Memory
     _event_memory_module(),
-    _module("relationship_memory", "memory", "Relationship Memory", "layer_5", status=ProtocolStatus.ready, category="memory", slot_type=SlotType.memory, is_placeholder=True, color_status="green"),
+    _relationship_memory_module(),
     _memory_access_control_module(),
     _short_term_memory_module(),
     _module("short_term_memory_slot", "memory_slot", "Short Term Memory Slot", "layer_5", status=ProtocolStatus.ready, slot_type=SlotType.memory, category="memory", is_placeholder=True, color_status="green"),
