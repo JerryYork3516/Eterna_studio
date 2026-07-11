@@ -865,39 +865,6 @@ const REFERENCE_AUTHORITY_SOURCE_TYPES = [
   "normal_output",
 ] as const;
 type ReferenceAuthoritySourceType = (typeof REFERENCE_AUTHORITY_SOURCE_TYPES)[number];
-const REFERENCE_INPUT_SCOPES = ["module", "node", "field"] as const;
-type ReferenceInputScope = (typeof REFERENCE_INPUT_SCOPES)[number];
-const REFERENCE_INPUT_TYPES = ["references", "outputs_to", "constrains", "conflicts_with", "overrides_forbidden"] as const;
-type ReferenceInputType = (typeof REFERENCE_INPUT_TYPES)[number];
-const REFERENCE_INPUT_POINTER_KEYS = new Set([
-  "source_layer_id",
-  "source_module_id",
-  "source_node_id",
-  "source_scope",
-  "source_field_paths",
-  "reference_type",
-  "required",
-]);
-const REFERENCE_INPUT_FORBIDDEN_KEYS = new Set([
-  "source_module",
-  "source_node",
-  "source_content",
-  "module_snapshot",
-  "node_snapshot",
-  "source_module_snapshot",
-  "embedded_module",
-  "resolved_content",
-]);
-
-type ReferenceInputNormalizationStats = {
-  beforeCount: number;
-  afterCount: number;
-  duplicateCount: number;
-  strippedCount: number;
-  invalidCount: number;
-  cycleCount: number;
-  invalidSamples: string[];
-};
 
 function cloneRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? safeClone(value) : {};
@@ -934,267 +901,6 @@ function normalizeReferenceOutputParams(params: Record<string, unknown>, layerId
     is_core_source: authoritySourceType === "core_fact",
     override_allowed: typeof params.override_allowed === "boolean" ? params.override_allowed : false,
   };
-}
-
-function referenceInputString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function referenceInputStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
-}
-
-function referenceInputScope(value: unknown, fieldPaths: string[]): ReferenceInputScope {
-  if (REFERENCE_INPUT_SCOPES.includes(value as ReferenceInputScope)) {
-    return value as ReferenceInputScope;
-  }
-  return fieldPaths.length > 0 ? "field" : "module";
-}
-
-function referenceInputType(value: unknown): ReferenceInputType {
-  return REFERENCE_INPUT_TYPES.includes(value as ReferenceInputType) ? (value as ReferenceInputType) : "references";
-}
-
-function referenceInputHasEmbeddedContent(item: Record<string, unknown>): boolean {
-  return Object.keys(item).some((key) => !REFERENCE_INPUT_POINTER_KEYS.has(key) || REFERENCE_INPUT_FORBIDDEN_KEYS.has(key));
-}
-
-function normalizeReferenceInputItem(item: unknown): Record<string, unknown> | null {
-  if (!isRecord(item)) {
-    return null;
-  }
-  const sourceFieldPaths = referenceInputStringArray(item.source_field_paths);
-  const sourceScope = referenceInputScope(item.source_scope, sourceFieldPaths);
-  return {
-    source_layer_id: referenceInputString(item.source_layer_id),
-    source_module_id: referenceInputString(item.source_module_id),
-    source_node_id: referenceInputString(item.source_node_id),
-    source_scope: sourceScope,
-    source_field_paths: sourceFieldPaths,
-    reference_type: referenceInputType(item.reference_type),
-    required: Boolean(item.required),
-  };
-}
-
-function normalizeReferenceInputReferences(
-  references: unknown,
-  stats?: ReferenceInputNormalizationStats
-): Record<string, unknown>[] {
-  const rawReferences = Array.isArray(references) ? references : [];
-  const seen = new Set<string>();
-  const normalizedReferences: Record<string, unknown>[] = [];
-  stats && (stats.beforeCount += rawReferences.length);
-  for (const rawReference of rawReferences) {
-    if (isRecord(rawReference) && referenceInputHasEmbeddedContent(rawReference)) {
-      stats && (stats.strippedCount += 1);
-    }
-    const normalized = normalizeReferenceInputItem(rawReference);
-    if (!normalized) {
-      stats && (stats.strippedCount += 1);
-      continue;
-    }
-    const signature = stableJson(normalized);
-    if (seen.has(signature)) {
-      stats && (stats.duplicateCount += 1);
-      continue;
-    }
-    seen.add(signature);
-    normalizedReferences.push(normalized);
-  }
-  stats && (stats.afterCount += normalizedReferences.length);
-  return normalizedReferences;
-}
-
-function normalizeReferenceInputParams(params: Record<string, unknown>, stats?: ReferenceInputNormalizationStats): Record<string, unknown> {
-  if (!Array.isArray(params.references)) {
-    return params;
-  }
-  return {
-    ...params,
-    references: normalizeReferenceInputReferences(params.references, stats),
-  };
-}
-
-function emptyReferenceInputStats(): ReferenceInputNormalizationStats {
-  return {
-    beforeCount: 0,
-    afterCount: 0,
-    duplicateCount: 0,
-    strippedCount: 0,
-    invalidCount: 0,
-    cycleCount: 0,
-    invalidSamples: [],
-  };
-}
-
-function addReferenceInvalidSample(stats: ReferenceInputNormalizationStats, message: string) {
-  stats.invalidCount += 1;
-  if (stats.invalidSamples.length < 8) {
-    stats.invalidSamples.push(message);
-  }
-}
-
-function moduleGraphNodeIds(module: Record<string, unknown>): Set<string> {
-  const graph = isRecord(module.module_graph) ? module.module_graph : {};
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
-  const ids = new Set<string>();
-  for (const node of nodes) {
-    const nodeId = String(node.node_id || "");
-    if (nodeId) {
-      ids.add(nodeId);
-    }
-    const data = isRecord(node.data) ? node.data : {};
-    const catalogNodeId = String(data.catalog_node_id || "");
-    if (catalogNodeId) {
-      ids.add(catalogNodeId);
-    }
-  }
-  return ids;
-}
-
-function referenceInputItemsFromModule(module: Record<string, unknown>): Record<string, unknown>[] {
-  const graph = isRecord(module.module_graph) ? module.module_graph : {};
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
-  const references: Record<string, unknown>[] = [];
-  for (const node of nodes) {
-    if (String(node.node_type || "") !== "reference_input") {
-      continue;
-    }
-    const params = isRecord(node.params) ? node.params : {};
-    if (Array.isArray(params.references)) {
-      references.push(...params.references.filter(isRecord));
-    }
-  }
-  return references;
-}
-
-function detectReferenceCycles(edges: Array<{ source: string; target: string }>): number {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of edges) {
-    if (!edge.source || !edge.target) {
-      continue;
-    }
-    const targets = adjacency.get(edge.source) ?? [];
-    targets.push(edge.target);
-    adjacency.set(edge.source, targets);
-  }
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  let cycles = 0;
-
-  const visit = (moduleId: string) => {
-    if (visiting.has(moduleId)) {
-      cycles += 1;
-      return;
-    }
-    if (visited.has(moduleId)) {
-      return;
-    }
-    visiting.add(moduleId);
-    for (const target of adjacency.get(moduleId) ?? []) {
-      visit(target);
-    }
-    visiting.delete(moduleId);
-    visited.add(moduleId);
-  };
-
-  for (const moduleId of adjacency.keys()) {
-    visit(moduleId);
-  }
-  return cycles;
-}
-
-function validateReferenceInputs(workflow: Workflow, stats: ReferenceInputNormalizationStats) {
-  const modules = Array.isArray(workflow.modules) ? workflow.modules.filter(isRecord) : [];
-  const layerIds = new Set(modules.map((module) => String(module.layer_id || "")).filter(Boolean));
-  const moduleById = new Map<string, Record<string, unknown>>();
-  const nodeIdsByModule = new Map<string, Set<string>>();
-  for (const module of modules) {
-    const moduleId = String(module.module_id || "");
-    if (!moduleId) {
-      continue;
-    }
-    moduleById.set(moduleId, module);
-    nodeIdsByModule.set(moduleId, moduleGraphNodeIds(module));
-  }
-  const referenceEdges: Array<{ source: string; target: string }> = [];
-
-  for (const module of modules) {
-    const targetModuleId = String(module.module_id || "");
-    for (const reference of referenceInputItemsFromModule(module)) {
-      const sourceLayerId = String(reference.source_layer_id || "");
-      const sourceModuleId = String(reference.source_module_id || "");
-      const sourceNodeId = String(reference.source_node_id || "");
-      const sourceScope = String(reference.source_scope || "");
-      const sourceFieldPaths = referenceInputStringArray(reference.source_field_paths);
-      if (!sourceLayerId || !layerIds.has(sourceLayerId)) {
-        addReferenceInvalidSample(stats, `${targetModuleId}: missing source_layer_id ${sourceLayerId || "(empty)"}`);
-      }
-      const sourceModule = moduleById.get(sourceModuleId);
-      if (!sourceModule) {
-        addReferenceInvalidSample(stats, `${targetModuleId}: missing source_module_id ${sourceModuleId || "(empty)"}`);
-      } else if (sourceLayerId && String(sourceModule.layer_id || "") !== sourceLayerId) {
-        addReferenceInvalidSample(stats, `${targetModuleId}: source_module_id ${sourceModuleId} is not in ${sourceLayerId}`);
-      }
-      if (sourceNodeId) {
-        const sourceNodeIds = nodeIdsByModule.get(sourceModuleId);
-        if (!sourceNodeIds?.has(sourceNodeId)) {
-          addReferenceInvalidSample(stats, `${targetModuleId}: missing source_node_id ${sourceNodeId}`);
-        }
-      } else if (sourceScope === "node" || sourceScope === "field") {
-        addReferenceInvalidSample(stats, `${targetModuleId}: ${sourceScope} reference missing source_node_id`);
-      }
-      if (sourceScope === "field" && sourceFieldPaths.length === 0) {
-        addReferenceInvalidSample(stats, `${targetModuleId}: field reference missing source_field_paths`);
-      }
-      if (sourceScope === "module") {
-        for (const key of Object.keys(reference)) {
-          if (REFERENCE_INPUT_FORBIDDEN_KEYS.has(key)) {
-            addReferenceInvalidSample(stats, `${targetModuleId}: module reference contains embedded content key ${key}`);
-          }
-        }
-      }
-      if (sourceModuleId && targetModuleId) {
-        referenceEdges.push({ source: sourceModuleId, target: targetModuleId });
-      }
-    }
-  }
-
-  stats.cycleCount = detectReferenceCycles(referenceEdges);
-}
-
-function normalizeWorkflowReferenceInputs(workflow: Workflow): { workflow: Workflow; stats: ReferenceInputNormalizationStats } {
-  const stats = emptyReferenceInputStats();
-  const nextWorkflow = safeClone(workflow) as Workflow;
-  if (Array.isArray(nextWorkflow.modules)) {
-    nextWorkflow.modules = nextWorkflow.modules.map((module) => {
-      if (!isRecord(module)) {
-        return module;
-      }
-      const graph = isRecord(module.module_graph) ? module.module_graph : null;
-      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : null;
-      if (!graph || !nodes) {
-        return module;
-      }
-      return {
-        ...module,
-        module_graph: {
-          ...graph,
-          nodes: nodes.map((node) => {
-            if (!isRecord(node) || String(node.node_type || "") !== "reference_input") {
-              return node;
-            }
-            return {
-              ...node,
-              params: normalizeReferenceInputParams(cloneRecord(node.params), stats),
-            };
-          }),
-        },
-      };
-    }) as Workflow["modules"];
-  }
-  validateReferenceInputs(nextWorkflow, stats);
-  return { workflow: nextWorkflow, stats };
 }
 
 function cloneArray(value: unknown): unknown[] {
@@ -1477,9 +1183,6 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   }
   if (compileNodeType === "reference_output") {
     params = normalizeReferenceOutputParams(params, compileLayerId);
-  }
-  if (compileNodeType === "reference_input") {
-    params = normalizeReferenceInputParams(params);
   }
   return {
     node_id: String(data.catalog_node_id || schemaNode.node_id),
@@ -3936,22 +3639,13 @@ export function CanvasShell() {
     if (!currentWorkflow) {
       return;
     }
-    const normalizedReferences = normalizeWorkflowReferenceInputs(currentWorkflow);
-    const referenceStats = normalizedReferences.stats;
     setBottomTab("logs");
     setActiveDrawer("logs");
-    appendLog(
-      `[reference-input] pure pointer normalize: ${referenceStats.beforeCount} -> ${referenceStats.afterCount}; invalid=${referenceStats.invalidCount}; duplicates=${referenceStats.duplicateCount}; stripped=${referenceStats.strippedCount}; cycles=${referenceStats.cycleCount}`,
-      referenceStats.invalidCount > 0 || referenceStats.cycleCount > 0 ? "warn" : "info"
-    );
-    for (const sample of referenceStats.invalidSamples) {
-      appendLog(`[reference-input] ${sample}`, "warn");
-    }
-    await compileDR(sanitizeWorkflowForDrCompile(normalizedReferences.workflow));
+    await compileDR(sanitizeWorkflowForDrCompile(currentWorkflow));
     if (useCanvasStore.getState().canExportDR) {
       setRequiresDrRecompile(false);
     }
-  }, [appendLog, compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
+  }, [compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
 
   // Stage 6.3.3 step 2 — Export .digital_resident: download the already-validated
   // compiled DR. Disabled in the UI unless a valid DR was compiled first.
