@@ -239,6 +239,22 @@ function genericFieldDrMapping(layerId: string, moduleId: string, fieldKey: stri
   return layerId && moduleId && fieldKey ? `payload.layers.${layerId}.modules.${moduleId}.fields.${fieldKey}` : "";
 }
 
+const ENVIRONMENT_MODULE_LAYER_ID = "layer_7";
+const ENVIRONMENT_MODULE_ID = "environment_setting";
+const ENVIRONMENT_FIELD_INPUT_NODE_ID = "environment_field_input";
+const ENVIRONMENT_FIELD_MAPPING_KEYS = new Set([
+  "city_environment",
+  "natural_environment",
+  "physical_living_environment",
+  "daily_living_environment",
+  "social_environment",
+  "network_environment",
+]);
+
+function environmentFieldDrMapping(fieldKey: string) {
+  return genericFieldDrMapping(ENVIRONMENT_MODULE_LAYER_ID, ENVIRONMENT_MODULE_ID, fieldKey);
+}
+
 function legacyTextValue(data: Record<string, unknown>, params: Record<string, unknown>) {
   const candidate = [params.text, data.source_text, data.text, data.value, data.content, data.prompt].find(
     (value) => typeof value === "string" && value.trim()
@@ -1056,6 +1072,58 @@ function migrateMemoryProviderRouterOperationsGraph(
   return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
+function migrateEnvironmentFieldMappingsGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (identity.layerId !== ENVIRONMENT_MODULE_LAYER_ID || identity.moduleId !== ENVIRONMENT_MODULE_ID) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    if (catalogNodeId !== ENVIRONMENT_FIELD_INPUT_NODE_ID) {
+      return nextNode;
+    }
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (!Array.isArray(params.fields)) {
+      return nextNode;
+    }
+    let fieldsChanged = false;
+    const fields = params.fields.map((field) => {
+      if (!isRecord(field)) {
+        return field;
+      }
+      const fieldKey = stringValue(field.field_key) || stringValue(field.field_id);
+      if (!ENVIRONMENT_FIELD_MAPPING_KEYS.has(fieldKey)) {
+        return field;
+      }
+      const nextMapping = stringValue(field.dr_mapping) || environmentFieldDrMapping(fieldKey);
+      if (nextMapping === field.dr_mapping && field.dr_mapping_auto === true) {
+        return field;
+      }
+      fieldsChanged = true;
+      return { ...field, dr_mapping: nextMapping, dr_mapping_auto: true };
+    });
+    if (!fieldsChanged) {
+      return nextNode;
+    }
+    data.params = { ...params, fields };
+    changed = true;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
 function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
   if (!nodeIdMap.size) {
     return;
@@ -1126,7 +1194,21 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
   }
   const graphAfterMemoryRouterOperationsMigration = memoryRouterOperationsMigration ?? graphAfterMemoryRouterMigration;
-  const migratedGraph = migrateGenericFieldsGraph(graphAfterMemoryRouterOperationsMigration, store.moduleInstanceRegistry);
+  const environmentMappingsMigration = migrateEnvironmentFieldMappingsGraph(graphAfterMemoryRouterOperationsMigration, store.moduleInstanceRegistry);
+  if (environmentMappingsMigration) {
+    store.updateModuleGraph(
+      environmentMappingsMigration.moduleNodeId,
+      environmentMappingsMigration.nodes,
+      environmentMappingsMigration.edges,
+      environmentMappingsMigration.viewport
+    );
+    saveModuleGraphState(environmentMappingsMigration.moduleNodeId, environmentMappingsMigration.nodes, environmentMappingsMigration.edges);
+    console.log("[P1-BRIDGE] migrated environment field DR mappings", {
+      moduleNodeId: environmentMappingsMigration.moduleNodeId,
+    });
+  }
+  const graphAfterEnvironmentMappingsMigration = environmentMappingsMigration ?? graphAfterMemoryRouterOperationsMigration;
+  const migratedGraph = migrateGenericFieldsGraph(graphAfterEnvironmentMappingsMigration, store.moduleInstanceRegistry);
   if (migratedGraph) {
     store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
     saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
@@ -1135,7 +1217,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
     return migratedGraph;
   }
-  return graphAfterMemoryRouterOperationsMigration;
+  return graphAfterEnvironmentMappingsMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {

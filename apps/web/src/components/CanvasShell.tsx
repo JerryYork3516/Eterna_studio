@@ -363,6 +363,12 @@ type ModuleAssistantPanelState = {
   canApplyPatch: boolean;
   onApplyPatch: (patch: StudioAssistantPatch) => void;
 };
+type ModuleDebugTraceContext = {
+  logs: { ts?: string; level: string; message: string }[];
+  trace: unknown;
+  validation: unknown;
+  jsonPreview: unknown;
+};
 type WorkspaceMode = "inline" | "right" | "split" | "window";
 type RunWorkflowStatus = "idle" | "running" | "success" | "error";
 type AlignAction = "left" | "right" | "top" | "bottom" | "center-x" | "center-y";
@@ -730,6 +736,46 @@ const IDENTITY_CORE_MODULE_IDS = new Set([
   "module_identity_anchor",
 ]);
 const IDENTITY_REQUIRED_COMPILE_TYPES = ["field_input", "structure_normalize", "validation", "update_rule", "module_output"] as const;
+const ENVIRONMENT_FIELD_MAPPING_KEYS = new Set([
+  "city_environment",
+  "natural_environment",
+  "physical_living_environment",
+  "daily_living_environment",
+  "social_environment",
+  "network_environment",
+]);
+
+function normalizeEnvironmentFieldMappingsForCompile(
+  params: Record<string, unknown>,
+  module: ModuleCatalogEntryV04,
+  catalogNodeId: string
+) {
+  if (module.layer_id !== "layer_7" || module.module_id !== "environment_setting" || catalogNodeId !== "environment_field_input") {
+    return params;
+  }
+  if (!Array.isArray(params.fields)) {
+    return params;
+  }
+  let changed = false;
+  const fields = params.fields.map((field) => {
+    if (!isRecord(field)) {
+      return field;
+    }
+    const fieldKey = String(field.field_key || field.field_id || "");
+    if (!ENVIRONMENT_FIELD_MAPPING_KEYS.has(fieldKey)) {
+      return field;
+    }
+    const mapping = typeof field.dr_mapping === "string" && field.dr_mapping
+      ? field.dr_mapping
+      : `payload.layers.layer_7.modules.environment_setting.fields.${fieldKey}`;
+    if (mapping === field.dr_mapping && field.dr_mapping_auto === true) {
+      return field;
+    }
+    changed = true;
+    return { ...field, dr_mapping: mapping, dr_mapping_auto: true };
+  });
+  return changed ? { ...params, fields } : params;
+}
 
 function isIdentityCoreModule(module: ModuleCatalogEntryV04 | null | undefined) {
   return Boolean(module && module.layer_id === "layer_1" && IDENTITY_CORE_MODULE_IDS.has(module.module_id));
@@ -1707,6 +1753,7 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id);
   params = normalizeMemoryRouterTypeResolverParams(params, catalogNodeId, module.module_id);
   params = normalizeMemoryRouterOperationParams(params, catalogNodeId, module.module_id);
+  params = normalizeEnvironmentFieldMappingsForCompile(params, module, catalogNodeId);
   const legacyNodeType = typeof data.legacy_node_type === "string" ? data.legacy_node_type : "";
   const compileNodeType = nodeType === "text_input" && legacyNodeType ? legacyNodeType : nodeType;
   const compileLayerId =
@@ -2614,6 +2661,7 @@ export function CanvasShell() {
   const [residentPreviewPanelOpen, setResidentPreviewPanelOpen] = useState(false);
   const [residentNeuralGraphPanelOpen, setResidentNeuralGraphPanelOpen] = useState(false);
   const [moduleAssistantPanel, setModuleAssistantPanel] = useState<ModuleAssistantPanelState | null>(null);
+  const [moduleDebugTraceContext, setModuleDebugTraceContext] = useState<ModuleDebugTraceContext | null>(null);
   const [selectedTemplateType, setSelectedTemplateType] = useState("persona_builder");
   const [loadingTemplateType, setLoadingTemplateType] = useState<string | null>(null);
   const [nodeLibraryCollapsed, setNodeLibraryCollapsed] = useState(true);
@@ -4936,6 +4984,10 @@ export function CanvasShell() {
     setModuleAssistantPanel(panel);
   }, []);
 
+  const handleModuleDebugTraceContextChange = useCallback((context: ModuleDebugTraceContext | null) => {
+    setModuleDebugTraceContext(context);
+  }, []);
+
   const splitLayer = workspaceMode === "split" ? selectedLayer : null;
   const residentInstance = extractResidentInstance(residentPreviewOutput);
   const assistantPanel = activeModuleNode && moduleAssistantPanel
@@ -5293,7 +5345,11 @@ export function CanvasShell() {
                     onRenameModule={(id, name) => setModuleNames((current) => ({ ...current, [id]: name }))}
                     onExecutionResult={setResidentPreviewOutput}
                     onAssistantPanelChange={handleModuleAssistantPanelChange}
-                    onClose={() => closeModuleTab(activeModuleNode.node_id)}
+                    onDebugContextChange={handleModuleDebugTraceContextChange}
+                    onClose={() => {
+                      setModuleDebugTraceContext(null);
+                      closeModuleTab(activeModuleNode.node_id);
+                    }}
                   />
                 ) : null}
               </div>
@@ -5470,10 +5526,10 @@ export function CanvasShell() {
             open
             embedded
             t={t}
-            logs={logs}
-            trace={loadedDRResult?.execution_trace ?? (runtimeResult as { execution_trace?: unknown } | null)?.execution_trace ?? null}
-            validation={loadedDRResult?.validation_result ?? validation}
-            jsonPreview={{
+            logs={activeModuleNode && moduleDebugTraceContext ? moduleDebugTraceContext.logs : logs}
+            trace={activeModuleNode && moduleDebugTraceContext ? moduleDebugTraceContext.trace : loadedDRResult?.execution_trace ?? (runtimeResult as { execution_trace?: unknown } | null)?.execution_trace ?? null}
+            validation={activeModuleNode && moduleDebugTraceContext ? moduleDebugTraceContext.validation : loadedDRResult?.validation_result ?? validation}
+            jsonPreview={activeModuleNode && moduleDebugTraceContext ? moduleDebugTraceContext.jsonPreview : {
               runtime_result: runtimeResult,
               loaded_file: loadedDRResult,
               export_preview: exportPreview,
@@ -7177,6 +7233,7 @@ function ModuleCanvasPanel({
   onRenameModule,
   onExecutionResult,
   onAssistantPanelChange,
+  onDebugContextChange,
   onClose
 }: {
   moduleNode: WorkflowNode;
@@ -7189,6 +7246,7 @@ function ModuleCanvasPanel({
   onRenameModule: (id: string, name: string) => void;
   onExecutionResult: (result: unknown) => void;
   onAssistantPanelChange: (panel: ModuleAssistantPanelState | null) => void;
+  onDebugContextChange: (context: ModuleDebugTraceContext | null) => void;
   onClose: () => void;
 }) {
   const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
@@ -7257,7 +7315,6 @@ function ModuleCanvasPanel({
   const [runStatus, setRunStatus] = useState<RunWorkflowStatus>("idle");
   const [runInputText, setRunInputText] = useState("");
   const [showModuleMiniMap, setShowModuleMiniMap] = useState(true);
-  const [showModuleDebugTracePanel, setShowModuleDebugTracePanel] = useState(true);
 	  const addedRef = useRef(0);
   const moduleNodesRef = useRef(moduleNodes);
   const moduleEdgesRef = useRef(moduleEdges);
@@ -7677,6 +7734,22 @@ function ModuleCanvasPanel({
     });
     return () => onAssistantPanelChange(null);
   }, [applyAssistantPatch, assistantRequest, onAssistantPanelChange, selectedId, selectedSchema, t, title]);
+
+  useEffect(() => {
+    onDebugContextChange({
+      logs: executionError ? [{ level: "error", message: executionError }] : [],
+      trace: executionResult,
+      validation: selectedSchema?.validation ?? null,
+      jsonPreview: {
+        module_id: moduleNode.node_id,
+        selected_node: selectedSchema,
+        node_count: moduleNodes.length,
+        edge_count: moduleEdges.length,
+        run_status: runStatus,
+      },
+    });
+    return () => onDebugContextChange(null);
+  }, [executionError, executionResult, moduleEdges.length, moduleNode.node_id, moduleNodes.length, onDebugContextChange, runStatus, selectedSchema]);
 
   // 自动保存模块画布图 (nodes + edges) 到 localStorage
   useEffect(() => {
@@ -8378,20 +8451,6 @@ function ModuleCanvasPanel({
             >
               <Background color="#333" gap={20} />
               <Controls />
-              <CanvasDebugTracePanel
-                open={showModuleDebugTracePanel}
-                t={t}
-                logs={executionError ? [{ level: "error", message: executionError }] : []}
-                trace={executionResult}
-                validation={selectedSchema?.validation ?? null}
-                jsonPreview={{
-                  selected_node: selectedSchema,
-                  node_count: moduleNodes.length,
-                  edge_count: moduleEdges.length,
-                  run_status: runStatus
-                }}
-                onToggle={() => setShowModuleDebugTracePanel((value) => !value)}
-              />
               {showModuleMiniMap ? (
                 <>
                   <MiniMap pannable zoomable className="canvas-debug-panel__minimap" />

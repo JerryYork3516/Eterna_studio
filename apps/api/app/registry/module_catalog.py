@@ -2370,7 +2370,7 @@ def _language_behavior_module() -> ModuleV04:
             _language_behavior_option("light_follow_up", "lightFollowUp"),
             _language_behavior_option("warm_comfort", "warmComfort"),
             _language_behavior_option("clear_refusal", "clearRefusal"),
-            _language_behavior_option("occasional_city_imagery", "occasionalCityImagery"),
+            _language_behavior_option("occasional_city_imagery", "occasionalCityImagery", default_selected=False),
             _language_behavior_option("short_subtitle_rhythm", "shortSubtitleRhythm"),
         ]
     )
@@ -5909,6 +5909,495 @@ def _memory_update_module() -> ModuleV04:
     )
 
 
+def _environment_module() -> ModuleV04:
+    """Layer 7's editable, compile-time environment context shell.
+
+    This begins as a direct five-node adaptation of the Layer 1 module
+    backbone.  It deliberately has no reference nodes or relationships; those
+    are configured separately when the environment module needs them.
+    """
+
+    module_id = "environment_setting"
+    output_key = "environment_context"
+    node_ids = {
+        "input": "environment_field_input",
+        "normalize": "environment_structure_normalize",
+        "validation": "environment_validation",
+        "update": "environment_update_rule",
+        "output": "environment_module_output",
+    }
+    fields = [
+        {
+            "field_key": "city_environment",
+            "field_name": "城市环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民长期熟悉的城市、地域氛围、城市节奏、公共空间和生活气息。用于提供城市语境，不写成旅游攻略，不堆砌景点，不重新定义居民身份。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.city_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "natural_environment",
+            "field_name": "自然环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民熟悉的季节、气候感受、地形、自然景观和自然光线等长期背景。只描述环境语境，不表示实时天气获取或现实环境感知能力。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.natural_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "physical_living_environment",
+            "field_name": "物理生活环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民熟悉的房间、住宅、社区、街道、校园、工作空间和通勤空间等日常物理场景。不填写真实住址，不声明摄像头、定位、空间扫描或 AR 感知能力。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.physical_living_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "daily_living_environment",
+            "field_name": "日常生活环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义饮食、作息、声音、光线、气味、生活物件和日常活动形成的生活氛围。用于增强生活感，不代替 Layer 5 的具体记忆内容。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.daily_living_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "social_environment",
+            "field_name": "社会环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义家庭、学校、职场、社区、熟人社会、城市压力和现实人际环境。只提供社会背景，不重新定义人格、关系模式或安全边界。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.social_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "network_environment",
+            "field_name": "网络环境",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义线上沟通、社交媒体、信息密度、虚拟空间和数字陪伴所处的网络语境。不声明自主联网、浏览网页、控制社交媒体或网络行动能力。",
+            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.network_environment",
+            "dr_mapping_auto": True,
+            "reference_enabled": True,
+        },
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(field["field_key"]): field["field_value"] for field in fields},
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        (
+            "input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+            },
+            "fieldInput",
+        ),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "output_key": output_key,
+                "normalize_rules": [
+                    "recognize_environment_fields_by_name",
+                    "preserve_environment_category_meaning",
+                    "remove_duplicate_expression_preserve_information",
+                    "do_not_infer_type_from_field_order",
+                    "reject_identity_persona_behavior_memory_relationship_or_worldview_rewrite",
+                    "do_not_convert_static_environment_to_realtime_perception",
+                    "do_not_infer_missing_environment_facts",
+                    "no_hardcoded_resident_identity",
+                ],
+                "outputs": ["environment_fields", "environment_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["normalize"],
+                "validation_rules": [
+                    "environment_fields_consistent",
+                    "no_resident_identity_redefinition",
+                    "no_layer3_safety_boundary_override",
+                    "no_layer2_layer5_layer8_conflict",
+                    "no_real_address_institution_identity_or_activity_trace",
+                    "no_travel_guide_or_landmark_list",
+                    "no_regional_stereotype",
+                    "no_realtime_weather_location_camera_sensor_network_screen_or_ar_capability",
+                    "no_real_human_experience_impersonation",
+                    "no_autonomous_browsing_posting_account_or_platform_control",
+                ],
+            },
+            "validation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "update_policy": {
+                    "long_term_environment_context": True,
+                    "user_explicit_update_allowed": True,
+                    "single_dialogue_cannot_auto_update": True,
+                    "requires_renormalization": True,
+                    "requires_revalidation": True,
+                    "requires_recompile": False,
+                    "requires_update_reason": True,
+                    "referenced_by_other_modules_read_only": True,
+                    "cannot_override_layer1_source_of_truth": True,
+                    "realtime_environment_cannot_write_back": True,
+                    "future_dynamic_context_isolated": True,
+                },
+            },
+            "updateRule",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {"type": "object", "required": True},
+            },
+            "output",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_7",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer7.environment.node.{i18n_suffix}.title",
+                "description": f"layer7.environment.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "world",
+        "Environment Module",
+        "layer_7",
+        status=ProtocolStatus.mock,
+        category="context",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["world", "environment", "context", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(("input", "normalize", "validation", "update"), ("normalize", "validation", "update", "output"))
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 7 environment context."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer7.environment.module.title",
+            "description": "layer7.environment.module.description",
+            "output": "layer7.environment.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in field.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for field in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _worldview_module() -> ModuleV04:
+    """Layer 7's long-term worldview context shell without reference nodes."""
+
+    module_id = "world_setting"
+    output_key = "worldview_context"
+    node_ids = {
+        "input": "worldview_field_input",
+        "normalize": "worldview_structure_normalize",
+        "validation": "worldview_validation",
+        "update": "worldview_update_rule",
+        "output": "worldview_module_output",
+    }
+    fields = [
+        {
+            "field_key": "reality_worldview",
+            "field_name": "现实世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民如何理解现实生活、人的有限性、普通生活、现实压力、选择与代价。用于形成稳定的现实判断框架，不填写具体城市环境，不替代医疗、法律、财务或心理治疗等专业判断。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "value_worldview",
+            "field_name": "价值世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民认为什么值得重视，包括尊严、责任、陪伴、稳定、自由、成长、理解和边界。用于指导价值取舍，但不重新定义第二层人格和第三层安全边界。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "relationship_worldview",
+            "field_name": "关系世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民如何理解家庭、朋友、信任、亲密、陪伴、承诺、距离和关系边界。关系需要逐步建立，不默认恋爱关系，不鼓励情感依赖，不替代第十一层关系模式。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "time_worldview",
+            "field_name": "时间世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民如何理解过去、现在、未来、成长、变化、失去、等待和长期关系。用于保持长期判断连续性，不填写具体事件记忆，不替代第五层记忆内容。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "social_worldview",
+            "field_name": "社会世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民如何理解社会规则、职业压力、城市生活、家庭责任、代际沟通、人际疏离和公共秩序。用于理解现实社会处境，不扩写政治、宗教、民族或意识形态立场。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+        {
+            "field_key": "network_worldview",
+            "field_name": "网络世界观",
+            "field_value": "",
+            "field_type": "long_text",
+            "description": "定义该居民如何理解网络空间、线上沟通、数字身份、社交媒体、信息过载和数字陪伴。承认线上关系的价值，但不伪装现实真人关系，不声明自主联网、浏览网页或控制网络平台的能力。",
+            "dr_mapping": "",
+            "reference_enabled": True,
+        },
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(field["field_key"]): field["field_value"] for field in fields},
+        "worldview_summary": "",
+        "validation_result": "",
+        "update_version": "",
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        (
+            "input",
+            "text_input",
+            {"mode": "generic_fields", "text": "", "fields": fields},
+            "fieldInput",
+        ),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "output_key": output_key,
+                "normalize_rules": [
+                    "recognize_worldview_fields_by_name",
+                    "preserve_worldview_category_meaning",
+                    "remove_duplicate_expression_preserve_information",
+                    "do_not_infer_type_from_field_order",
+                    "reject_personality_behavior_environment_memory_or_relationship_rewrite",
+                    "do_not_infer_missing_value_stance",
+                    "no_hardcoded_resident_identity",
+                    "summary_derived_from_six_worldview_fields_only",
+                ],
+                "outputs": ["worldview_fields", "worldview_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["normalize"],
+                "validation_rules": [
+                    "worldview_fields_consistent",
+                    "no_layer1_identity_redefinition",
+                    "no_layer3_safety_boundary_override",
+                    "no_layer2_layer5_layer8_conflict",
+                    "no_default_romance_or_dependency_induction",
+                    "no_real_human_impersonation_or_fictional_real_identity",
+                    "no_political_religious_ethnic_or_ideological_expansion",
+                    "no_network_sensor_or_tool_capability_claim",
+                    "do_not_treat_environment_facts_as_value_judgement",
+                    "do_not_promote_single_emotion_or_dialogue_to_worldview",
+                ],
+            },
+            "validation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "update_policy": {
+                    "long_term_judgement_framework": True,
+                    "single_dialogue_cannot_update": True,
+                    "user_explicit_update_allowed": True,
+                    "requires_renormalization": True,
+                    "requires_revalidation": True,
+                    "requires_recompile": False,
+                    "requires_update_reason": True,
+                    "referenced_by_other_layers_read_only": True,
+                    "cannot_override_layer1_source_of_truth": True,
+                    "environment_change_cannot_auto_rewrite": True,
+                    "memory_relationship_or_emotion_cannot_auto_upgrade": True,
+                },
+            },
+            "updateRule",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(field["field_key"]) for field in fields],
+                        "worldview_summary",
+                        "validation_result",
+                        "update_version",
+                    ],
+                },
+            },
+            "output",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_7",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer7.worldview.node.{i18n_suffix}.title",
+                "description": f"layer7.worldview.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "world",
+        "Worldview Module",
+        "layer_7",
+        status=ProtocolStatus.mock,
+        category="context",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["world", "worldview", "context", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(("input", "normalize", "validation", "update"), ("normalize", "validation", "update", "output"))
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 7 long-term worldview context."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer7.worldview.module.title",
+            "description": "layer7.worldview.module.description",
+            "output": "layer7.worldview.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "authority_source_type": "derived_config",
+            "authority_context": "long_term_judgement_framework",
+            "field_registry": [
+                {
+                    **{key: value for key, value in field.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for field in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
 MODULE_CATALOG: List[ModuleV04] = [
     # L1 Identity Core
     *[_identity_core_module(spec) for spec in IDENTITY_CORE_MODULE_SPECS],
@@ -5964,9 +6453,9 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("web_search_slot", "knowledge_slot", "Web Search Slot", "layer_6", status=ProtocolStatus.later, slot_type=SlotType.tool, category="knowledge", color_status="gray"),
 
     # L7 World / Context
-    _module("world_setting", "world", "World Setting", "layer_7", status=ProtocolStatus.mock, category="context", color_status="amber"),
+    _worldview_module(),
     _module("timeline_context", "world", "Timeline Context", "layer_7", status=ProtocolStatus.mock, category="context", color_status="amber"),
-    _module("environment_setting", "world", "Environment Setting", "layer_7", status=ProtocolStatus.mock, category="context", color_status="amber"),
+    _environment_module(),
     _module("social_rules", "world", "Social Rules", "layer_7", status=ProtocolStatus.mock, category="context", color_status="amber"),
     _module("realtime_environment", "world", "Realtime Environment", "layer_7", status=ProtocolStatus.later, category="context", color_status="gray"),
     _module("spatial_context_slot", "world_slot", "Spatial Context Slot", "layer_7", status=ProtocolStatus.later, slot_type=SlotType.tool, category="context", color_status="gray"),

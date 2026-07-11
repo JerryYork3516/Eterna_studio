@@ -550,6 +550,133 @@ def test_layer2_hidden_modules_are_catalog_only():
         assert module.ui_config.get("hidden_in_module_library") is True
 
 
+def test_layer7_environment_module_has_generic_field_backbone_without_references():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["environment_setting"]
+
+    assert module.layer_id == "layer_7"
+    assert module.module_name == "Environment Module"
+    assert module.is_placeholder is False
+    assert module.no_execution is True
+    assert module.mock_only is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "validation",
+        "update_rule",
+        "module_output",
+    ]
+    assert len(module.module_graph["edges"]) == 4
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    assert field_input["node_id"] == "environment_field_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    fields = field_input["params"]["fields"]
+    assert [field["field_name"] for field in fields] == [
+        "城市环境",
+        "自然环境",
+        "物理生活环境",
+        "日常生活环境",
+        "社会环境",
+        "网络环境",
+    ]
+    assert all(field["field_type"] == "long_text" for field in fields)
+    assert all(field["field_value"] == "" for field in fields)
+    assert all(field["reference_enabled"] is True for field in fields)
+    assert [field["dr_mapping"] for field in fields] == [
+        "payload.layers.layer_7.modules.environment_setting.fields.city_environment",
+        "payload.layers.layer_7.modules.environment_setting.fields.natural_environment",
+        "payload.layers.layer_7.modules.environment_setting.fields.physical_living_environment",
+        "payload.layers.layer_7.modules.environment_setting.fields.daily_living_environment",
+        "payload.layers.layer_7.modules.environment_setting.fields.social_environment",
+        "payload.layers.layer_7.modules.environment_setting.fields.network_environment",
+    ]
+    assert all(field["dr_mapping_auto"] is True for field in fields)
+
+
+def test_layer7_worldview_module_has_generic_field_backbone_without_references():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["world_setting"]
+
+    assert module.layer_id == "layer_7"
+    assert module.module_name == "Worldview Module"
+    assert module.is_placeholder is False
+    assert module.no_execution is True
+    assert module.mock_only is True
+    assert module.config["authority_source_type"] == "derived_config"
+    assert module.config["authority_context"] == "long_term_judgement_framework"
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "validation",
+        "update_rule",
+        "module_output",
+    ]
+    assert len(module.module_graph["edges"]) == 4
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    assert field_input["node_id"] == "worldview_field_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    fields = field_input["params"]["fields"]
+    assert [field["field_name"] for field in fields] == [
+        "现实世界观",
+        "价值世界观",
+        "关系世界观",
+        "时间世界观",
+        "社会世界观",
+        "网络世界观",
+    ]
+    assert all(field["field_type"] == "long_text" for field in fields)
+    assert all(field["field_value"] == "" for field in fields)
+    assert all(field["reference_enabled"] is True for field in fields)
+
+    output = nodes[-1]["outputs"]["worldview_context"]
+    assert output["worldview_summary"] == ""
+    assert output["validation_result"] == ""
+    assert output["update_version"] == ""
+
+
+def test_layer7_environment_and_worldview_control_nodes_preserve_static_context_rules():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    environment = catalog_map["environment_setting"]
+    environment_nodes = {node["node_id"]: node for node in environment.module_graph["nodes"]}
+    environment_normalize = environment_nodes["environment_structure_normalize"]["params"]
+    environment_validation = environment_nodes["environment_validation"]["params"]
+    environment_update = environment_nodes["environment_update_rule"]["params"]["update_policy"]
+    assert environment_normalize["output_key"] == "environment_context"
+    assert environment_normalize["outputs"] == ["environment_fields", "environment_summary"]
+    assert "no_autonomous_browsing_posting_account_or_platform_control" in environment_validation["validation_rules"]
+    assert environment_update["requires_renormalization"] is True
+    assert environment_update["requires_revalidation"] is True
+    assert environment_update["requires_recompile"] is False
+    assert environment_update["requires_update_reason"] is True
+
+    worldview = catalog_map["world_setting"]
+    worldview_nodes = {node["node_id"]: node for node in worldview.module_graph["nodes"]}
+    worldview_normalize = worldview_nodes["worldview_structure_normalize"]["params"]
+    worldview_validation = worldview_nodes["worldview_validation"]["params"]
+    worldview_update = worldview_nodes["worldview_update_rule"]["params"]["update_policy"]
+    assert worldview_normalize["output_key"] == "worldview_context"
+    assert worldview_normalize["outputs"] == ["worldview_fields", "worldview_summary"]
+    assert "do_not_promote_single_emotion_or_dialogue_to_worldview" in worldview_validation["validation_rules"]
+    assert worldview_update["requires_renormalization"] is True
+    assert worldview_update["requires_revalidation"] is True
+    assert worldview_update["requires_recompile"] is False
+    assert worldview_update["requires_update_reason"] is True
+
+    for module in (environment, worldview):
+        assert len(module.module_graph["nodes"]) == 5
+        assert len(module.module_graph["edges"]) == 4
+        assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in module.module_graph["nodes"])
+
+
 def test_layer3_content_safety_is_core_config_module():
     catalog_map = {module.module_id: module for module in get_module_catalog()}
     module = catalog_map[CONTENT_SAFETY_MODULE_ID]
@@ -862,7 +989,6 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
             "light_follow_up",
             "warm_comfort",
             "clear_refusal",
-            "occasional_city_imagery",
             "short_subtitle_rhythm",
         ],
         "language_behavior_validation": [
@@ -907,7 +1033,20 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
         assert checkbox_config["selected_options"] == expected_selected
         assert checkbox_config["default_selected_options"] == expected_selected
         assert checkbox_config["custom_text"] == ""
-        assert [option["option_id"] for option in checkbox_config["default_options"]] == expected_selected
+        option_ids = [option["option_id"] for option in checkbox_config["default_options"]]
+        if node["node_id"] == "language_behavior_output_expression":
+            assert option_ids == [
+                "restrained_addressing",
+                "light_follow_up",
+                "warm_comfort",
+                "clear_refusal",
+                "occasional_city_imagery",
+                "short_subtitle_rhythm",
+            ]
+            city_imagery = next(option for option in checkbox_config["default_options"] if option["option_id"] == "occasional_city_imagery")
+            assert city_imagery["default_selected"] is False
+        else:
+            assert option_ids == expected_selected
         assert all(option["i18n_keys"]["label"].startswith("layer8.languageBehavior.option.") for option in checkbox_config["default_options"])
         assert not set(checkbox_config["selected_options"]) & {
             "forbidden_basic_identity_name",
