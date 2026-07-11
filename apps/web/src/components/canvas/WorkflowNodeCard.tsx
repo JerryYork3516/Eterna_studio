@@ -1888,10 +1888,11 @@ function referenceOutputScopes(params: Record<string, unknown>): ReferenceScope[
 function normalizeReferenceOutputParams(params: Record<string, unknown>, layerId?: string): Record<string, unknown> {
   const exportScopes = referenceOutputScopes(params);
   const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, layerId);
+  const legacyExportScope = exportScopes.includes("module") ? "module" : exportScopes[0];
   return {
     ...params,
     export_scopes: exportScopes,
-    export_scope: exportScopes[0],
+    export_scope: legacyExportScope,
     allow_module_level_reference: exportScopes.includes("module"),
     authority_source_type: authoritySourceType,
     is_core_source: authoritySourceType === "core_fact",
@@ -2048,9 +2049,10 @@ function ReferenceOutputRenderer({
   const toggleExportScope = (scope: ReferenceScope, checked: boolean) => {
     const nextScopes = checked ? [...new Set([...activeScopes, scope])] : activeScopes.filter((item) => item !== scope);
     const safeScopes = nextScopes.length ? nextScopes : [...REFERENCE_SCOPES];
+    const legacyExportScope = safeScopes.includes("module") ? "module" : safeScopes[0];
     patch({
       export_scopes: safeScopes,
-      export_scope: safeScopes[0],
+      export_scope: legacyExportScope,
       allow_module_level_reference: safeScopes.includes("module"),
     });
   };
@@ -2109,10 +2111,11 @@ function ReferenceOutputRenderer({
             onChange={(event) =>
               {
                 const nextScopes = event.target.checked ? [...new Set([...activeScopes, "module"])] : activeScopes.filter((scope) => scope !== "module");
+                const safeScopes = nextScopes.length ? nextScopes : ["node", "field"];
                 patch({
                   allow_module_level_reference: event.target.checked,
-                  export_scopes: nextScopes.length ? nextScopes : ["node", "field"],
-                  export_scope: (nextScopes.length ? nextScopes : ["node", "field"])[0],
+                  export_scopes: safeScopes,
+                  export_scope: safeScopes.includes("module") ? "module" : safeScopes[0],
                 });
               }
             }

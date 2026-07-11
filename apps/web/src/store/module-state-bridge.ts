@@ -10,6 +10,7 @@ import { loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphS
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
 import { translate } from "@/i18n";
+import { preserveStoredModuleEdges, preserveStoredModuleNodePosition } from "./module-graph-merge";
 
 const MODULE_INSTANCE_SEPARATOR = "::";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
@@ -288,6 +289,49 @@ function fieldValue(field: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function genericFieldValueByKey(fields: Record<string, unknown>[]) {
+  const values = new Map<string, unknown>();
+  fields.forEach((field, index) => {
+    const key = String(field.field_key || field.field_id || field.key || field.id || `field_${index + 1}`);
+    if (!key) {
+      return;
+    }
+    values.set(key, "field_value" in field ? field.field_value : field.value);
+  });
+  return values;
+}
+
+function syncPrimaryLanguageFieldValue(fields: Record<string, unknown>[], value: unknown) {
+  return fields.map((field, index) => {
+    const fieldId = String(field.field_id || field.field_key || field.key || field.id || `field_${index + 1}`);
+    if (fieldId !== "primary_language") {
+      return field;
+    }
+    return {
+      ...field,
+      ...("field_value" in field || field.field_key ? { field_value: value } : {}),
+      ...("value" in field || field.field_id ? { value } : {}),
+    };
+  });
+}
+
+function syncPrimaryLanguageCompatibilityFields(params: Record<string, unknown>) {
+  const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+  const genericValues = genericFieldValueByKey(genericFields);
+  if (!genericValues.has("primary_language")) {
+    return params;
+  }
+  const primaryLanguage = genericValues.get("primary_language");
+  const nextParams = { ...params };
+  if (Array.isArray(nextParams.legacy_fields)) {
+    nextParams.legacy_fields = syncPrimaryLanguageFieldValue(nextParams.legacy_fields.filter(isRecord), primaryLanguage);
+  }
+  if (Array.isArray(nextParams.legacy_data_fields)) {
+    nextParams.legacy_data_fields = syncPrimaryLanguageFieldValue(nextParams.legacy_data_fields.filter(isRecord), primaryLanguage);
+  }
+  return nextParams;
+}
+
 function normalizeGenericField(
   field: Record<string, unknown>,
   index: number,
@@ -459,7 +503,7 @@ function mergeCatalogFieldSeed(
   return {
     ...graph,
     nodes: nextNodes,
-    edges: graph.edges?.length ? graph.edges : initialEdges ?? [],
+    edges: preserveStoredModuleEdges(graph.edges, initialEdges),
   };
 }
 
@@ -539,6 +583,9 @@ function shouldReplaceWithCatalogGraph(
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ) {
+  if (graph.nodes?.length || graph.edges?.length) {
+    return false;
+  }
   const catalogModuleId = catalogModuleIdFromSeed(initialNodes);
   if (!CATALOG_GRAPH_REPLACE_MODULE_IDS.has(catalogModuleId) || !initialNodes?.length) {
     return false;
@@ -614,8 +661,9 @@ function mergeCatalogLayoutSeed(
     const seedPosition = positions.get(catalogNodeId);
     if (seedPosition) {
       const currentPosition = positionValue((nextNode as Record<string, unknown>).position);
-      if (!currentPosition || currentPosition.x !== seedPosition.x || currentPosition.y !== seedPosition.y) {
-        setGraphNodePosition(nextNode, seedPosition);
+      const nextPosition = preserveStoredModuleNodePosition(currentPosition, seedPosition);
+      if (!currentPosition && nextPosition) {
+        setGraphNodePosition(nextNode, nextPosition);
         changed = true;
       }
     }
@@ -636,10 +684,7 @@ function mergeCatalogLayoutSeed(
     return nextNode;
   });
 
-  const nextEdges = initialEdges?.length ? initialEdges : graph.edges;
-  if (initialEdges?.length && stableJson(graph.edges) !== stableJson(initialEdges)) {
-    changed = true;
-  }
+  const nextEdges = preserveStoredModuleEdges(graph.edges, initialEdges);
   if (!changed) {
     return null;
   }
@@ -719,10 +764,12 @@ function migrateGenericFieldsGraph(
       ? refineGenericFieldsFromLegacy(cloneJson((params.fields as unknown[]).filter(isRecord)), legacyFields)
       : genericFieldsFromLegacyNode(data, params, identity.layerId, identity.moduleId);
     const needsLegacyDataBackup = Array.isArray(data.fields) && !Array.isArray(params.legacy_data_fields);
+    const syncedParams = syncPrimaryLanguageCompatibilityFields({ ...params, fields: genericFields });
     if (
       nodeType === "text_input" &&
       alreadyGeneric &&
       stableJson(genericFields) === stableJson(params.fields) &&
+      stableJson(syncedParams) === stableJson(params) &&
       !needsLegacyDataBackup
     ) {
       return nextNode;
@@ -743,7 +790,7 @@ function migrateGenericFieldsGraph(
       params.legacy_data_fields = cloneJson(data.fields);
     }
     params.fields = genericFields;
-    data.params = params;
+    data.params = syncPrimaryLanguageCompatibilityFields(params);
     changed = true;
     return nextNode;
   });

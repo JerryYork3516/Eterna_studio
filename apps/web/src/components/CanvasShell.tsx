@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { createPortal } from "react-dom";
 import {
   addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
   Background,
   Controls,
   Handle,
@@ -30,6 +32,7 @@ import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
 import { StudioAssistantPanel } from "@/components/assistant/StudioAssistantPanel";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
+import { filterDanglingModuleGraphEdges } from "@/store/module-graph-merge";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
 import { ResidentNeuralGraphPanel } from "@/components/neural-graph/ResidentNeuralGraphPanel";
@@ -856,15 +859,11 @@ function bestModuleGraphId(
   storeGraphs: Record<string, { nodes?: unknown[]; edges?: unknown[] } | undefined>,
   module?: ModuleCatalogEntryV04 | null
 ) {
+  // A module graph is scoped by layer + module. Never let an identically named
+  // legacy graph, backup, or catalog candidate replace this instance at compile time.
   const candidates: Array<{ id: string; graph?: { nodes?: unknown[]; edges?: unknown[] } | null; backupKey?: string; isBackup?: boolean }> = [
-    ...Object.keys(storeGraphs)
-      .filter((id) => id === preferredInstanceId || moduleIdFromInstanceId(id) === moduleId)
-      .map((id) => ({ id, graph: storeGraphs[id] ?? loadModuleGraphState(id), isBackup: false })),
-    ...localStorageModuleGraphCandidatesForModule(moduleId)
+    { id: preferredInstanceId, graph: storeGraphs[preferredInstanceId] ?? loadModuleGraphState(preferredInstanceId), isBackup: false }
   ];
-  if (!candidates.some((candidate) => candidate.id === preferredInstanceId)) {
-    candidates.unshift({ id: preferredInstanceId, graph: storeGraphs[preferredInstanceId] ?? loadModuleGraphState(preferredInstanceId), isBackup: false });
-  }
   let candidatePool = candidates.some((candidate) => !candidate.isBackup && moduleGraphChangedFieldScore(candidate.graph, module) > 0)
     ? candidates.filter((candidate) => !candidate.isBackup)
     : candidates;
@@ -1002,10 +1001,11 @@ function referenceOutputScopes(params: Record<string, unknown>): ReferenceOutput
 function normalizeReferenceOutputParams(params: Record<string, unknown>, layerId?: string): Record<string, unknown> {
   const exportScopes = referenceOutputScopes(params);
   const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, layerId);
+  const legacyExportScope = exportScopes.includes("module") ? "module" : exportScopes[0];
   return {
     ...params,
     export_scopes: exportScopes,
-    export_scope: exportScopes[0],
+    export_scope: legacyExportScope,
     allow_module_level_reference: exportScopes.includes("module"),
     authority_source_type: authoritySourceType,
     is_core_source: authoritySourceType === "core_fact",
@@ -1512,6 +1512,37 @@ function genericFieldValueByKey(fields: Record<string, unknown>[]) {
   return values;
 }
 
+function syncPrimaryLanguageFieldValue(fields: Record<string, unknown>[], value: unknown) {
+  return fields.map((field, index) => {
+    const fieldId = String(field.field_id || field.field_key || field.key || field.id || `field_${index + 1}`);
+    if (fieldId !== "primary_language") {
+      return field;
+    }
+    return {
+      ...field,
+      ...("field_value" in field || field.field_key ? { field_value: value } : {}),
+      ...("value" in field || field.field_id ? { value } : {}),
+    };
+  });
+}
+
+function syncPrimaryLanguageCompatibilityFields(params: Record<string, unknown>) {
+  const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+  const genericValues = genericFieldValueByKey(genericFields);
+  if (!genericValues.has("primary_language")) {
+    return params;
+  }
+  const primaryLanguage = genericValues.get("primary_language");
+  const nextParams = { ...params };
+  if (Array.isArray(nextParams.legacy_fields)) {
+    nextParams.legacy_fields = syncPrimaryLanguageFieldValue(nextParams.legacy_fields.filter(isRecord), primaryLanguage);
+  }
+  if (Array.isArray(nextParams.legacy_data_fields)) {
+    nextParams.legacy_data_fields = syncPrimaryLanguageFieldValue(nextParams.legacy_data_fields.filter(isRecord), primaryLanguage);
+  }
+  return nextParams;
+}
+
 function legacyFieldInputFieldsForCompile(data: Record<string, unknown>, params: Record<string, unknown>) {
   const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
   const genericValues = genericFieldValueByKey(genericFields);
@@ -1560,6 +1591,7 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   const data = isRecord(schemaNode.data) ? schemaNode.data : {};
   const nodeType = String(data.node_type || schemaNode.type);
   let params = cloneRecord(data.params);
+  params = syncPrimaryLanguageCompatibilityFields(params);
   const legacyNodeType = typeof data.legacy_node_type === "string" ? data.legacy_node_type : "";
   const compileNodeType = nodeType === "text_input" && legacyNodeType ? legacyNodeType : nodeType;
   const compileLayerId =
@@ -1590,8 +1622,13 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
   };
 }
 
-function compileEdgesFromModuleGraph(nodes: unknown[], edges: unknown[]): Record<string, unknown>[] {
+function compileEdgesFromModuleGraph(
+  module: ModuleCatalogEntryV04,
+  nodes: unknown[],
+  edges: unknown[]
+): Record<string, unknown>[] {
   const idMap = new Map<string, string>();
+  const nodeIds = new Set<string>();
   for (const graphNode of nodes) {
     const schemaNode = schemaNodeFromModuleGraphNode(graphNode);
     if (!schemaNode) {
@@ -1599,8 +1636,23 @@ function compileEdgesFromModuleGraph(nodes: unknown[], edges: unknown[]): Record
     }
     const data = isRecord(schemaNode.data) ? schemaNode.data : {};
     idMap.set(schemaNode.node_id, String(data.catalog_node_id || schemaNode.node_id));
+    nodeIds.add(schemaNode.node_id);
+    if (isRecord(graphNode) && typeof graphNode.id === "string") {
+      nodeIds.add(graphNode.id);
+    }
   }
-  return edges.filter(isRecord).map((edge, index) => {
+  const integrity = filterDanglingModuleGraphEdges(nodeIds, edges);
+  if (integrity.pruned.length && process.env.NODE_ENV !== "production") {
+    for (const edge of integrity.pruned) {
+      console.warn("[MODULE_GRAPH_EDGE_PRUNED]", {
+        layer_id: module.layer_id,
+        module_id: module.module_id,
+        source: edge.source,
+        target: edge.target,
+      });
+    }
+  }
+  return integrity.edges.filter(isRecord).map((edge, index) => {
     const source = String(edge.source || "");
     const target = String(edge.target || "");
     return {
@@ -1613,19 +1665,80 @@ function compileEdgesFromModuleGraph(nodes: unknown[], edges: unknown[]): Record
   });
 }
 
+const LAYER1_IDENTITY_RULE_SYNC_MODULE_IDS = new Set([
+  "module_growth_background",
+  "module_career_identity",
+  "module_existence_mode",
+  "module_identity_anchor",
+]);
+
+function compileFieldId(field: Record<string, unknown>, index: number) {
+  return String(field.field_id || field.field_key || field.key || field.id || `field_${index + 1}`);
+}
+
+function compileNodeFields(node: Record<string, unknown> | undefined) {
+  const params = isRecord(node?.params) ? node.params : {};
+  return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
+}
+
+function currentModuleFieldRecords(compiledNodes: Record<string, unknown>[]) {
+  const fieldInput = compiledNodes.find((node) => node.node_type === "field_input");
+  const genericTextInput = compiledNodes.find((node) => {
+    const params = isRecord(node.params) ? node.params : {};
+    return node.node_type === "text_input" && params.mode === "generic_fields";
+  });
+  return compileNodeFields(fieldInput || genericTextInput);
+}
+
+function syncLayer1ValidationAndUpdateRules(module: ModuleCatalogEntryV04, compiledNodes: Record<string, unknown>[]) {
+  if (module.layer_id !== "layer_1" || !LAYER1_IDENTITY_RULE_SYNC_MODULE_IDS.has(module.module_id)) {
+    return compiledNodes;
+  }
+  const fields = currentModuleFieldRecords(compiledNodes);
+  const fieldIds = fields.map(compileFieldId).filter(Boolean);
+  if (!fieldIds.length) {
+    return compiledNodes;
+  }
+  return compiledNodes.map((node) => {
+    if (node.node_type !== "validation" && node.node_type !== "update_rule") {
+      return node;
+    }
+    const params = isRecord(node.params) ? { ...node.params } : {};
+    if (node.node_type === "validation") {
+      params.required_fields = fields
+        .filter((field) => field.required !== false)
+        .map(compileFieldId)
+        .filter(Boolean);
+      return { ...node, params };
+    }
+    const existingRules = Array.isArray(params.update_rules) ? params.update_rules.filter(isRecord) : [];
+    const rulesByFieldId = new Map(existingRules.map((rule) => [String(rule.field_id || ""), rule]));
+    params.update_rules = fields.map((field, index) => {
+      const fieldId = compileFieldId(field, index);
+      const existing = rulesByFieldId.get(fieldId) || existingRules[index] || {};
+      return {
+        ...existing,
+        field_id: fieldId,
+        edit_scope: existing.edit_scope ?? field.edit_scope,
+        update_level: existing.update_level ?? field.update_level,
+        requires_recompile: typeof existing.requires_recompile === "boolean" ? existing.requires_recompile : Boolean(field.requires_recompile),
+      };
+    });
+    return { ...node, params };
+  });
+}
+
 function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unknown[], graphEdges: unknown[]): Record<string, unknown> {
-  const compiledNodes = graphNodes
+  const compiledNodes = syncLayer1ValidationAndUpdateRules(module, graphNodes
     .map((node) => {
       const schemaNode = schemaNodeFromModuleGraphNode(node);
       return schemaNode ? compileNodeRecord(schemaNode, module) : null;
     })
-    .filter(isRecord);
+    .filter(isRecord));
   const outputKey = moduleGraphOutputKey(module);
-  const fieldInput = compiledNodes.find((node) => node.node_type === "field_input");
-  const fieldParams = isRecord(fieldInput?.params) ? fieldInput.params : {};
-  const fields = Array.isArray(fieldParams.fields) ? fieldParams.fields.filter(isRecord) : [];
-  const fieldValues = Object.fromEntries(fields.map((field) => [String(field.field_id || ""), field.value]).filter(([key]) => key));
-  const hasFieldInput = Boolean(fieldInput);
+  const fields = currentModuleFieldRecords(compiledNodes);
+  const fieldValues = Object.fromEntries(fields.map((field, index) => [compileFieldId(field, index), "value" in field ? field.value : field.field_value]).filter(([key]) => key));
+  const hasFieldInput = fields.length > 0;
   let outputValue: Record<string, unknown> | null = null;
   for (const node of compiledNodes) {
     if (node.node_type !== "module_output" || !outputKey) {
@@ -1660,7 +1773,7 @@ function moduleWithCompiledGraph(module: ModuleCatalogEntryV04, graphNodes: unkn
     module_graph: {
       ...cloneRecord(module.module_graph),
       nodes: compiledNodes,
-      edges: compileEdgesFromModuleGraph(graphNodes, graphEdges),
+      edges: compileEdgesFromModuleGraph(module, graphNodes, graphEdges),
     },
   });
 }
@@ -2700,6 +2813,7 @@ export function CanvasShell() {
     applyRuntimeResult,
     compileDR,
     exportDR,
+    exportAuditDR,
     canExportDR,
     loadDRFile,
     loadCompiledDRToPreview,
@@ -4062,6 +4176,16 @@ export function CanvasShell() {
     await exportDR();
   }, [appendLog, exportDR, requiresDrRecompile, setActiveDrawer, setBottomTab, t]);
 
+  const handleExportAuditDR = useCallback(async () => {
+    setBottomTab("logs");
+    setActiveDrawer("logs");
+    if (requiresDrRecompile) {
+      appendLog(t("status.drAuditExport.needsRecompile", "Saved canvas changes need a new DR compile before audit export."), "warn");
+      return;
+    }
+    await exportAuditDR();
+  }, [appendLog, exportAuditDR, requiresDrRecompile, setActiveDrawer, setBottomTab, t]);
+
   const handleExportPreview = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
     if (!currentWorkflow) {
@@ -4775,6 +4899,14 @@ export function CanvasShell() {
 	                  title={canExportDR ? undefined : t("toolbar.exportFileBlocked")}
 	                >
 	                  {t("toolbar.exportFile")}
+	                </button>
+	                <button
+	                  className="export-dr-audit-button"
+	                  onClick={handleExportAuditDR}
+	                  disabled={!canExportDR}
+	                  title={canExportDR ? undefined : t("toolbar.exportAuditFileBlocked")}
+	                >
+	                  {t("toolbar.exportAuditFile")}
 	                </button>
 	                <button className="load-dr-button" onClick={handleLoadDRClick}>{t("toolbar.loadFile")}</button>
 	              </div>
@@ -6917,10 +7049,8 @@ function CanvasContextMenuRow({ item, onClose }: { item: CanvasContextMenuItem; 
 }
 
 
-// Embedded, in-app module sub-canvas. Module-scoped state only: it owns its own
-// ReactFlow nodes/edges (useNodesState/useEdgesState) and never touches the canvas
-// store, so it does not render or mutate the 13-layer workflow. Unmounting on close
-// destroys all of its state.
+// Embedded, in-app module sub-canvas. Its ReactFlow state is isolated from the
+// main canvas and persisted under the layer-scoped module instance id.
 function ModuleCanvasPanel({
   moduleNode,
   workflow,
@@ -7003,8 +7133,8 @@ function ModuleCanvasPanel({
     };
   }, [moduleNode, initialSubnodes, storedModuleGraph]);
 
-  const [moduleNodes, setModuleNodes, onBaseModuleNodesChange] = useNodesState(initialGraph.nodes);
-  const [moduleEdges, setModuleEdges, onBaseModuleEdgesChange] = useEdgesState<Edge>(initialGraph.edges);
+  const [moduleNodes, setModuleNodes] = useNodesState(initialGraph.nodes);
+  const [moduleEdges, setModuleEdges] = useEdgesState<Edge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string>("");
   const [assistantFieldKey, setAssistantFieldKey] = useState("");
   const [executionResult, setExecutionResult] = useState<unknown>(null);
@@ -7037,11 +7167,9 @@ function ModuleCanvasPanel({
           edgeCount: edgesToPersist.length
         });
       }
-      window.queueMicrotask(() => {
-        useCanvasStore
-          .getState()
-          .updateModuleGraph(moduleNode.node_id, nodesToPersist as unknown as WorkflowNode[], edgesToPersist as unknown as WorkflowEdge[]);
-      });
+      useCanvasStore
+        .getState()
+        .updateModuleGraph(moduleNode.node_id, nodesToPersist as unknown as WorkflowNode[], edgesToPersist as unknown as WorkflowEdge[]);
     },
     [moduleNode.node_id]
   );
@@ -7126,7 +7254,7 @@ function ModuleCanvasPanel({
 
   useEffect(() => {
     const flushModuleGraph = () => {
-      saveModuleGraphState(moduleNode.node_id, moduleNodesRef.current, moduleEdgesRef.current);
+      persistModuleGraphNow(moduleNodesRef.current, moduleEdgesRef.current);
     };
     window.addEventListener("beforeunload", flushModuleGraph);
     window.addEventListener("pagehide", flushModuleGraph);
@@ -7135,7 +7263,7 @@ function ModuleCanvasPanel({
       window.removeEventListener("beforeunload", flushModuleGraph);
       window.removeEventListener("pagehide", flushModuleGraph);
     };
-  }, [moduleNode.node_id]);
+  }, [persistModuleGraphNow]);
 
   const addModuleNode = useCallback((type: ModuleNodeType, position?: { x: number; y: number }) => {
     console.log("[P1-NODE-CRUD] addModuleNode: adding new node", { type, position });
@@ -7227,14 +7355,17 @@ function ModuleCanvasPanel({
       if (!connection.source || !connection.target) {
         return;
       }
-      const currentNodeIds = new Set(moduleNodes.map((node) => node.id));
+      const currentNodeIds = new Set(moduleNodesRef.current.map((node) => node.id));
       if (!currentNodeIds.has(connection.source) || !currentNodeIds.has(connection.target)) {
         return;
       }
       pushModuleHistory();
-      setModuleEdges((eds) => addEdge(connection, eds));
+      const nextEdges = addEdge(connection, moduleEdgesRef.current);
+      moduleEdgesRef.current = nextEdges;
+      setModuleEdges(nextEdges);
+      persistModuleGraphNow(moduleNodesRef.current, nextEdges);
     },
-    [moduleNodes, pushModuleHistory, setModuleEdges]
+    [persistModuleGraphNow, pushModuleHistory, setModuleEdges]
   );
 
   const onModuleNodesChange = useCallback(
@@ -7243,15 +7374,28 @@ function ModuleCanvasPanel({
       if (removedIds.length) {
         pushModuleHistory();
       }
-      onBaseModuleNodesChange(changes);
+      const nextNodes = applyNodeChanges(changes, moduleNodesRef.current);
+      moduleNodesRef.current = nextNodes;
+      setModuleNodes(nextNodes);
+
+      let nextEdges = moduleEdgesRef.current;
       if (removedIds.length) {
         const removed = new Set(removedIds);
-        setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
+        nextEdges = nextEdges.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target));
+        moduleEdgesRef.current = nextEdges;
+        setModuleEdges(nextEdges);
         setSelectedId((current) => (current && removed.has(current) ? "" : current));
         setAssistantFieldKey("");
       }
+
+      const completedPositionChange = changes.some(
+        (change) => change.type === "position" && change.dragging !== true
+      );
+      if (removedIds.length || completedPositionChange) {
+        persistModuleGraphNow(nextNodes, nextEdges);
+      }
     },
-    [onBaseModuleNodesChange, pushModuleHistory, setModuleEdges]
+    [persistModuleGraphNow, pushModuleHistory, setModuleEdges, setModuleNodes]
   );
 
   const onModuleEdgesChange = useCallback(
@@ -7259,9 +7403,12 @@ function ModuleCanvasPanel({
       if (changes.some((change) => change.type === "remove")) {
         pushModuleHistory();
       }
-      onBaseModuleEdgesChange(changes);
+      const nextEdges = applyEdgeChanges(changes, moduleEdgesRef.current);
+      moduleEdgesRef.current = nextEdges;
+      setModuleEdges(nextEdges);
+      persistModuleGraphNow(moduleNodesRef.current, nextEdges);
     },
-    [onBaseModuleEdgesChange, pushModuleHistory]
+    [persistModuleGraphNow, pushModuleHistory, setModuleEdges]
   );
 
   const handleModuleNodesDelete = useCallback(
@@ -7270,11 +7417,17 @@ function ModuleCanvasPanel({
       if (!removed.size) {
         return;
       }
-      setModuleEdges((current) => current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)));
+      const nextNodes = moduleNodesRef.current.filter((node) => !removed.has(node.id));
+      const nextEdges = moduleEdgesRef.current.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target));
+      moduleNodesRef.current = nextNodes;
+      moduleEdgesRef.current = nextEdges;
+      setModuleNodes(nextNodes);
+      setModuleEdges(nextEdges);
+      persistModuleGraphNow(nextNodes, nextEdges);
       setSelectedId((current) => (current && removed.has(current) ? "" : current));
       setAssistantFieldKey("");
     },
-    [setModuleEdges]
+    [persistModuleGraphNow, setModuleEdges, setModuleNodes]
   );
 
   const selectedSchema = useMemo(() => {
@@ -7496,30 +7649,26 @@ function ModuleCanvasPanel({
     const removedNodes = new Set(selectedNodes);
     const removedEdges = new Set(selectedEdges);
     
-    setModuleNodes((current) => {
-      const next = current.filter((node) => !removedNodes.has(node.id));
-      console.log("[P1-NODE-CRUD] deleteSelected nodes success:", {
-        deletedCount: selectedNodes.length,
-        totalNodesAfter: next.length
-      });
-      return next;
-    });
-    
-    setModuleEdges((current) => {
-      const next = current.filter(
-        (edge) => !removedEdges.has(edge.id) && !removedNodes.has(edge.source) && !removedNodes.has(edge.target)
-      );
-      console.log("[P1-NODE-CRUD] deleteSelected edges success:", {
-        deletedCount: selectedEdges.length,
-        cascadeDeletedEdges: current.length - next.length,
-        totalEdgesAfter: next.length
-      });
-      return next;
+    const nextNodes = moduleNodesRef.current.filter((node) => !removedNodes.has(node.id));
+    const previousEdgeCount = moduleEdgesRef.current.length;
+    const nextEdges = moduleEdgesRef.current.filter(
+      (edge) => !removedEdges.has(edge.id) && !removedNodes.has(edge.source) && !removedNodes.has(edge.target)
+    );
+    moduleNodesRef.current = nextNodes;
+    moduleEdgesRef.current = nextEdges;
+    setModuleNodes(nextNodes);
+    setModuleEdges(nextEdges);
+    persistModuleGraphNow(nextNodes, nextEdges);
+    console.log("[P1-NODE-CRUD] deleteSelected success:", {
+      deletedNodeCount: selectedNodes.length,
+      deletedEdgeCount: previousEdgeCount - nextEdges.length,
+      totalNodesAfter: nextNodes.length,
+      totalEdgesAfter: nextEdges.length,
     });
     
     setSelectedId((current) => (current && removedNodes.has(current) ? "" : current));
     setAssistantFieldKey("");
-  }, [moduleEdges, moduleNodes, pushModuleHistory, setModuleEdges, setModuleNodes]);
+  }, [moduleEdges, moduleNodes, persistModuleGraphNow, pushModuleHistory, setModuleEdges, setModuleNodes]);
 
   const updateModuleNodeDataById = useCallback(
     (nodeId: string, updater: (schemaNode: WorkflowNode) => WorkflowNode) => {
@@ -7550,29 +7699,24 @@ function ModuleCanvasPanel({
     (nodeId: string) => {
       console.log("[P1-NODE-CRUD] deleteModuleNodeById:", { nodeId });
       pushModuleHistory();
-      setModuleNodes((current) => {
-        const next = current.filter((node) => node.id !== nodeId);
-        console.log("[P1-NODE-CRUD] deleteModuleNodeById success:", {
-          deletedNodeId: nodeId,
-          totalNodesAfter: next.length
-        });
-        return next;
-      });
-      setModuleEdges((current) => {
-        const relatedEdges = current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
-        const deletedEdgeCount = current.length - relatedEdges.length;
-        if (deletedEdgeCount > 0) {
-          console.log("[P1-NODE-CRUD] deleteModuleNodeById also removed edges:", {
-            deletedEdgeCount,
-            totalEdgesAfter: relatedEdges.length
-          });
-        }
-        return relatedEdges;
+      const nextNodes = moduleNodesRef.current.filter((node) => node.id !== nodeId);
+      const previousEdgeCount = moduleEdgesRef.current.length;
+      const nextEdges = moduleEdgesRef.current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
+      moduleNodesRef.current = nextNodes;
+      moduleEdgesRef.current = nextEdges;
+      setModuleNodes(nextNodes);
+      setModuleEdges(nextEdges);
+      persistModuleGraphNow(nextNodes, nextEdges);
+      console.log("[P1-NODE-CRUD] deleteModuleNodeById success:", {
+        deletedNodeId: nodeId,
+        deletedEdgeCount: previousEdgeCount - nextEdges.length,
+        totalNodesAfter: nextNodes.length,
+        totalEdgesAfter: nextEdges.length,
       });
       setSelectedId((current) => (current === nodeId ? "" : current));
       setAssistantFieldKey("");
     },
-    [pushModuleHistory, setModuleEdges, setModuleNodes]
+    [persistModuleGraphNow, pushModuleHistory, setModuleEdges, setModuleNodes]
   );
 
   const resetModuleCanvasNodeById = useCallback(

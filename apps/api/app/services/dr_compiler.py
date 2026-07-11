@@ -624,6 +624,34 @@ def _module_field_values_from_fields(fields: List[Dict[str, Any]]) -> Dict[str, 
     return values
 
 
+def _field_identifier(field: Dict[str, Any], index: int) -> str:
+    return str(field.get("field_id") or field.get("field_key") or field.get("key") or field.get("id") or f"field_{index + 1}")
+
+
+def _sync_primary_language_field_list(fields: Any, value: str) -> None:
+    if not isinstance(fields, list):
+        return
+    for index, field in enumerate(fields):
+        if not isinstance(field, dict) or _field_identifier(field, index) != "primary_language":
+            continue
+        if "field_value" in field or field.get("field_key"):
+            field["field_value"] = value
+        if "value" in field or field.get("field_id"):
+            field["value"] = value
+
+
+def _sync_primary_language_compat_params(module: Dict[str, Any], value: str) -> None:
+    for node in _module_graph_nodes(module):
+        if node.get("node_type") != "text_input":
+            continue
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if params.get("mode") != "generic_fields":
+            continue
+        _sync_primary_language_field_list(params.get("fields"), value)
+        _sync_primary_language_field_list(params.get("legacy_fields"), value)
+        _sync_primary_language_field_list(params.get("legacy_data_fields"), value)
+
+
 def _module_output_with_field_values(output: Any, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
     output_dict = _as_dict(output)
     existing_fields = _as_dict(output_dict.get("fields"))
@@ -651,6 +679,7 @@ def _normalize_basic_identity_language_in_module(module: Dict[str, Any]) -> None
             break
     if not normalized_language:
         return
+    _sync_primary_language_compat_params(module, normalized_language)
     for output in (
         _as_dict(_module_output_node_value(module, "basic_identity")).get("fields"),
         _as_dict(_as_dict(module.get("outputs")).get("basic_identity")).get("fields"),

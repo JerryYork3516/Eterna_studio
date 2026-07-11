@@ -213,6 +213,8 @@ def _identity_generic_fields_canvas() -> dict:
                 value = "Generic Fields Resident"
             if module["module_id"] == "module_basic_identity" and field["field_id"] == "resident_id":
                 value = "generic_fields_resident_001"
+            if module["module_id"] == "module_basic_identity" and field["field_id"] == "primary_language":
+                value = "zh-CN"
             generic_fields.append(
                 {
                     "field_key": field["field_id"],
@@ -254,6 +256,13 @@ def _identity_generic_fields_canvas() -> dict:
             "text": "",
             "fields": generic_fields,
         }
+        if module["module_id"] == "module_basic_identity":
+            field_input["params"]["legacy_fields"] = [
+                {"field_key": "primary_language", "field_value": "ch-ZH"}
+            ]
+            field_input["params"]["legacy_data_fields"] = [
+                {"field_id": "primary_language", "value": "ch-ZH"}
+            ]
     canvas = _canvas_13()
     canvas["modules"] = modules
     return canvas
@@ -843,8 +852,14 @@ def test_identity_generic_fields_compile_without_legacy_warning():
     basic_fields = identity_profile["basic_identity"]["fields"]
     assert identity_profile["name"] == "Generic Fields Resident"
     assert identity_profile["resident_id"] == "generic_fields_resident_001"
+    assert basic_fields["primary_language"] == "zh-CN"
     assert basic_fields["generic_boolean_flag"] is True
     assert basic_fields["generic_list_value"] == ["alpha", "beta"]
+    payload_module = next(module for module in body["compiled_dr"]["payload"]["modules"] if module["module_id"] == "module_basic_identity")
+    text_input = next(node for node in payload_module["module_graph"]["nodes"] if node["node_type"] == "text_input")
+    params = text_input["params"]
+    assert params["legacy_fields"][0]["field_value"] == "zh-CN"
+    assert params["legacy_data_fields"][0]["value"] == "zh-CN"
 
 
 def test_legacy_module_output_fallback_warning():

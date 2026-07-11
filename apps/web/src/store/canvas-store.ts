@@ -17,11 +17,273 @@ import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
 import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
 import type { ModuleGraphState } from "@/lib/canvas-persistence";
+import { filterDanglingModuleGraphEdges } from "@/store/module-graph-merge";
 
 type LogLevel = RunLog["level"];
 
 function formatMessage(template: string, values: Record<string, string | number | boolean | null | undefined> = {}) {
   return template.replace(/\{(\w+)\}/g, (_match, key: string) => String(values[key] ?? ""));
+}
+
+const REFERENCE_POINTER_KEYS = [
+  "source_layer_id",
+  "source_module_id",
+  "source_node_id",
+  "source_scope",
+  "source_field_paths",
+  "reference_type",
+  "required",
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function pickReferencePointer(reference: Record<string, unknown>) {
+  const next: Record<string, unknown> = {};
+  for (const key of REFERENCE_POINTER_KEYS) {
+    if (key in reference) {
+      next[key] = reference[key];
+    }
+  }
+  return next;
+}
+
+function nodeTypeOf(node: Record<string, unknown>) {
+  const data = recordValue(node.data);
+  return stringValue(node.node_type) || stringValue(data.node_type) || stringValue(node.type);
+}
+
+function nodeIdOf(node: Record<string, unknown>) {
+  const data = recordValue(node.data);
+  return stringValue(node.node_id) || stringValue(data.node_id) || stringValue(node.id);
+}
+
+function nodeNameOf(node: Record<string, unknown>) {
+  const data = recordValue(node.data);
+  return (
+    stringValue(node.name) ||
+    stringValue(node.title) ||
+    stringValue(data.label) ||
+    stringValue(data.title) ||
+    stringValue(data.name) ||
+    stringValue(data.title_fallback) ||
+    nodeIdOf(node)
+  );
+}
+
+function paramsOf(node: Record<string, unknown>) {
+  const data = recordValue(node.data);
+  return recordValue(node.params ?? data.params);
+}
+
+function auditNodeParams(node: Record<string, unknown>) {
+  const params = { ...paramsOf(node) };
+  delete params.legacy_fields;
+  delete params.legacy_data_fields;
+  if (nodeTypeOf(node) !== "reference_input") {
+    return params;
+  }
+  return {
+    ...params,
+    references: arrayValue(params.references).filter(isRecord).map(pickReferencePointer),
+  };
+}
+
+function moduleGraphOf(module: Record<string, unknown>) {
+  return recordValue(module.module_graph ?? module.graph);
+}
+
+function moduleNodesOf(module: Record<string, unknown>) {
+  const graph = moduleGraphOf(module);
+  return arrayValue(graph.nodes ?? module.nodes).filter(isRecord);
+}
+
+function moduleEdgesOf(module: Record<string, unknown>) {
+  const graph = moduleGraphOf(module);
+  return arrayValue(graph.edges ?? module.edges).filter(isRecord);
+}
+
+function auditModuleEdges(module: Record<string, unknown>) {
+  const integrity = filterDanglingModuleGraphEdges(
+    moduleNodesOf(module).map(nodeIdOf).filter(Boolean),
+    moduleEdgesOf(module)
+  );
+  if (integrity.pruned.length && process.env.NODE_ENV !== "production") {
+    for (const edge of integrity.pruned) {
+      console.warn("[MODULE_GRAPH_EDGE_PRUNED]", {
+        layer_id: moduleLayerIdOf(module),
+        module_id: moduleIdOf(module),
+        source: edge.source,
+        target: edge.target,
+      });
+    }
+  }
+  return integrity.edges.filter(isRecord);
+}
+
+function moduleIdOf(module: Record<string, unknown>) {
+  return stringValue(module.module_id) || stringValue(module.id);
+}
+
+function moduleLayerIdOf(module: Record<string, unknown>) {
+  return stringValue(module.layer_id);
+}
+
+function moduleNameOf(module: Record<string, unknown>) {
+  return stringValue(module.name) || stringValue(module.module_name) || stringValue(module.title) || moduleIdOf(module);
+}
+
+function layerIdOf(layer: Record<string, unknown>) {
+  return stringValue(layer.layer_id) || stringValue(layer.id);
+}
+
+function layerNameOf(layer: Record<string, unknown>) {
+  return stringValue(layer.name) || stringValue(layer.layer_name) || stringValue(layer.title) || layerIdOf(layer);
+}
+
+function edgeTypeOf(edge: Record<string, unknown>) {
+  return stringValue(edge.type) || stringValue(edge.edge_type) || stringValue(edge.kind);
+}
+
+function auditResidentName(dr: Record<string, unknown>) {
+  const manifest = recordValue(dr.manifest);
+  const resident = recordValue(dr.resident);
+  const payload = recordValue(dr.payload);
+  const residentIdentity = recordValue(payload.resident_identity);
+  const residentBlueprint = recordValue(payload.resident_blueprint);
+  return (
+    stringValue(manifest.resident_name) ||
+    stringValue(resident.name) ||
+    stringValue(residentIdentity.name) ||
+    stringValue(residentBlueprint.resident_name) ||
+    "digital_resident"
+  );
+}
+
+function auditResidentId(dr: Record<string, unknown>) {
+  const manifest = recordValue(dr.manifest);
+  const resident = recordValue(dr.resident);
+  const payload = recordValue(dr.payload);
+  const residentIdentity = recordValue(payload.resident_identity);
+  return stringValue(manifest.resident_id) || stringValue(resident.resident_id) || stringValue(residentIdentity.resident_id);
+}
+
+function auditFilename(name: string) {
+  const safeName = name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "digital_resident";
+  return `${safeName}.audit.digital_resident.json`;
+}
+
+function auditModulesFromDR(dr: Record<string, unknown>) {
+  const payload = recordValue(dr.payload);
+  return arrayValue(payload.modules ?? dr.modules).filter(isRecord);
+}
+
+function auditLayersFromDR(dr: Record<string, unknown>, modules: Record<string, unknown>[]) {
+  const payload = recordValue(dr.payload);
+  const rawLayers = arrayValue(payload["13_layers_snapshot"] ?? dr["13_layers_snapshot"] ?? payload.layers ?? dr.layers).filter(isRecord);
+  const layerMap = new Map<string, { layer_id: string; name: string; module_ids: string[] }>();
+
+  for (const layer of rawLayers) {
+    const layerId = layerIdOf(layer);
+    if (!layerId) {
+      continue;
+    }
+    const moduleIds = arrayValue(layer.module_ids ?? layer.modules)
+      .map((item) => (typeof item === "string" ? item : isRecord(item) ? moduleIdOf(item) : ""))
+      .filter(Boolean);
+    layerMap.set(layerId, {
+      layer_id: layerId,
+      name: layerNameOf(layer),
+      module_ids: moduleIds,
+    });
+  }
+
+  for (const module of modules) {
+    const layerId = moduleLayerIdOf(module);
+    const moduleId = moduleIdOf(module);
+    if (!layerId || !moduleId) {
+      continue;
+    }
+    const layer = layerMap.get(layerId) ?? { layer_id: layerId, name: layerId, module_ids: [] };
+    if (!layer.module_ids.includes(moduleId)) {
+      layer.module_ids.push(moduleId);
+    }
+    layerMap.set(layerId, layer);
+  }
+
+  return Array.from(layerMap.values());
+}
+
+function auditReferenceRecords(modules: Record<string, unknown>[]) {
+  const references: Record<string, unknown>[] = [];
+  for (const module of modules) {
+    const targetModuleId = moduleIdOf(module);
+    const targetLayerId = moduleLayerIdOf(module);
+    for (const node of moduleNodesOf(module)) {
+      if (nodeTypeOf(node) !== "reference_input") {
+        continue;
+      }
+      const params = paramsOf(node);
+      for (const reference of arrayValue(params.references).filter(isRecord)) {
+        references.push({
+          target_layer_id: targetLayerId,
+          target_module_id: targetModuleId,
+          target_node_id: nodeIdOf(node),
+          ...pickReferencePointer(reference),
+        });
+      }
+    }
+  }
+  return references;
+}
+
+function buildAuditDR(compiledDR: Record<string, unknown>, result: DRCompileResult | null) {
+  const modules = auditModulesFromDR(compiledDR);
+  return {
+    schema_version: compiledDR.schema_version ?? compiledDR.dr_version ?? result?.dr_version ?? null,
+    resident_id: auditResidentId(compiledDR),
+    resident_name: auditResidentName(compiledDR),
+    layers: auditLayersFromDR(compiledDR, modules),
+    modules: modules.map((module) => ({
+      module_id: moduleIdOf(module),
+      layer_id: moduleLayerIdOf(module),
+      name: moduleNameOf(module),
+      nodes: moduleNodesOf(module).map((node) => ({
+        node_id: nodeIdOf(node),
+        node_type: nodeTypeOf(node),
+        name: nodeNameOf(node),
+        params: auditNodeParams(node),
+      })),
+      edges: auditModuleEdges(module).map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        type: edgeTypeOf(edge),
+      })),
+    })),
+    references: auditReferenceRecords(modules),
+    validation_result: result
+      ? {
+          valid: result.valid,
+          dr_version: result.dr_version,
+          errors: result.errors,
+          warnings: result.warnings,
+          orchestration_compatibility: result.orchestration_compatibility,
+        }
+      : null,
+  };
 }
 
 // P1-FIX：规范化 ModuleGraph 类型，替代 unknown[]
@@ -148,6 +410,9 @@ type CanvasState = {
   // Stage 6.3.3 DR Export: download the already-validated compiledDR. Blocked
   // unless a valid DR was compiled first.
   exportDR: () => Promise<void>;
+  // Audit-only DR export: a compact JSON view for humans/AI review. Not loadable
+  // by Aftelle and does not change the official DR contract.
+  exportAuditDR: () => Promise<void>;
   // Stage 6.4 Runtime Load DR: read a .digital_resident file and run mock loop.
   loadDRFile: (file: File) => Promise<void>;
   // Stage 6 preview flow: load the already compiled .digital_resident payload
@@ -425,6 +690,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       URL.revokeObjectURL(url);
     }
     appendLog(t("status.drExport.ok", "DR exported: {filename} (dr_version={version})", { filename, version: drCompileResult.dr_version }));
+  },
+
+  exportAuditDR: async () => {
+    const appendLog = get().appendLog;
+    const t = (key: string, fallback?: string, values?: Record<string, string | number | boolean | null | undefined>) =>
+      formatMessage(translate(get().language, key, fallback), values);
+    const { compiledDR, drCompileResult, canExportDR } = get();
+    if (!compiledDR || !drCompileResult || !canExportDR) {
+      appendLog(t("status.drAuditExport.blocked", "Audit export blocked: compile a valid DR first."), "warn");
+      return;
+    }
+    const auditDR = buildAuditDR(compiledDR, drCompileResult);
+    const filename = auditFilename(auditDR.resident_name);
+    if (typeof window !== "undefined") {
+      const blob = new Blob([JSON.stringify(auditDR, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }
+    appendLog(t("status.drAuditExport.ok", "Audit DR exported: {filename}", { filename }));
   },
 
   // Stage 6.4 Load .digital_resident: the browser reads the JSON file, then the

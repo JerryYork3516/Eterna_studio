@@ -445,6 +445,24 @@ def test_basic_identity_display_alias_and_export_name_are_optional_config_fields
     assert update_rules["display_alias"]["optional_config"] is True
 
 
+def test_layer1_identity_validation_and_update_rules_match_current_fields():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    for module_id in (
+        "module_growth_background",
+        "module_career_identity",
+        "module_existence_mode",
+        "module_identity_anchor",
+    ):
+        module = catalog_map[module_id]
+        field_ids = EXPECTED_IDENTITY_FIELDS[module_id]
+        validation = next(node for node in module.module_graph["nodes"] if node["node_type"] == "validation")
+        update_rule = next(node for node in module.module_graph["nodes"] if node["node_type"] == "update_rule")
+
+        assert validation["params"]["required_fields"] == field_ids
+        assert [rule["field_id"] for rule in update_rule["params"]["update_rules"]] == field_ids
+
+
 def test_identity_modules_have_no_slots():
     catalog_map = {module.module_id: module for module in get_module_catalog()}
 
