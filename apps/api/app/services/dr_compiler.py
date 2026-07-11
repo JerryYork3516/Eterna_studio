@@ -515,13 +515,73 @@ def _module_node_by_type(module: Dict[str, Any], node_type: str) -> Dict[str, An
     return None
 
 
-def _module_fields_from_field_input(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _normalize_generic_field(field: Dict[str, Any], index: int) -> Dict[str, Any]:
+    field_id = str(
+        field.get("field_key")
+        or field.get("field_id")
+        or field.get("key")
+        or field.get("id")
+        or f"field_{index + 1}"
+    )
+    value = field.get("field_value") if "field_value" in field else field.get("value")
+    normalized = {
+        **field,
+        "field_id": field_id,
+        "field_key": field_id,
+        "value": value,
+        "field_value": value,
+        "field_type": field.get("field_type") or "long_text",
+        "edit_scope": field.get("edit_scope") or "user_editable",
+        "update_level": field.get("update_level") or "versioned_core",
+        "requires_recompile": field.get("requires_recompile") if isinstance(field.get("requires_recompile"), bool) else True,
+    }
+    if "dr_mapping" in field:
+        normalized["dr_mapping"] = field.get("dr_mapping")
+    field_i18n = field.get("i18n_keys") if isinstance(field.get("i18n_keys"), dict) else {}
+    normalized["i18n_keys"] = {
+        "label": field_i18n.get("label") or f"field.identity.{field_id}.label",
+        "placeholder": field_i18n.get("placeholder") or f"field.identity.{field_id}.placeholder",
+        "help": field_i18n.get("help") or f"field.identity.{field_id}.help",
+    }
+    return normalized
+
+
+def _module_fields_from_generic_fields(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+    for node in _module_graph_nodes(module):
+        if node.get("node_type") != "text_input":
+            continue
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if params.get("mode") != "generic_fields":
+            continue
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        normalized_fields = [
+            _normalize_generic_field(field, index)
+            for index, field in enumerate(fields)
+            if isinstance(field, dict) and (field.get("field_key") or field.get("field_id") or "field_value" in field or "value" in field)
+        ]
+        if normalized_fields:
+            return normalized_fields
+    return []
+
+
+def _module_fields_from_legacy_field_input(module: Dict[str, Any]) -> List[Dict[str, Any]]:
     field_input = _module_node_by_type(module, "field_input")
     if not field_input:
         return []
     params = field_input.get("params") if isinstance(field_input.get("params"), dict) else {}
     fields = params.get("fields") if isinstance(params.get("fields"), list) else []
     return [field for field in fields if isinstance(field, dict)]
+
+
+def _module_fields_from_field_input(module: Dict[str, Any]) -> List[Dict[str, Any]]:
+    generic_fields = _module_fields_from_generic_fields(module)
+    if generic_fields:
+        return generic_fields
+    return _module_fields_from_legacy_field_input(module)
+
+
+def _module_has_effective_field_input(module: Dict[str, Any]) -> bool:
+    return bool(_module_fields_from_generic_fields(module) or _module_fields_from_legacy_field_input(module))
 
 
 def _module_output_node_value(module: Dict[str, Any], output_key: str) -> Any:
@@ -541,6 +601,42 @@ def _module_output_exists(module: Dict[str, Any], output_key: str) -> bool:
         if node.get("node_type") == "module_output" and (output_key in node_outputs or node_outputs.get("module_output") == output_key):
             return True
     return False
+
+
+def _field_output_key(field: Dict[str, Any]) -> str:
+    dr_mapping = field.get("dr_mapping")
+    if isinstance(dr_mapping, str) and ".fields." in dr_mapping:
+        mapped_key = dr_mapping.rsplit(".fields.", 1)[-1].strip(".")
+        if mapped_key:
+            return mapped_key
+    return str(field.get("field_id") or field.get("field_key") or "")
+
+
+def _module_field_values_from_fields(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    values: Dict[str, Any] = {}
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        field_key = _field_output_key(field)
+        if not field_key:
+            continue
+        values[field_key] = field.get("value") if "value" in field else field.get("field_value")
+    return values
+
+
+def _module_output_with_field_values(output: Any, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    output_dict = _as_dict(output)
+    existing_fields = _as_dict(output_dict.get("fields"))
+    field_values = _module_field_values_from_fields(fields)
+    if not field_values:
+        return output_dict
+    return {
+        **output_dict,
+        "fields": {
+            **existing_fields,
+            **field_values,
+        },
+    }
 
 
 def _normalize_basic_identity_language_in_module(module: Dict[str, Any]) -> None:
@@ -566,18 +662,23 @@ def _normalize_basic_identity_language_in_module(module: Dict[str, Any]) -> None
 def _legacy_module_output_fallback_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
     findings: List[Dict[str, str]] = []
     allowed_output_only_modules = {RISK_RESPONSE_MODULE_ID}
+    legacy_field_input_categories = {"identity", "persona"}
     for index, module in enumerate(collection.get("modules", [])):
         module_id = module.get("module_id") if isinstance(module, dict) else None
         if not isinstance(module, dict) or module_id in _IDENTITY_CORE_IDS or module_id in allowed_output_only_modules:
             continue
+        category = str(module.get("category") or "")
+        module_type = str(module.get("module_type") or "")
+        if category not in legacy_field_input_categories and module_type not in legacy_field_input_categories:
+            continue
         outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
         has_module_output = bool(outputs.get("module_output"))
-        if has_module_output and _module_node_by_type(module, "field_input") is None:
+        if has_module_output and not _module_has_effective_field_input(module):
             findings.append(
                 _finding(
                     "WARNING",
                     "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING",
-                    f"legacy module {module.get('module_id')} uses module.outputs.module_output fallback without field_input",
+                    f"legacy module layer_id={module.get('layer_id')} module_id={module.get('module_id')} uses module.outputs.module_output fallback without generic_fields or field_input",
                     f"modules[{index}].module_graph.nodes",
                 )
             )
@@ -619,6 +720,8 @@ def _identity_core_audit_findings(collection: Dict[str, Any]) -> List[Dict[str, 
         nodes_by_type = {str(node.get("node_type")): node for node in _module_graph_nodes(module)}
         for node_type in _IDENTITY_CORE_REQUIRED_NODE_TYPES:
             node = nodes_by_type.get(node_type)
+            if node_type == "field_input" and not node and _module_fields_from_generic_fields(module):
+                continue
             if not node:
                 findings.append(_finding("FAIL", "DR_IDENTITY_NODE_MISSING", f"{module_id} missing compile-time node {node_type}", f"{path}.module_graph.nodes.{node_type}"))
                 continue
@@ -638,7 +741,7 @@ def _identity_core_audit_findings(collection: Dict[str, Any]) -> List[Dict[str, 
             findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_OUTPUT_MISMATCH", f"{module_id} top-level output differs from module_output node; node output is authoritative", f"{path}.outputs.{output_key}"))
         fields = _module_fields_from_field_input(module)
         if not fields:
-            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_FIELDS_MISSING", f"{module_id} must declare fields under field_input.params.fields", f"{path}.module_graph.nodes.field_input.params.fields"))
+            findings.append(_finding("FAIL", "DR_IDENTITY_MODULE_FIELDS_MISSING", f"{module_id} must declare fields under text_input.params.generic_fields or field_input.params.fields", f"{path}.module_graph.nodes.field_input.params.fields"))
         for index, field in enumerate(fields):
             if not isinstance(field, dict):
                 findings.append(_finding("FAIL", "DR_IDENTITY_FIELD_INVALID", f"{module_id} field must be an object", f"{path}.module_graph.nodes.field_input.params.fields[{index}]"))
@@ -674,8 +777,9 @@ def _assemble_identity_core_outputs(
         _normalize_basic_identity_language_in_module(module)
         node_output = _module_output_node_value(module, output_key)
         outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
-        module_outputs[output_key] = node_output if node_output is not None else outputs.get(output_key, {})
         fields = _module_fields_from_field_input(module)
+        raw_module_output = node_output if node_output is not None else outputs.get(output_key, {})
+        module_outputs[output_key] = _module_output_with_field_values(raw_module_output, fields)
         if not fields:
             config = module.get("config") if isinstance(module.get("config"), dict) else {}
             fields = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []

@@ -192,6 +192,73 @@ def _linxuan_canvas() -> dict:
     )
 
 
+def _identity_generic_fields_canvas() -> dict:
+    modules = [module.model_dump(mode="json") for module in get_module_catalog()]
+    identity_module_ids = {
+        "module_basic_identity",
+        "module_growth_background",
+        "module_career_identity",
+        "module_existence_mode",
+        "module_identity_anchor",
+    }
+    for module in modules:
+        if module["module_id"] not in identity_module_ids:
+            continue
+        nodes = module["module_graph"]["nodes"]
+        field_input = next(node for node in nodes if node["node_type"] == "field_input")
+        generic_fields = []
+        for field in field_input["params"]["fields"]:
+            value = field.get("value")
+            if module["module_id"] == "module_basic_identity" and field["field_id"] == "name":
+                value = "Generic Fields Resident"
+            if module["module_id"] == "module_basic_identity" and field["field_id"] == "resident_id":
+                value = "generic_fields_resident_001"
+            generic_fields.append(
+                {
+                    "field_key": field["field_id"],
+                    "field_name": field["field_id"],
+                    "field_value": value,
+                    "field_type": "long_text",
+                    "description": "",
+                    "dr_mapping": f"payload.layers.layer_1.modules.{module['module_id']}.fields.{field['field_id']}",
+                    "reference_enabled": False,
+                }
+            )
+        if module["module_id"] == "module_basic_identity":
+            generic_fields.extend(
+                [
+                    {
+                        "field_key": "generic_boolean_flag",
+                        "field_name": "Generic Boolean Flag",
+                        "field_value": True,
+                        "field_type": "boolean",
+                        "description": "",
+                        "dr_mapping": "payload.layers.layer_1.modules.module_basic_identity.fields.generic_boolean_flag",
+                        "reference_enabled": False,
+                    },
+                    {
+                        "field_key": "generic_list_value",
+                        "field_name": "Generic List Value",
+                        "field_value": ["alpha", "beta"],
+                        "field_type": "list",
+                        "description": "",
+                        "dr_mapping": "payload.layers.layer_1.modules.module_basic_identity.fields.generic_list_value",
+                        "reference_enabled": False,
+                    },
+                ]
+            )
+        field_input["node_type"] = "text_input"
+        field_input["type"] = "text_input"
+        field_input["params"] = {
+            "mode": "generic_fields",
+            "text": "",
+            "fields": generic_fields,
+        }
+    canvas = _canvas_13()
+    canvas["modules"] = modules
+    return canvas
+
+
 def _set_identity_field(canvas: dict, module_id: str, field_id: str, value: str) -> None:
     module = next(module for module in canvas["modules"] if module["module_id"] == module_id)
     field_input = next(node for node in module["module_graph"]["nodes"] if node["node_type"] == "field_input")
@@ -762,6 +829,22 @@ def test_default_catalog_has_no_legacy_field_input_warning():
         finding["code"] == "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING"
         for finding in body["warnings"]
     )
+
+
+def test_identity_generic_fields_compile_without_legacy_warning():
+    body = compile_dr_result_v0_3(_identity_generic_fields_canvas())
+
+    assert body["valid"] is True
+    assert not any(
+        finding["code"] == "DR_IDENTITY_LEGACY_FIELD_INPUT_MISSING"
+        for finding in body["warnings"]
+    )
+    identity_profile = body["compiled_dr"]["payload"]["graph_snapshot"]["layer_outputs"]["identity_profile"]
+    basic_fields = identity_profile["basic_identity"]["fields"]
+    assert identity_profile["name"] == "Generic Fields Resident"
+    assert identity_profile["resident_id"] == "generic_fields_resident_001"
+    assert basic_fields["generic_boolean_flag"] is True
+    assert basic_fields["generic_list_value"] == ["alpha", "beta"]
 
 
 def test_legacy_module_output_fallback_warning():

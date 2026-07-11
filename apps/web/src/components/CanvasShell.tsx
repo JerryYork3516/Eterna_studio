@@ -666,7 +666,7 @@ function moduleGraphUserContentScore(graph: { nodes?: unknown[]; edges?: unknown
         continue;
       }
       for (const field of fieldList) {
-        if (isRecord(field) && hasMeaningfulValue(field.value)) {
+        if (isRecord(field) && hasMeaningfulValue("field_value" in field ? field.field_value : field.value)) {
           score += 1;
         }
       }
@@ -682,7 +682,12 @@ function fieldInputFieldsFromCatalogModule(module: ModuleCatalogEntryV04) {
 }
 
 function fieldValuesById(fields: Record<string, unknown>[]) {
-  return new Map(fields.map((field) => [String(field.field_id || ""), field.value]));
+  return new Map(
+    fields.map((field) => [
+      String(field.field_id || field.field_key || field.key || field.id || ""),
+      "field_value" in field ? field.field_value : field.value,
+    ])
+  );
 }
 
 function stableJson(value: unknown) {
@@ -714,6 +719,72 @@ function sanitizeWorkflowForDrCompile(workflow: Workflow): Workflow {
   return sanitizeDrCompileValue(workflow) as Workflow;
 }
 
+const IDENTITY_CORE_MODULE_IDS = new Set([
+  "module_basic_identity",
+  "module_growth_background",
+  "module_career_identity",
+  "module_existence_mode",
+  "module_identity_anchor",
+]);
+const IDENTITY_REQUIRED_COMPILE_TYPES = ["field_input", "structure_normalize", "validation", "update_rule", "module_output"] as const;
+
+function isIdentityCoreModule(module: ModuleCatalogEntryV04 | null | undefined) {
+  return Boolean(module && module.layer_id === "layer_1" && IDENTITY_CORE_MODULE_IDS.has(module.module_id));
+}
+
+function moduleGraphCompileNodeType(node: unknown): string {
+  const data = moduleGraphNodeData(node);
+  const nodeType = moduleGraphNodeType(node);
+  const params = isRecord(data.params) ? data.params : {};
+  if (nodeType === "text_input" && (data.legacy_node_type === "field_input" || params.mode === "generic_fields")) {
+    return "field_input";
+  }
+  return nodeType;
+}
+
+function moduleGraphHasIdentityCompileChain(
+  graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined,
+  module: ModuleCatalogEntryV04 | null | undefined
+) {
+  if (!isIdentityCoreModule(module)) {
+    return false;
+  }
+  const nodeTypes = new Set((Array.isArray(graph?.nodes) ? graph.nodes : []).map(moduleGraphCompileNodeType));
+  return IDENTITY_REQUIRED_COMPILE_TYPES.every((nodeType) => nodeTypes.has(nodeType));
+}
+
+function moduleGraphStructureScore(
+  graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined,
+  module: ModuleCatalogEntryV04 | null | undefined
+) {
+  if (!module) {
+    return 0;
+  }
+  const catalogTypes = new Set(moduleGraphNodes(module).map(catalogNodeType));
+  const candidateTypes = new Set((Array.isArray(graph?.nodes) ? graph.nodes : []).map(moduleGraphCompileNodeType));
+  let matches = 0;
+  for (const nodeType of catalogTypes) {
+    if (candidateTypes.has(nodeType)) {
+      matches += 1;
+    }
+  }
+  return matches * 100_000;
+}
+
+function referenceInputConfigScore(graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined) {
+  let score = 0;
+  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+    if (moduleGraphNodeType(node) !== "reference_input") {
+      continue;
+    }
+    const data = moduleGraphNodeData(node);
+    const params = isRecord(data.params) ? data.params : {};
+    const references = Array.isArray(params.references) ? params.references : [];
+    score += references.length * 2_000 + stableJson(references).length;
+  }
+  return score;
+}
+
 function moduleGraphChangedFieldScore(
   graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined,
   module: ModuleCatalogEntryV04 | null | undefined
@@ -735,8 +806,8 @@ function moduleGraphChangedFieldScore(
         if (!isRecord(field)) {
           continue;
         }
-        const fieldId = String(field.field_id || "");
-        const value = field.value;
+        const fieldId = String(field.field_id || field.field_key || field.key || field.id || "");
+        const value = "field_value" in field ? field.field_value : field.value;
         if (!hasMeaningfulValue(value)) {
           continue;
         }
@@ -746,7 +817,7 @@ function moduleGraphChangedFieldScore(
       }
     }
   }
-  return changedScore + referenceOutputConfigScore(graph, module);
+  return changedScore + referenceOutputConfigScore(graph, module) + referenceInputConfigScore(graph) + moduleGraphStructureScore(graph, module);
 }
 
 function localStorageModuleGraphCandidatesForModule(moduleId: string) {
@@ -794,9 +865,15 @@ function bestModuleGraphId(
   if (!candidates.some((candidate) => candidate.id === preferredInstanceId)) {
     candidates.unshift({ id: preferredInstanceId, graph: storeGraphs[preferredInstanceId] ?? loadModuleGraphState(preferredInstanceId), isBackup: false });
   }
-  const candidatePool = candidates.some((candidate) => !candidate.isBackup && moduleGraphChangedFieldScore(candidate.graph, module) > 0)
+  let candidatePool = candidates.some((candidate) => !candidate.isBackup && moduleGraphChangedFieldScore(candidate.graph, module) > 0)
     ? candidates.filter((candidate) => !candidate.isBackup)
     : candidates;
+  if (isIdentityCoreModule(module)) {
+    const completeCandidates = candidatePool.filter((candidate) => moduleGraphHasIdentityCompileChain(candidate.graph, module));
+    if (completeCandidates.length) {
+      candidatePool = completeCandidates;
+    }
+  }
   let bestId = preferredInstanceId;
   let bestScore = -1;
   let bestBackupGraph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined = null;
@@ -1182,7 +1259,9 @@ function validateReferenceInputs(workflow: Workflow, stats: ReferenceInputNormal
 
 function normalizeWorkflowReferenceInputs(workflow: Workflow): { workflow: Workflow; stats: ReferenceInputNormalizationStats } {
   const stats = emptyReferenceInputStats();
-  const nextWorkflow = safeClone(workflow) as Workflow;
+  const nextWorkflow = typeof structuredClone === "function"
+    ? structuredClone(workflow)
+    : JSON.parse(JSON.stringify(workflow)) as Workflow;
   if (Array.isArray(nextWorkflow.modules)) {
     nextWorkflow.modules = nextWorkflow.modules.map((module) => {
       if (!isRecord(module)) {
