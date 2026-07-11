@@ -319,6 +319,7 @@ pre {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr) 64px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .workspace-grid.is-library-collapsed {
@@ -349,9 +350,11 @@ pre {
 }
 
 .left-panel {
+  grid-column: 1;
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   position: relative;
+  min-width: 0;
   overflow: hidden;
   border-right: 1px solid var(--border);
   padding: 0;
@@ -737,7 +740,9 @@ pre {
 }
 
 .canvas-panel {
+  grid-column: 2;
   position: relative;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   background:
@@ -746,6 +751,7 @@ pre {
 }
 
 .right-studio-panel {
+  grid-column: 3;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -3543,7 +3549,39 @@ dd {
   }
 
   .workspace-grid {
-    grid-template-columns: 270px minmax(0, 1fr);
+    grid-template-columns: 270px minmax(0, 1fr) 64px;
+  }
+
+  .workspace-grid.is-library-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr) 64px;
+  }
+
+  .workspace-grid.has-right-panel-open {
+    grid-template-columns: 270px minmax(0, 1fr) clamp(340px, 30vw, 400px);
+  }
+
+  .workspace-grid.is-library-collapsed.has-right-panel-open {
+    grid-template-columns: 64px minmax(0, 1fr) clamp(340px, 30vw, 400px);
+  }
+
+  .workspace-grid.has-neural-graph-panel-open {
+    grid-template-columns: 270px minmax(0, 1fr) minmax(440px, 50vw);
+  }
+
+  .workspace-grid.is-library-collapsed.has-neural-graph-panel-open {
+    grid-template-columns: 64px minmax(0, 1fr) minmax(440px, 50vw);
+  }
+
+  .left-panel {
+    grid-column: 1;
+  }
+
+  .canvas-panel {
+    grid-column: 2;
+  }
+
+  .right-studio-panel {
+    grid-column: 3;
   }
 
   .folder-layer {
@@ -3642,6 +3680,7 @@ dd {
   }
 
   .canvas-panel {
+    grid-column: 1;
     min-width: 0;
   }
 

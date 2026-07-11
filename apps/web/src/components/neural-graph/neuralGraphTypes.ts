@@ -13,6 +13,13 @@ export type NeuralGraphEdgeKind =
   | "unknown";
 
 export type NeuralGraphReferenceScope = "module" | "node" | "field";
+export type NeuralGraphAuthoritySourceType =
+  | "core_fact"
+  | "derived_config"
+  | "authoritative_constraint"
+  | "authoritative_permission"
+  | "dynamic_state"
+  | "normal_output";
 
 export type NeuralGraphNode = {
   id: string;
@@ -40,6 +47,7 @@ export type NeuralGraphEdge = {
   target: string;
   kind: NeuralGraphEdgeKind;
   sourceScope?: NeuralGraphReferenceScope;
+  sourceAuthorityType?: NeuralGraphAuthoritySourceType;
   sourceNodeId?: string;
   sourceFieldPaths?: string[];
 };

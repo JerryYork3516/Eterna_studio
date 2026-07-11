@@ -1741,6 +1741,13 @@ function FieldReferenceRenderer({
 
 type ReferenceValueType = "text" | "number" | "boolean" | "object" | "array" | "unknown";
 type ReferenceScope = "module" | "node" | "field";
+type ReferenceAuthoritySourceType =
+  | "core_fact"
+  | "derived_config"
+  | "authoritative_constraint"
+  | "authoritative_permission"
+  | "dynamic_state"
+  | "normal_output";
 type GenericFieldType = "text" | "long_text" | "number" | "boolean" | "list" | "object" | "unknown";
 type ModuleGraphStore = ReturnType<typeof useCanvasStore.getState>["moduleGraphs"];
 type ModuleInstanceRegistryStore = ReturnType<typeof useCanvasStore.getState>["moduleInstanceRegistry"];
@@ -1779,6 +1786,7 @@ type ReferenceOutputSource = {
   exportFields: ReferenceExportField[];
   allowLayers: string[];
   forbiddenLayers: string[];
+  authoritySourceType: ReferenceAuthoritySourceType;
   isCoreSource: boolean;
   overrideAllowed: boolean;
 };
@@ -1786,6 +1794,46 @@ type ReferenceOutputSource = {
 const REFERENCE_TYPES = ["references", "outputs_to", "constrains", "conflicts_with", "overrides_forbidden"] as const;
 const REFERENCE_SCOPES: ReferenceScope[] = ["module", "node", "field"];
 const REFERENCE_VALUE_TYPES: ReferenceValueType[] = ["text", "number", "boolean", "object", "array", "unknown"];
+const REFERENCE_AUTHORITY_SOURCE_TYPES: ReferenceAuthoritySourceType[] = [
+  "core_fact",
+  "derived_config",
+  "authoritative_constraint",
+  "authoritative_permission",
+  "dynamic_state",
+  "normal_output",
+];
+const REFERENCE_DOWNSTREAM_REWRITE_DEFAULT_OFF_TYPES = new Set<ReferenceAuthoritySourceType>([
+  "core_fact",
+  "authoritative_constraint",
+  "authoritative_permission",
+]);
+
+function referenceAuthoritySourceTypeForLayer(layerId?: string): ReferenceAuthoritySourceType {
+  switch (layerId) {
+    case "layer_1":
+      return "core_fact";
+    case "layer_2":
+    case "layer_7":
+    case "layer_8":
+    case "layer_11":
+      return "derived_config";
+    case "layer_3":
+    case "layer_12":
+      return "authoritative_constraint";
+    case "layer_4":
+      return "authoritative_permission";
+    case "layer_5":
+      return "dynamic_state";
+    default:
+      return "normal_output";
+  }
+}
+
+function referenceAuthoritySourceType(value: unknown, layerId?: string): ReferenceAuthoritySourceType {
+  return REFERENCE_AUTHORITY_SOURCE_TYPES.includes(value as ReferenceAuthoritySourceType)
+    ? (value as ReferenceAuthoritySourceType)
+    : referenceAuthoritySourceTypeForLayer(layerId);
+}
 
 function moduleInstanceParts(instanceId: string) {
   const [layerId = "", moduleId = instanceId] = instanceId.split("::");
@@ -1822,6 +1870,33 @@ function referenceScopes(value: unknown): ReferenceScope[] {
   }
   const scopes = value.filter((scope): scope is ReferenceScope => REFERENCE_SCOPES.includes(scope as ReferenceScope));
   return scopes.length ? scopes : [...REFERENCE_SCOPES];
+}
+
+function referenceOutputScopes(params: Record<string, unknown>): ReferenceScope[] {
+  if (Array.isArray(params.export_scopes)) {
+    const scopes = params.export_scopes.filter((scope): scope is ReferenceScope => REFERENCE_SCOPES.includes(scope as ReferenceScope));
+    if (scopes.length) {
+      return scopes;
+    }
+  }
+  if (REFERENCE_SCOPES.includes(params.export_scope as ReferenceScope)) {
+    return [params.export_scope as ReferenceScope];
+  }
+  return [...REFERENCE_SCOPES];
+}
+
+function normalizeReferenceOutputParams(params: Record<string, unknown>, layerId?: string): Record<string, unknown> {
+  const exportScopes = referenceOutputScopes(params);
+  const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, layerId);
+  return {
+    ...params,
+    export_scopes: exportScopes,
+    export_scope: exportScopes[0],
+    allow_module_level_reference: exportScopes.includes("module"),
+    authority_source_type: authoritySourceType,
+    is_core_source: authoritySourceType === "core_fact",
+    override_allowed: typeof params.override_allowed === "boolean" ? params.override_allowed : false,
+  };
 }
 
 function referenceFieldLabel(field: ReferenceExportField) {
@@ -1865,23 +1940,26 @@ function referenceOutputSourcesFromNodes(
     .filter((node) => workflowNodeType(node) === "reference_output")
     .map((node) => {
       const data = workflowNodeData(node);
-      const params = paramsFromNodeData(data);
+      const params = normalizeReferenceOutputParams({ ...data, ...paramsFromNodeData(data) }, layerId);
       const label = translateIfPresent(useCanvasStore.getState().language, node.title_key) || node.title_fallback || node.node_id;
+      const exportScopes = referenceOutputScopes(params);
+      const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, layerId);
       return {
         layerId,
         moduleId,
         moduleInstanceId,
         nodeId: node.node_id,
         label,
-        exportName: stringValue(params.export_name) || stringValue(data.export_name) || label,
-        exportScope: referenceScope(params.export_scope ?? data.export_scope),
-        exportScopes: referenceScopes(params.export_scopes ?? data.export_scopes),
-        allowModuleLevelReference: Boolean(params.allow_module_level_reference ?? data.allow_module_level_reference ?? referenceScopes(params.export_scopes ?? data.export_scopes).includes("module")),
-        exportFields: referenceExportFields(params.export_fields ?? data.export_fields),
-        allowLayers: referenceStringArray(params.allow_layers ?? data.allow_layers),
-        forbiddenLayers: referenceStringArray(params.forbidden_layers ?? data.forbidden_layers),
-        isCoreSource: Boolean(params.is_core_source ?? data.is_core_source ?? true),
-        overrideAllowed: Boolean(params.override_allowed ?? data.override_allowed),
+        exportName: stringValue(params.export_name) || label,
+        exportScope: referenceScope(params.export_scope),
+        exportScopes,
+        allowModuleLevelReference: Boolean(params.allow_module_level_reference),
+        exportFields: referenceExportFields(params.export_fields),
+        allowLayers: referenceStringArray(params.allow_layers),
+        forbiddenLayers: referenceStringArray(params.forbidden_layers),
+        authoritySourceType,
+        isCoreSource: authoritySourceType === "core_fact",
+        overrideAllowed: Boolean(params.override_allowed),
       };
     });
 }
@@ -1915,20 +1993,22 @@ function ReferenceOutputRenderer({
   language: Language;
   onInput?: (key: string, value: unknown) => void;
 }) {
-  const params = paramsFromNodeData(data);
-  const fields = referenceExportFields(params.export_fields);
+  const rawParams = paramsFromNodeData(data);
   const moduleInstanceRegistry = useCanvasStore((state) => state.moduleInstanceRegistry);
   const moduleNames = useCanvasStore((state) => state.moduleNames);
   const currentModuleInstanceId = stringValue(data.parent_module);
   const currentModule = moduleInstanceRegistry[currentModuleInstanceId];
+  const currentLayerId = currentModule?.layerId || moduleInstanceParts(currentModuleInstanceId).layerId;
   const currentModuleId = currentModule?.moduleId || moduleInstanceParts(currentModuleInstanceId).moduleId;
+  const params = normalizeReferenceOutputParams(rawParams, currentLayerId);
+  const fields = referenceExportFields(params.export_fields);
   const currentModuleName =
     moduleNames[currentModuleInstanceId] ||
     moduleNames[currentModuleId] ||
     referenceModuleDisplayName(currentModuleId, language) ||
     currentModuleInstanceId ||
     i18nText(language, "common.unknown");
-  const activeScopes = referenceScopes(params.export_scopes);
+  const activeScopes = referenceOutputScopes(params);
   const autoExportName = stringValue(params.export_name) || currentModuleName;
   const fieldSummary = fields.map((field) => referenceFieldDisplayName(field, language)).filter(Boolean).join(", ");
   const autoExportDescription =
@@ -1936,6 +2016,7 @@ function ReferenceOutputRenderer({
     (fieldSummary
       ? `${i18nText(language, "reference.autoOutputContent")}: ${fieldSummary}`
       : i18nText(language, "reference.autoOutputContentEmpty"));
+  const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, currentLayerId);
   const commitParams = (nextParams: Record<string, unknown>) => {
     onInput?.("params", nextParams);
     for (const [key, value] of Object.entries(nextParams)) {
@@ -1971,6 +2052,21 @@ function ReferenceOutputRenderer({
       export_scopes: safeScopes,
       export_scope: safeScopes[0],
       allow_module_level_reference: safeScopes.includes("module"),
+    });
+  };
+  const rawParamsFingerprint = JSON.stringify(rawParams);
+  const normalizedParamsFingerprint = JSON.stringify(params);
+  useEffect(() => {
+    if (!onInput || rawParamsFingerprint === normalizedParamsFingerprint) {
+      return;
+    }
+    commitParams(params);
+  }, [onInput, rawParamsFingerprint, normalizedParamsFingerprint]);
+  const changeAuthoritySourceType = (value: ReferenceAuthoritySourceType) => {
+    patch({
+      authority_source_type: value,
+      is_core_source: value === "core_fact",
+      override_allowed: REFERENCE_DOWNSTREAM_REWRITE_DEFAULT_OFF_TYPES.has(value) ? false : Boolean(params.override_allowed),
     });
   };
 
@@ -2024,6 +2120,25 @@ function ReferenceOutputRenderer({
           <span>{i18nText(language, "reference.allowModuleLevelReference")}</span>
         </label>
       </div>
+      <div className="reference-node-editor__scope-group">
+        <span>{i18nText(language, "reference.authoritySourceType")}</span>
+        <div className="reference-node-editor__toggles">
+          {REFERENCE_AUTHORITY_SOURCE_TYPES.map((sourceType) => (
+            <label key={sourceType}>
+              <input
+                className="nodrag"
+                type="radio"
+                name={`reference-authority-${currentModuleInstanceId || "node"}`}
+                checked={authoritySourceType === sourceType}
+                onPointerDown={stopInputEventPropagation}
+                onKeyDown={stopInputEventPropagation}
+                onChange={() => changeAuthoritySourceType(sourceType)}
+              />
+              <span>{i18nText(language, `reference.authority.${sourceType}`)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
       <div className="reference-node-editor__grid">
         <label className="node-inputs__row node-inputs__row--block">
           <span>{i18nText(language, "reference.allowLayers")}</span>
@@ -2034,16 +2149,15 @@ function ReferenceOutputRenderer({
           <NodeTextInput className="nodrag" value={referenceStringArray(params.forbidden_layers).join(", ")} onValueChange={(value) => patch({ forbidden_layers: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
         </label>
       </div>
-      <div className="reference-node-editor__toggles">
-        <label>
-          <input className="nodrag" type="checkbox" checked={Boolean(params.is_core_source ?? true)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ is_core_source: event.target.checked })} />
-          <span>{i18nText(language, "reference.isCoreSource")}</span>
-        </label>
-        <label>
-          <input className="nodrag" type="checkbox" checked={Boolean(params.override_allowed)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ override_allowed: event.target.checked })} />
-          <span>{i18nText(language, "reference.overrideAllowed")}</span>
-        </label>
-      </div>
+      <details className="reference-node-editor__advanced">
+        <summary>{i18nText(language, "genericFields.advancedSettings")}</summary>
+        <div className="reference-node-editor__toggles">
+          <label>
+            <input className="nodrag" type="checkbox" checked={Boolean(params.override_allowed)} onPointerDown={stopInputEventPropagation} onKeyDown={stopInputEventPropagation} onChange={(event) => patch({ override_allowed: event.target.checked })} />
+            <span>{i18nText(language, "reference.overrideAllowed")}</span>
+          </label>
+        </div>
+      </details>
       <section className="reference-node-editor__section">
         <div className="reference-node-editor__section-header">
           <h5>{i18nText(language, "reference.exportFields")}</h5>
@@ -3205,6 +3319,10 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const showModuleOutputSummary = isCatalogPreconfigured && String(effectiveType) === "module_output";
   const siblingOutput = moduleOutputValue(findSiblingModuleOutputNode(schemaNode, moduleWorkflowNodes));
   const isEnabled = typeof nodeData.enabled === "boolean" ? nodeData.enabled : true;
+  const schemaLayerId = typeof schemaNode.layer_id === "string" ? schemaNode.layer_id : typeof nodeData.layer_id === "string" ? nodeData.layer_id : moduleInstanceParts(String(nodeData.parent_module || "")).layerId;
+  const normalizedReferenceOutputParams = showReferenceOutputForm ? normalizeReferenceOutputParams(compileTimeParams, schemaLayerId) : compileTimeParams;
+  const normalizedReferenceOutputScopes = referenceOutputScopes(normalizedReferenceOutputParams);
+  const summaryAuthoritySourceType = referenceAuthoritySourceType(normalizedReferenceOutputParams.authority_source_type, schemaLayerId);
   const sections = {
     core: collapsedSections.has("core"),
     advanced: collapsedSections.has("advanced"),
@@ -3292,29 +3410,29 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           <dl>
             <div>
               <dt>{i18nText(language, "reference.exportScope")}</dt>
-              <dd>{referenceScopes(compileTimeParams.export_scopes).map((scope) => i18nText(language, `reference.scope.${scope}`)).join(", ")}</dd>
+              <dd>{normalizedReferenceOutputScopes.map((scope) => i18nText(language, `reference.scope.${scope}`)).join(", ")}</dd>
             </div>
             <div>
               <dt>{i18nText(language, "reference.allowModuleLevelReference")}</dt>
               <dd>
                 {translate(
                   language,
-                  Boolean(compileTimeParams.allow_module_level_reference ?? referenceScopes(compileTimeParams.export_scopes).includes("module")) ? "common.yes" : "common.no",
-                  Boolean(compileTimeParams.allow_module_level_reference ?? referenceScopes(compileTimeParams.export_scopes).includes("module")) ? "Yes" : "No"
+                  Boolean(normalizedReferenceOutputParams.allow_module_level_reference) ? "common.yes" : "common.no",
+                  Boolean(normalizedReferenceOutputParams.allow_module_level_reference) ? "Yes" : "No"
                 )}
               </dd>
             </div>
             <div>
               <dt>{i18nText(language, "reference.exportFields")}</dt>
-              <dd>{referenceExportFields(compileTimeParams.export_fields).length}</dd>
+              <dd>{referenceExportFields(normalizedReferenceOutputParams.export_fields).length}</dd>
             </div>
             <div>
-              <dt>{i18nText(language, "reference.isCoreSource")}</dt>
-              <dd>{translate(language, (compileTimeParams.is_core_source ?? true) ? "common.yes" : "common.no", (compileTimeParams.is_core_source ?? true) ? "Yes" : "No")}</dd>
+              <dt>{i18nText(language, "reference.authoritySourceType")}</dt>
+              <dd>{i18nText(language, `reference.authority.${summaryAuthoritySourceType}`)}</dd>
             </div>
             <div>
               <dt>{i18nText(language, "reference.overrideAllowed")}</dt>
-              <dd>{translate(language, compileTimeParams.override_allowed ? "common.yes" : "common.no", compileTimeParams.override_allowed ? "Yes" : "No")}</dd>
+              <dd>{translate(language, normalizedReferenceOutputParams.override_allowed ? "common.yes" : "common.no", normalizedReferenceOutputParams.override_allowed ? "Yes" : "No")}</dd>
             </div>
           </dl>
         </div>

@@ -28,6 +28,9 @@ const LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS = new Set([
   "humanistic_interaction_boundary_config_v0_1",
   "humanistic_risk_response_config_v0_1",
 ]);
+const RISK_RESPONSE_LAYER_ID = "layer_3";
+const RISK_RESPONSE_MODULE_ID = "humanistic_risk_response_config_v0_1";
+const RISK_RESPONSE_MODULE_INSTANCE_ID = `${RISK_RESPONSE_LAYER_ID}${MODULE_INSTANCE_SEPARATOR}${RISK_RESPONSE_MODULE_ID}`;
 const GENERIC_FIELD_RESERVED_PARAM_KEYS = new Set([
   "mode",
   "text",
@@ -748,18 +751,189 @@ function migrateGenericFieldsGraph(
   return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
+function isRiskResponseIdentity(identity: ModuleInstance) {
+  return identity.moduleId === RISK_RESPONSE_MODULE_ID;
+}
+
+function graphNodeType(schemaNode: Record<string, unknown>, data: Record<string, unknown>) {
+  return String(data.node_type || schemaNode.type || "");
+}
+
+function replaceReferenceNodeIdPrefix(nodeId: string) {
+  return nodeId.startsWith("layer_2::") ? nodeId.replace(/^layer_2::/, "layer_3::") : nodeId;
+}
+
+function updateReferencePointers(value: unknown, nodeIdMap: Map<string, string>): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => updateReferencePointers(item, nodeIdMap));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const next: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if ((key === "source_node_id" || key === "source" || key === "target") && typeof item === "string") {
+      next[key] = nodeIdMap.get(item) ?? item;
+      continue;
+    }
+    if (key === "source_layer_id" && value.source_module_id === RISK_RESPONSE_MODULE_ID) {
+      next[key] = RISK_RESPONSE_LAYER_ID;
+      continue;
+    }
+    next[key] = updateReferencePointers(item, nodeIdMap);
+  }
+  return next;
+}
+
+function migrateRiskResponseReferenceGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): { graph: ModuleGraph; nodeIdMap: Map<string, string>; oldGraphId?: string } | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (!isRiskResponseIdentity(identity)) {
+    return null;
+  }
+
+  let changed = graph.moduleNodeId !== RISK_RESPONSE_MODULE_INSTANCE_ID || identity.layerId !== RISK_RESPONSE_LAYER_ID;
+  const nodeIdMap = new Map<string, string>();
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const nodeType = graphNodeType(schemaNode, data);
+    data.parent_module = RISK_RESPONSE_MODULE_INSTANCE_ID;
+    data.module_instance_id = RISK_RESPONSE_MODULE_INSTANCE_ID;
+    data.catalog_module_id = RISK_RESPONSE_MODULE_ID;
+    schemaNode.layer_id = RISK_RESPONSE_LAYER_ID;
+    schemaNode.module_id = RISK_RESPONSE_MODULE_ID;
+    if (nodeType !== "reference_input" && nodeType !== "reference_output") {
+      return nextNode;
+    }
+
+    const oldNodeId = String(schemaNode.node_id || (nextNode as unknown as Record<string, unknown>).id || "");
+    const nextNodeId = replaceReferenceNodeIdPrefix(oldNodeId);
+    if (oldNodeId && nextNodeId !== oldNodeId) {
+      nodeIdMap.set(oldNodeId, nextNodeId);
+      schemaNode.node_id = nextNodeId;
+      const nextNodeRecord = nextNode as unknown as Record<string, unknown>;
+      if (typeof nextNodeRecord.id === "string") {
+        nextNodeRecord.id = nextNodeId;
+      }
+      changed = true;
+    }
+
+    data.parent_module = RISK_RESPONSE_MODULE_INSTANCE_ID;
+    data.module_instance_id = RISK_RESPONSE_MODULE_INSTANCE_ID;
+    data.catalog_module_id = RISK_RESPONSE_MODULE_ID;
+    data.layer_id = RISK_RESPONSE_LAYER_ID;
+    data.module_id = RISK_RESPONSE_MODULE_ID;
+    if (nodeType === "reference_output") {
+      const params = isRecord(data.params) ? { ...data.params } : {};
+      data.params = {
+        ...params,
+        authority_source_type: "authoritative_constraint",
+        is_core_source: false,
+        override_allowed: false,
+      };
+      data.authority_source_type = "authoritative_constraint";
+      data.is_core_source = false;
+      data.override_allowed = false;
+      changed = true;
+    }
+    return nextNode;
+  });
+
+  const nextEdges = graph.edges.map((edge) => {
+    const nextEdge = cloneJson(edge) as WorkflowEdge;
+    let edgeChanged = false;
+    for (const key of ["source", "target", "source_node_id", "target_node_id"]) {
+      const record = nextEdge as unknown as Record<string, unknown>;
+      const current = typeof record[key] === "string" ? record[key] : "";
+      const nextValue = nodeIdMap.get(current);
+      if (nextValue) {
+        record[key] = nextValue;
+        edgeChanged = true;
+      }
+    }
+    changed = changed || edgeChanged;
+    return nextEdge;
+  });
+
+  if (!changed && nodeIdMap.size === 0) {
+    return null;
+  }
+  return {
+    graph: {
+      ...graph,
+      moduleNodeId: RISK_RESPONSE_MODULE_INSTANCE_ID,
+      nodes: nextNodes,
+      edges: nextEdges,
+    },
+    nodeIdMap,
+    oldGraphId: graph.moduleNodeId !== RISK_RESPONSE_MODULE_INSTANCE_ID ? graph.moduleNodeId : undefined,
+  };
+}
+
+function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
+  if (!nodeIdMap.size) {
+    return;
+  }
+  const store = useCanvasStore.getState();
+  for (const graph of Object.values(store.moduleGraphs)) {
+    let changed = false;
+    const nextNodes = graph.nodes.map((node) => {
+      const nextNode = updateReferencePointers(cloneJson(node), nodeIdMap) as WorkflowNode;
+      if (stableJson(nextNode) !== stableJson(node)) {
+        changed = true;
+      }
+      return nextNode;
+    });
+    const nextEdges = graph.edges.map((edge) => {
+      const nextEdge = updateReferencePointers(cloneJson(edge), nodeIdMap) as WorkflowEdge;
+      if (stableJson(nextEdge) !== stableJson(edge)) {
+        changed = true;
+      }
+      return nextEdge;
+    });
+    if (changed) {
+      store.updateModuleGraph(graph.moduleNodeId, nextNodes, nextEdges, graph.viewport);
+      saveModuleGraphState(graph.moduleNodeId, nextNodes, nextEdges);
+    }
+  }
+}
+
 function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
   const store = useCanvasStore.getState();
-  const migratedGraph = migrateGenericFieldsGraph(graph, store.moduleInstanceRegistry);
-  if (!migratedGraph) {
-    return graph;
+  const riskMigration = migrateRiskResponseReferenceGraph(graph, store.moduleInstanceRegistry);
+  if (riskMigration) {
+    store.updateModuleGraph(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges, riskMigration.graph.viewport);
+    saveModuleGraphState(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges);
+    if (riskMigration.oldGraphId) {
+      store.removeModuleGraph(riskMigration.oldGraphId);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(`module_graph_${riskMigration.oldGraphId}`);
+      }
+    }
+    migrateReferencePointersAcrossGraphs(riskMigration.nodeIdMap);
+    console.log("[P1-BRIDGE] migrated risk response reference node ids", {
+      moduleNodeId: riskMigration.graph.moduleNodeId,
+      movedIds: riskMigration.nodeIdMap.size,
+    });
   }
-  store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
-  saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
-  console.log("[P1-BRIDGE] migrated field/text input nodes to generic_fields", {
-    moduleNodeId: migratedGraph.moduleNodeId,
-  });
-  return migratedGraph;
+  const graphAfterRiskMigration = riskMigration?.graph ?? graph;
+  const migratedGraph = migrateGenericFieldsGraph(graphAfterRiskMigration, store.moduleInstanceRegistry);
+  if (migratedGraph) {
+    store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
+    saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
+    console.log("[P1-BRIDGE] migrated field/text input nodes to generic_fields", {
+      moduleNodeId: migratedGraph.moduleNodeId,
+    });
+    return migratedGraph;
+  }
+  return graphAfterRiskMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {

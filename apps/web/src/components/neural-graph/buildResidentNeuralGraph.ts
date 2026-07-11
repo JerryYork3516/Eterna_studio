@@ -4,6 +4,7 @@ import { applyNeuralGraphLayout } from "./neuralGraphLayout";
 import type {
   ModuleGraphLike,
   ModuleGraphsLike,
+  NeuralGraphAuthoritySourceType,
   NeuralGraphNode,
   NeuralGraphReferenceScope,
   NeuralGraphModuleInstance,
@@ -26,6 +27,39 @@ function readString(value: unknown) {
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => readString(item)).filter(Boolean) : [];
+}
+
+function authoritySourceTypeForLayer(layerId?: string): NeuralGraphAuthoritySourceType {
+  switch (layerId) {
+    case "layer_1":
+      return "core_fact";
+    case "layer_2":
+    case "layer_7":
+    case "layer_8":
+    case "layer_11":
+      return "derived_config";
+    case "layer_3":
+    case "layer_12":
+      return "authoritative_constraint";
+    case "layer_4":
+      return "authoritative_permission";
+    case "layer_5":
+      return "dynamic_state";
+    default:
+      return "normal_output";
+  }
+}
+
+function authoritySourceType(value: unknown, layerId?: string): NeuralGraphAuthoritySourceType {
+  const raw = readString(value);
+  return raw === "core_fact" ||
+    raw === "derived_config" ||
+    raw === "authoritative_constraint" ||
+    raw === "authoritative_permission" ||
+    raw === "dynamic_state" ||
+    raw === "normal_output"
+    ? raw
+    : authoritySourceTypeForLayer(layerId);
 }
 
 function translatedModuleName(module: ModuleCatalogEntryV04, t?: (key: string, fallback?: string) => string) {
@@ -239,7 +273,7 @@ export function buildResidentNeuralGraph({
   const layerOrderById = new Map(moduleCatalog.layers.map((layer) => [layer.layer_id, layer.layer_order]));
   const layerColorById = new Map<string, string>();
   const moduleNodeByLayerAndModule = new Map<string, string>();
-  const referenceOutputIndex = new Map<string, { fieldPaths: Set<string> }>();
+  const referenceOutputIndex = new Map<string, { fieldPaths: Set<string>; authoritySourceType: NeuralGraphAuthoritySourceType }>();
   const moduleRelationRequests: Array<{
     sourceLayerId: string;
     sourceModuleId: string;
@@ -323,8 +357,10 @@ export function buildResidentNeuralGraph({
       });
       if (referenceOutputNodes.length) {
         const fieldPaths = new Set<string>();
+        let outputAuthoritySourceType = authoritySourceType(undefined, layerId);
         for (const outputNode of referenceOutputNodes) {
           const outputParams = paramsFromGraphNode(outputNode);
+          outputAuthoritySourceType = authoritySourceType(outputParams.authority_source_type, layerId);
           const exportFields = Array.isArray(outputParams.export_fields) ? outputParams.export_fields : [];
           for (const fieldValue of exportFields) {
             const field = readRecord(fieldValue);
@@ -334,7 +370,7 @@ export function buildResidentNeuralGraph({
             }
           }
         }
-        const outputIndexEntry = { fieldPaths };
+        const outputIndexEntry = { fieldPaths, authoritySourceType: outputAuthoritySourceType };
         referenceOutputIndex.set(`${layerId}:${moduleId}`, outputIndexEntry);
         referenceOutputIndex.set(`:${moduleId}`, outputIndexEntry);
       }
@@ -443,6 +479,7 @@ export function buildResidentNeuralGraph({
       target: request.targetModuleNodeId,
       kind: request.kind,
       sourceScope: request.sourceScope,
+      sourceAuthorityType: referenceOutput.authoritySourceType,
       sourceNodeId: request.sourceNodeId || undefined,
       sourceFieldPaths: request.sourceFieldPaths,
     });

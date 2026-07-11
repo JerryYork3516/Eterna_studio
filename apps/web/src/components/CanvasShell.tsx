@@ -105,9 +105,30 @@ function backendNodeCategory(type: NodeType): string {
   }
 }
 
+function referenceAuthoritySourceTypeForLayer(layerId?: string): ReferenceAuthoritySourceType {
+  switch (layerId) {
+    case "layer_1":
+      return "core_fact";
+    case "layer_2":
+    case "layer_7":
+    case "layer_8":
+    case "layer_11":
+      return "derived_config";
+    case "layer_3":
+    case "layer_12":
+      return "authoritative_constraint";
+    case "layer_4":
+      return "authoritative_permission";
+    case "layer_5":
+      return "dynamic_state";
+    default:
+      return "normal_output";
+  }
+}
+
 function referenceNodeDefaultParams(type: ModuleNodeType, layerId?: string): Record<string, unknown> {
-  void layerId;
   if (type === "reference_output") {
+    const authoritySourceType = referenceAuthoritySourceTypeForLayer(layerId);
     return {
       export_name: "",
       export_description: "",
@@ -117,7 +138,8 @@ function referenceNodeDefaultParams(type: ModuleNodeType, layerId?: string): Rec
       export_fields: [],
       allow_layers: [],
       forbidden_layers: [],
-      is_core_source: true,
+      authority_source_type: authoritySourceType,
+      is_core_source: authoritySourceType === "core_fact",
       override_allowed: false
     };
   }
@@ -594,14 +616,50 @@ function hasMeaningfulValue(value: unknown): boolean {
   return true;
 }
 
+function moduleGraphNodeData(node: unknown): Record<string, unknown> {
+  const schemaNode = schemaNodeFromModuleGraphNode(node);
+  if (schemaNode && isRecord(schemaNode.data)) {
+    return schemaNode.data;
+  }
+  if (isRecord(node) && isRecord(node.data)) {
+    return node.data;
+  }
+  return {};
+}
+
+function moduleGraphNodeType(node: unknown): string {
+  const schemaNode = schemaNodeFromModuleGraphNode(node);
+  const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : moduleGraphNodeData(node);
+  return String(data.node_type || schemaNode?.type || (isRecord(node) ? node.type : "") || "");
+}
+
+function referenceOutputConfigScore(graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined, module?: ModuleCatalogEntryV04 | null) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  let score = 0;
+  for (const node of nodes) {
+    if (moduleGraphNodeType(node) !== "reference_output") {
+      continue;
+    }
+    const data = moduleGraphNodeData(node);
+    const params = normalizeReferenceOutputParams(cloneRecord(data.params), module?.layer_id);
+    const signature = {
+      export_scopes: params.export_scopes,
+      export_scope: params.export_scope,
+      allow_module_level_reference: params.allow_module_level_reference,
+      authority_source_type: params.authority_source_type,
+      is_core_source: params.is_core_source,
+      override_allowed: params.override_allowed,
+    };
+    score += 1000 + stableJson(signature).length;
+  }
+  return score;
+}
+
 function moduleGraphUserContentScore(graph: { nodes?: unknown[]; edges?: unknown[] } | null | undefined) {
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   let score = 0;
   for (const node of nodes) {
-    if (!isRecord(node)) {
-      continue;
-    }
-    const data = isRecord(node.data) ? node.data : {};
+    const data = moduleGraphNodeData(node);
     const params = isRecord(data.params) ? data.params : {};
     for (const fieldList of [params.fields, data.fields]) {
       if (!Array.isArray(fieldList)) {
@@ -667,10 +725,7 @@ function moduleGraphChangedFieldScore(
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   let changedScore = 0;
   for (const node of nodes) {
-    if (!isRecord(node)) {
-      continue;
-    }
-    const data = isRecord(node.data) ? node.data : {};
+    const data = moduleGraphNodeData(node);
     const params = isRecord(data.params) ? data.params : {};
     for (const fieldList of [params.fields, data.fields]) {
       if (!Array.isArray(fieldList)) {
@@ -691,7 +746,7 @@ function moduleGraphChangedFieldScore(
       }
     }
   }
-  return changedScore;
+  return changedScore + referenceOutputConfigScore(graph, module);
 }
 
 function localStorageModuleGraphCandidatesForModule(moduleId: string) {
@@ -799,9 +854,347 @@ const DR_COMPILE_FORBIDDEN_KEYS = new Set([
   "provider_binding",
 ]);
 const DR_COMPILE_SECRET_REF_KEYS = new Set(["key_ref", "secret_ref", "credential_ref", "api_key_ref"]);
+const REFERENCE_OUTPUT_SCOPES = ["module", "node", "field"] as const;
+type ReferenceOutputScope = (typeof REFERENCE_OUTPUT_SCOPES)[number];
+const REFERENCE_AUTHORITY_SOURCE_TYPES = [
+  "core_fact",
+  "derived_config",
+  "authoritative_constraint",
+  "authoritative_permission",
+  "dynamic_state",
+  "normal_output",
+] as const;
+type ReferenceAuthoritySourceType = (typeof REFERENCE_AUTHORITY_SOURCE_TYPES)[number];
+const REFERENCE_INPUT_SCOPES = ["module", "node", "field"] as const;
+type ReferenceInputScope = (typeof REFERENCE_INPUT_SCOPES)[number];
+const REFERENCE_INPUT_TYPES = ["references", "outputs_to", "constrains", "conflicts_with", "overrides_forbidden"] as const;
+type ReferenceInputType = (typeof REFERENCE_INPUT_TYPES)[number];
+const REFERENCE_INPUT_POINTER_KEYS = new Set([
+  "source_layer_id",
+  "source_module_id",
+  "source_node_id",
+  "source_scope",
+  "source_field_paths",
+  "reference_type",
+  "required",
+]);
+const REFERENCE_INPUT_FORBIDDEN_KEYS = new Set([
+  "source_module",
+  "source_node",
+  "source_content",
+  "module_snapshot",
+  "node_snapshot",
+  "source_module_snapshot",
+  "embedded_module",
+  "resolved_content",
+]);
+
+type ReferenceInputNormalizationStats = {
+  beforeCount: number;
+  afterCount: number;
+  duplicateCount: number;
+  strippedCount: number;
+  invalidCount: number;
+  cycleCount: number;
+  invalidSamples: string[];
+};
 
 function cloneRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? safeClone(value) : {};
+}
+
+function referenceAuthoritySourceType(value: unknown, layerId?: string): ReferenceAuthoritySourceType {
+  return REFERENCE_AUTHORITY_SOURCE_TYPES.includes(value as ReferenceAuthoritySourceType)
+    ? (value as ReferenceAuthoritySourceType)
+    : referenceAuthoritySourceTypeForLayer(layerId);
+}
+
+function referenceOutputScopes(params: Record<string, unknown>): ReferenceOutputScope[] {
+  if (Array.isArray(params.export_scopes)) {
+    const scopes = params.export_scopes.filter((scope): scope is ReferenceOutputScope => REFERENCE_OUTPUT_SCOPES.includes(scope as ReferenceOutputScope));
+    if (scopes.length) {
+      return scopes;
+    }
+  }
+  if (REFERENCE_OUTPUT_SCOPES.includes(params.export_scope as ReferenceOutputScope)) {
+    return [params.export_scope as ReferenceOutputScope];
+  }
+  return [...REFERENCE_OUTPUT_SCOPES];
+}
+
+function normalizeReferenceOutputParams(params: Record<string, unknown>, layerId?: string): Record<string, unknown> {
+  const exportScopes = referenceOutputScopes(params);
+  const authoritySourceType = referenceAuthoritySourceType(params.authority_source_type, layerId);
+  return {
+    ...params,
+    export_scopes: exportScopes,
+    export_scope: exportScopes[0],
+    allow_module_level_reference: exportScopes.includes("module"),
+    authority_source_type: authoritySourceType,
+    is_core_source: authoritySourceType === "core_fact",
+    override_allowed: typeof params.override_allowed === "boolean" ? params.override_allowed : false,
+  };
+}
+
+function referenceInputString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function referenceInputStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function referenceInputScope(value: unknown, fieldPaths: string[]): ReferenceInputScope {
+  if (REFERENCE_INPUT_SCOPES.includes(value as ReferenceInputScope)) {
+    return value as ReferenceInputScope;
+  }
+  return fieldPaths.length > 0 ? "field" : "module";
+}
+
+function referenceInputType(value: unknown): ReferenceInputType {
+  return REFERENCE_INPUT_TYPES.includes(value as ReferenceInputType) ? (value as ReferenceInputType) : "references";
+}
+
+function referenceInputHasEmbeddedContent(item: Record<string, unknown>): boolean {
+  return Object.keys(item).some((key) => !REFERENCE_INPUT_POINTER_KEYS.has(key) || REFERENCE_INPUT_FORBIDDEN_KEYS.has(key));
+}
+
+function normalizeReferenceInputItem(item: unknown): Record<string, unknown> | null {
+  if (!isRecord(item)) {
+    return null;
+  }
+  const sourceFieldPaths = referenceInputStringArray(item.source_field_paths);
+  const sourceScope = referenceInputScope(item.source_scope, sourceFieldPaths);
+  return {
+    source_layer_id: referenceInputString(item.source_layer_id),
+    source_module_id: referenceInputString(item.source_module_id),
+    source_node_id: referenceInputString(item.source_node_id),
+    source_scope: sourceScope,
+    source_field_paths: sourceFieldPaths,
+    reference_type: referenceInputType(item.reference_type),
+    required: Boolean(item.required),
+  };
+}
+
+function normalizeReferenceInputReferences(
+  references: unknown,
+  stats?: ReferenceInputNormalizationStats
+): Record<string, unknown>[] {
+  const rawReferences = Array.isArray(references) ? references : [];
+  const seen = new Set<string>();
+  const normalizedReferences: Record<string, unknown>[] = [];
+  stats && (stats.beforeCount += rawReferences.length);
+  for (const rawReference of rawReferences) {
+    if (isRecord(rawReference) && referenceInputHasEmbeddedContent(rawReference)) {
+      stats && (stats.strippedCount += 1);
+    }
+    const normalized = normalizeReferenceInputItem(rawReference);
+    if (!normalized) {
+      stats && (stats.strippedCount += 1);
+      continue;
+    }
+    const signature = stableJson(normalized);
+    if (seen.has(signature)) {
+      stats && (stats.duplicateCount += 1);
+      continue;
+    }
+    seen.add(signature);
+    normalizedReferences.push(normalized);
+  }
+  stats && (stats.afterCount += normalizedReferences.length);
+  return normalizedReferences;
+}
+
+function normalizeReferenceInputParams(params: Record<string, unknown>, stats?: ReferenceInputNormalizationStats): Record<string, unknown> {
+  if (!Array.isArray(params.references)) {
+    return params;
+  }
+  return {
+    ...params,
+    references: normalizeReferenceInputReferences(params.references, stats),
+  };
+}
+
+function emptyReferenceInputStats(): ReferenceInputNormalizationStats {
+  return {
+    beforeCount: 0,
+    afterCount: 0,
+    duplicateCount: 0,
+    strippedCount: 0,
+    invalidCount: 0,
+    cycleCount: 0,
+    invalidSamples: [],
+  };
+}
+
+function addReferenceInvalidSample(stats: ReferenceInputNormalizationStats, message: string) {
+  stats.invalidCount += 1;
+  if (stats.invalidSamples.length < 8) {
+    stats.invalidSamples.push(message);
+  }
+}
+
+function moduleGraphNodeIds(module: Record<string, unknown>): Set<string> {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
+  const ids = new Set<string>();
+  for (const node of nodes) {
+    const nodeId = String(node.node_id || "");
+    if (nodeId) {
+      ids.add(nodeId);
+    }
+    const data = isRecord(node.data) ? node.data : {};
+    const catalogNodeId = String(data.catalog_node_id || "");
+    if (catalogNodeId) {
+      ids.add(catalogNodeId);
+    }
+  }
+  return ids;
+}
+
+function referenceInputItemsFromModule(module: Record<string, unknown>): Record<string, unknown>[] {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
+  const references: Record<string, unknown>[] = [];
+  for (const node of nodes) {
+    if (String(node.node_type || "") !== "reference_input") {
+      continue;
+    }
+    const params = isRecord(node.params) ? node.params : {};
+    if (Array.isArray(params.references)) {
+      references.push(...params.references.filter(isRecord));
+    }
+  }
+  return references;
+}
+
+function detectReferenceCycles(edges: Array<{ source: string; target: string }>): number {
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!edge.source || !edge.target) {
+      continue;
+    }
+    const targets = adjacency.get(edge.source) ?? [];
+    targets.push(edge.target);
+    adjacency.set(edge.source, targets);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  let cycles = 0;
+
+  const visit = (moduleId: string) => {
+    if (visiting.has(moduleId)) {
+      cycles += 1;
+      return;
+    }
+    if (visited.has(moduleId)) {
+      return;
+    }
+    visiting.add(moduleId);
+    for (const target of adjacency.get(moduleId) ?? []) {
+      visit(target);
+    }
+    visiting.delete(moduleId);
+    visited.add(moduleId);
+  };
+
+  for (const moduleId of adjacency.keys()) {
+    visit(moduleId);
+  }
+  return cycles;
+}
+
+function validateReferenceInputs(workflow: Workflow, stats: ReferenceInputNormalizationStats) {
+  const modules = Array.isArray(workflow.modules) ? workflow.modules.filter(isRecord) : [];
+  const layerIds = new Set(modules.map((module) => String(module.layer_id || "")).filter(Boolean));
+  const moduleById = new Map<string, Record<string, unknown>>();
+  const nodeIdsByModule = new Map<string, Set<string>>();
+  for (const module of modules) {
+    const moduleId = String(module.module_id || "");
+    if (!moduleId) {
+      continue;
+    }
+    moduleById.set(moduleId, module);
+    nodeIdsByModule.set(moduleId, moduleGraphNodeIds(module));
+  }
+  const referenceEdges: Array<{ source: string; target: string }> = [];
+
+  for (const module of modules) {
+    const targetModuleId = String(module.module_id || "");
+    for (const reference of referenceInputItemsFromModule(module)) {
+      const sourceLayerId = String(reference.source_layer_id || "");
+      const sourceModuleId = String(reference.source_module_id || "");
+      const sourceNodeId = String(reference.source_node_id || "");
+      const sourceScope = String(reference.source_scope || "");
+      const sourceFieldPaths = referenceInputStringArray(reference.source_field_paths);
+      if (!sourceLayerId || !layerIds.has(sourceLayerId)) {
+        addReferenceInvalidSample(stats, `${targetModuleId}: missing source_layer_id ${sourceLayerId || "(empty)"}`);
+      }
+      const sourceModule = moduleById.get(sourceModuleId);
+      if (!sourceModule) {
+        addReferenceInvalidSample(stats, `${targetModuleId}: missing source_module_id ${sourceModuleId || "(empty)"}`);
+      } else if (sourceLayerId && String(sourceModule.layer_id || "") !== sourceLayerId) {
+        addReferenceInvalidSample(stats, `${targetModuleId}: source_module_id ${sourceModuleId} is not in ${sourceLayerId}`);
+      }
+      if (sourceNodeId) {
+        const sourceNodeIds = nodeIdsByModule.get(sourceModuleId);
+        if (!sourceNodeIds?.has(sourceNodeId)) {
+          addReferenceInvalidSample(stats, `${targetModuleId}: missing source_node_id ${sourceNodeId}`);
+        }
+      } else if (sourceScope === "node" || sourceScope === "field") {
+        addReferenceInvalidSample(stats, `${targetModuleId}: ${sourceScope} reference missing source_node_id`);
+      }
+      if (sourceScope === "field" && sourceFieldPaths.length === 0) {
+        addReferenceInvalidSample(stats, `${targetModuleId}: field reference missing source_field_paths`);
+      }
+      if (sourceScope === "module") {
+        for (const key of Object.keys(reference)) {
+          if (REFERENCE_INPUT_FORBIDDEN_KEYS.has(key)) {
+            addReferenceInvalidSample(stats, `${targetModuleId}: module reference contains embedded content key ${key}`);
+          }
+        }
+      }
+      if (sourceModuleId && targetModuleId) {
+        referenceEdges.push({ source: sourceModuleId, target: targetModuleId });
+      }
+    }
+  }
+
+  stats.cycleCount = detectReferenceCycles(referenceEdges);
+}
+
+function normalizeWorkflowReferenceInputs(workflow: Workflow): { workflow: Workflow; stats: ReferenceInputNormalizationStats } {
+  const stats = emptyReferenceInputStats();
+  const nextWorkflow = safeClone(workflow) as Workflow;
+  if (Array.isArray(nextWorkflow.modules)) {
+    nextWorkflow.modules = nextWorkflow.modules.map((module) => {
+      if (!isRecord(module)) {
+        return module;
+      }
+      const graph = isRecord(module.module_graph) ? module.module_graph : null;
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : null;
+      if (!graph || !nodes) {
+        return module;
+      }
+      return {
+        ...module,
+        module_graph: {
+          ...graph,
+          nodes: nodes.map((node) => {
+            if (!isRecord(node) || String(node.node_type || "") !== "reference_input") {
+              return node;
+            }
+            return {
+              ...node,
+              params: normalizeReferenceInputParams(cloneRecord(node.params), stats),
+            };
+          }),
+        },
+      };
+    }) as Workflow["modules"];
+  }
+  validateReferenceInputs(nextWorkflow, stats);
+  return { workflow: nextWorkflow, stats };
 }
 
 function cloneArray(value: unknown): unknown[] {
@@ -1069,19 +1462,30 @@ function updateFieldValue(fields: Record<string, unknown>[], index: number, valu
 function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV04): Record<string, unknown> {
   const data = isRecord(schemaNode.data) ? schemaNode.data : {};
   const nodeType = String(data.node_type || schemaNode.type);
-  const params = cloneRecord(data.params);
+  let params = cloneRecord(data.params);
   const legacyNodeType = typeof data.legacy_node_type === "string" ? data.legacy_node_type : "";
   const compileNodeType = nodeType === "text_input" && legacyNodeType ? legacyNodeType : nodeType;
+  const compileLayerId =
+    (typeof schemaNode.layer_id === "string" && schemaNode.layer_id) ||
+    (typeof data.layer_id === "string" && data.layer_id) ||
+    layerIdFromInstanceId(String(data.parent_module || "")) ||
+    module.layer_id;
   if (nodeType === "text_input" && legacyNodeType && Array.isArray(params.fields)) {
     params.fields = legacyFieldInputFieldsForCompile(data, params);
   } else if (compileNodeType === "field_input" || compileNodeType === "text_config") {
     params.fields = fieldInputFields(schemaNode);
   }
+  if (compileNodeType === "reference_output") {
+    params = normalizeReferenceOutputParams(params, compileLayerId);
+  }
+  if (compileNodeType === "reference_input") {
+    params = normalizeReferenceInputParams(params);
+  }
   return {
     node_id: String(data.catalog_node_id || schemaNode.node_id),
     node_type: compileNodeType,
     module_id: module.module_id,
-    layer_id: module.layer_id,
+    layer_id: compileLayerId,
     params,
     i18n_keys: cloneRecord(data.i18n_keys || schemaNode.i18n_keys),
     outputs: cloneRecord(data.outputs),
@@ -2156,6 +2560,7 @@ export function CanvasShell() {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+  const [requiresDrRecompile, setRequiresDrRecompile] = useState(false);
   const mainHistoryRef = useRef<MainHistoryState>({ past: [], future: [], restoring: false });
   const pushMainHistoryRef = useRef<() => void>(() => undefined);
   const mainSnapshotRef = useRef<MainCanvasSnapshot | null>(null);
@@ -3475,6 +3880,7 @@ export function CanvasShell() {
     }
     downloadWorkflow(currentWorkflow);
     setSaveStatus("saved");
+    setRequiresDrRecompile(true);
     appendLog(t("status.saved"));
   }, [appendLog, requireWorkflow, t]);
 
@@ -3530,18 +3936,34 @@ export function CanvasShell() {
     if (!currentWorkflow) {
       return;
     }
+    const normalizedReferences = normalizeWorkflowReferenceInputs(currentWorkflow);
+    const referenceStats = normalizedReferences.stats;
     setBottomTab("logs");
     setActiveDrawer("logs");
-    await compileDR(sanitizeWorkflowForDrCompile(currentWorkflow));
-  }, [compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
+    appendLog(
+      `[reference-input] pure pointer normalize: ${referenceStats.beforeCount} -> ${referenceStats.afterCount}; invalid=${referenceStats.invalidCount}; duplicates=${referenceStats.duplicateCount}; stripped=${referenceStats.strippedCount}; cycles=${referenceStats.cycleCount}`,
+      referenceStats.invalidCount > 0 || referenceStats.cycleCount > 0 ? "warn" : "info"
+    );
+    for (const sample of referenceStats.invalidSamples) {
+      appendLog(`[reference-input] ${sample}`, "warn");
+    }
+    await compileDR(sanitizeWorkflowForDrCompile(normalizedReferences.workflow));
+    if (useCanvasStore.getState().canExportDR) {
+      setRequiresDrRecompile(false);
+    }
+  }, [appendLog, compileDR, requireWorkflow, setActiveDrawer, setBottomTab]);
 
   // Stage 6.3.3 step 2 — Export .digital_resident: download the already-validated
   // compiled DR. Disabled in the UI unless a valid DR was compiled first.
   const handleExportDR = useCallback(async () => {
     setBottomTab("logs");
     setActiveDrawer("logs");
+    if (requiresDrRecompile) {
+      appendLog(t("status.drExport.needsRecompile", "Saved canvas changes need a new DR compile before export."), "warn");
+      return;
+    }
     await exportDR();
-  }, [exportDR, setActiveDrawer, setBottomTab]);
+  }, [appendLog, exportDR, requiresDrRecompile, setActiveDrawer, setBottomTab, t]);
 
   const handleExportPreview = useCallback(async () => {
     const currentWorkflow = requireWorkflow();
@@ -6623,9 +7045,12 @@ function ModuleCanvasPanel({
     pushModuleHistory();
     addedRef.current += 1;
     const seq = addedRef.current;
-    const id = `${moduleNode.node_id}_${type}_${Date.now()}_${seq}`;
+    const ownerLayerId = String(moduleNode.data?.parent_layer || moduleNode.data?.layer_id || layerIdFromInstanceId(moduleNode.node_id) || "");
+    const ownerModuleId = String(moduleNode.data?.module_catalog_id || moduleNode.data?.module_id || moduleIdFromInstanceId(moduleNode.node_id) || moduleNode.module_id || "");
+    const ownerModuleInstanceId = ownerLayerId && ownerModuleId ? `${ownerLayerId}${MODULE_INSTANCE_SEPARATOR}${ownerModuleId}` : moduleNode.node_id;
+    const id = `${ownerModuleInstanceId}_${type}_${Date.now()}_${seq}`;
     const definition = getNodeDefinition(type);
-    const referenceParams = referenceNodeDefaultParams(type, layerIdFromInstanceId(moduleNode.node_id));
+    const referenceParams = referenceNodeDefaultParams(type, ownerLayerId);
     const referenceColor = referenceNodeDefaultColor(type);
     const schemaNode = ensurePorts({
       node_id: id,
@@ -6637,7 +7062,11 @@ function ModuleCanvasPanel({
       lock_level: "editable",
       locale: null,
       data: {
-        parent_module: moduleNode.node_id,
+        parent_module: ownerModuleInstanceId,
+        module_instance_id: ownerModuleInstanceId,
+        catalog_module_id: ownerModuleId,
+        layer_id: ownerLayerId,
+        module_id: ownerModuleId,
         ...(referenceColor ? { ui_color: referenceColor } : {}),
         ...(Object.keys(referenceParams).length ? { params: referenceParams, ...referenceParams } : {}),
         ...Object.fromEntries((definition?.input_schema ?? []).map((field: NodeInputField) => [field.key, field.default ?? ""]))
@@ -6646,6 +7075,8 @@ function ModuleCanvasPanel({
       output_schema: definition?.output_schema,
       ports: { inputs: [], outputs: [] },
       validation: null,
+      layer_id: ownerLayerId,
+      module_id: ownerModuleId,
       collapsed_sections: type === "reference_input" || type === "reference_output" ? ["core", "advanced", "runtime"] : ["advanced", "runtime"]
     } as unknown as WorkflowNode);
     setModuleNodes((current) => {
