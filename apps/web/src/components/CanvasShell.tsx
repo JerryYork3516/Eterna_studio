@@ -909,7 +909,7 @@ function buildCatalogModuleSeed(module: ModuleCatalogEntryV04, instanceId: strin
       layer_id: module.layer_id,
       module_id: module.module_id,
       i18n_keys: Object.fromEntries(Object.entries(i18nKeys).map(([key, value]) => [key, String(value)])),
-      collapsed_sections: ["advanced", "runtime"],
+      collapsed_sections: nodeType === "reference_input" || nodeType === "reference_output" ? ["core", "advanced", "runtime"] : ["advanced", "runtime"],
     } as WorkflowNode);
   });
 
@@ -6645,7 +6645,8 @@ function ModuleCanvasPanel({
       input_schema: definition?.input_schema,
       output_schema: definition?.output_schema,
       ports: { inputs: [], outputs: [] },
-      validation: null
+      validation: null,
+      collapsed_sections: type === "reference_input" || type === "reference_output" ? ["core", "advanced", "runtime"] : ["advanced", "runtime"]
     } as unknown as WorkflowNode);
     setModuleNodes((current) => {
       const next = [

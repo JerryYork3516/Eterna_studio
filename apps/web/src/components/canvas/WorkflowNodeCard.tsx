@@ -3185,6 +3185,9 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
         ? nodeData.collapsed_sections.map(String)
         : ["core", "advanced", "input_schema", "output_schema", "slot_binding", "runtime"]
   );
+  if (String(effectiveType) === "reference_input" || String(effectiveType) === "reference_output") {
+    collapsedSections.add("core");
+  }
   const inputKeys = new Set(inputSchema.map((field) => field.key));
   const paramEntries = Object.entries(nodeData).filter(
     ([key]) => !key.startsWith("ui_") && !HIDDEN_PARAM_KEYS.has(key) && !inputKeys.has(key)
