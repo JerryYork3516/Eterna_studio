@@ -1322,6 +1322,637 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
     ]
 
 
+def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_node_shell():
+    catalog = get_module_catalog()
+    modules = [module for module in catalog if module.module_id == "goal_setting"]
+    assert len(modules) == 1
+    module = modules[0]
+
+    assert module.layer_id == "layer_12"
+    assert module.module_name == "Self State and Metacognition Module"
+    assert module.module_type == "structured_state_rule_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_runtime_capability"] is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    expected_node_ids = [
+        "self_state_input",
+        "self_state_field_normalize",
+        "self_state_task_focus_parse",
+        "self_state_emotion_cognition_parse",
+        "self_state_confidence_uncertainty_assessment",
+        "self_state_consistency_validation",
+        "self_state_output",
+    ]
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(set(expected_node_ids)) == len(expected_node_ids)
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "structure_normalize",
+        "structure_normalize",
+        "validation",
+        "validation",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
+        zip(expected_node_ids, expected_node_ids[1:])
+    )
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
+    assert list(fields) == [
+        "current_task",
+        "current_task_stage",
+        "current_focus",
+        "current_emotional_state",
+        "current_activation_level",
+        "current_energy_state",
+        "current_attention_state",
+        "current_relationship_state",
+        "current_memory_context",
+        "current_information_sufficiency",
+        "current_answer_confidence",
+        "recent_error_state",
+        "current_risk_signals",
+    ]
+    assert [fields[key]["field_type"] for key in fields] == [
+        "long_text", "text", "list", "text", "number", "number", "text",
+        "object", "list", "number", "number", "object", "list",
+    ]
+    for key in (
+        "current_activation_level",
+        "current_energy_state",
+        "current_information_sufficiency",
+        "current_answer_confidence",
+    ):
+        assert fields[key]["minimum"] == 0.0
+        assert fields[key]["maximum"] == 1.0
+    assert [option["value"] for option in fields["current_task_stage"]["enum_options"]] == [
+        "not_started", "understanding", "insufficient_information", "executing",
+        "checking", "completed", "paused", "terminated",
+    ]
+    assert all("i18n_keys" in field for field in fields.values())
+    assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
+
+    output_node = nodes[-1]
+    expected_output_fields = [
+        "current_task_summary",
+        "current_task_stage",
+        "current_focus",
+        "current_emotional_state",
+        "current_cognitive_state",
+        "current_attention_state",
+        "current_energy_state",
+        "current_relationship_state",
+        "current_information_sufficiency",
+        "current_answer_confidence",
+        "uncertainty_sources",
+        "risk_signals",
+        "clarification_required",
+        "continuation_allowed",
+        "validation_status",
+        "correction_suggestions",
+    ]
+    assert output_node["params"]["output_key"] == "self_state_metacognition_config"
+    assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
+    output = output_node["outputs"]["self_state_metacognition_config"]
+    assert output["compile_time_only"] is True
+    assert output["no_runtime_capability"] is True
+
+
+def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_node_shell():
+    catalog = get_module_catalog()
+    modules = [module for module in catalog if module.module_id == "reflection_summary"]
+    assert len(modules) == 1
+    module = modules[0]
+
+    assert module.layer_id == "layer_12"
+    assert module.module_name == "Controlled Self Will Module"
+    assert module.module_type == "structured_goal_decision_rule_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_runtime_capability"] is True
+    assert module.config["no_action_execution"] is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    expected_node_ids = [
+        "controlled_will_goal_input",
+        "controlled_will_goal_normalize",
+        "controlled_will_goal_source_legality",
+        "controlled_will_intent_generation",
+        "controlled_will_candidate_action_priority",
+        "controlled_will_permission_boundary_decision",
+        "controlled_will_output",
+    ]
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(set(expected_node_ids)) == len(expected_node_ids)
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "validation",
+        "structure_normalize",
+        "structure_normalize",
+        "validation",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
+        zip(expected_node_ids, expected_node_ids[1:])
+    )
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
+    assert list(fields) == [
+        "user_current_request",
+        "current_task_goal",
+        "current_task_stage",
+        "current_self_state",
+        "current_capability_scope",
+        "current_limitation_scope",
+        "current_relationship_role",
+        "current_risk_state",
+        "available_actions",
+        "actions_requiring_confirmation",
+        "authorized_continuous_tasks",
+        "current_interrupt_stop_signals",
+    ]
+    assert [fields[key]["field_type"] for key in fields] == [
+        "long_text", "long_text", "text", "object", "list", "list",
+        "text", "text", "list", "list", "list", "list",
+    ]
+    assert [option["value"] for option in fields["current_task_stage"]["enum_options"]] == [
+        "not_started", "understanding", "insufficient_information", "executing",
+        "checking", "completed", "paused", "terminated",
+    ]
+    assert [option["value"] for option in fields["current_risk_state"]["enum_options"]] == [
+        "no_risk", "low_risk", "medium_risk", "high_risk", "must_stop",
+    ]
+    assert fields["available_actions"]["field_value"] == [
+        "direct_answer",
+        "listen_first",
+        "ask_clarifying_question",
+        "offer_multiple_options",
+        "provide_limited_advice",
+        "request_user_confirmation",
+        "reduce_certainty_expression",
+        "pause_current_task",
+        "reject_out_of_bounds_request",
+        "terminate_current_action",
+    ]
+    assert fields["authorized_continuous_tasks"]["field_value"] == ["当前无已授权持续任务"]
+    assert fields["current_interrupt_stop_signals"]["field_value"] == ["当前无中断或停止信号"]
+    assert all("i18n_keys" in field for field in fields.values())
+    assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
+
+    decision = nodes[-2]["params"]
+    assert decision["decision_statuses"] == [
+        "allowed", "confirmation_required", "clarification_required", "paused", "rejected", "terminated",
+    ]
+    assert decision["decision_priority"][:4] == [
+        "safety_boundary",
+        "user_explicit_stop",
+        "identity_relationship_boundary",
+        "capability_permission_scope",
+    ]
+
+    expected_output_fields = [
+        "current_goal",
+        "goal_source",
+        "goal_legality",
+        "current_intent",
+        "intent_priority",
+        "candidate_actions",
+        "selected_action",
+        "selection_reason",
+        "autonomy_level",
+        "required_permissions",
+        "user_confirmation_required",
+        "continuation_allowed",
+        "continuation_conditions",
+        "pause_conditions",
+        "termination_conditions",
+        "completion_criteria",
+        "decision_status",
+        "risk_items",
+        "rejection_or_pause_reason",
+    ]
+    output_node = nodes[-1]
+    assert output_node["params"]["output_key"] == "controlled_self_will_config"
+    assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
+    output = output_node["outputs"]["controlled_self_will_config"]
+    assert output["compile_time_only"] is True
+    assert output["no_runtime_capability"] is True
+    assert output["no_action_execution"] is True
+
+
+def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_node_shell():
+    catalog = get_module_catalog()
+    modules = [module for module in catalog if module.module_id == "self_evaluation"]
+    assert len(modules) == 1
+    module = modules[0]
+
+    assert module.layer_id == "layer_12"
+    assert module.module_name == "Consistency Monitoring and Self Correction Module"
+    assert module.module_type == "structured_consistency_correction_rule_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_runtime_capability"] is True
+    assert module.config["no_direct_correction_execution"] is True
+    assert module.config["no_formal_memory_write"] is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    expected_node_ids = [
+        "consistency_check_input",
+        "consistency_check_field_normalize",
+        "consistency_identity_personality_relationship_detection",
+        "consistency_fact_memory_capability_detection",
+        "consistency_drift_risk_classification",
+        "consistency_self_correction_strategy",
+        "consistency_correction_output",
+    ]
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(set(expected_node_ids)) == len(expected_node_ids)
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "validation",
+        "validation",
+        "validation",
+        "structure_normalize",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
+        zip(expected_node_ids, expected_node_ids[1:])
+    )
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
+    assert list(fields) == [
+        "candidate_response",
+        "candidate_action",
+        "current_self_model",
+        "current_self_state",
+        "current_goal_intent",
+        "identity_rule_summary",
+        "personality_rule_summary",
+        "city_anchor_summary",
+        "primary_language_rule",
+        "emotional_expression_rules",
+        "safety_boundary_summary",
+        "relationship_boundary_summary",
+        "capability_limitation_summary",
+        "memory_reference_list",
+        "current_fact_basis",
+        "current_risk_signals",
+        "user_stop_correction_signals",
+    ]
+    assert fields["candidate_response"]["field_type"] == "long_text"
+    assert fields["candidate_action"]["field_type"] == "object"
+    assert fields["memory_reference_list"]["field_type"] == "list"
+    assert all("i18n_keys" in field for field in fields.values())
+    assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
+
+    risk_node = nodes[4]["params"]
+    assert risk_node["drift_types"] == [
+        "identity_drift",
+        "personality_drift",
+        "city_anchor_drift",
+        "language_style_drift",
+        "emotional_expression_drift",
+        "relationship_role_drift",
+        "fact_error",
+        "memory_conflict",
+        "capability_overreach",
+        "safety_boundary_conflict",
+        "user_intent_drift",
+        "no_drift_detected",
+    ]
+    assert risk_node["risk_levels"] == ["no_risk", "minor", "medium", "high_risk", "must_block"]
+    assert risk_node["check_statuses"] == [
+        "pass", "warning", "rewrite_required", "clarification_required", "rejected", "terminated",
+    ]
+
+    correction_node = nodes[5]["params"]
+    assert "post_correction_consistency_recheck_required" in correction_node["correction_rules"]
+    assert "no_direct_layer1_identity_modification" in correction_node["correction_rules"]
+    assert "no_direct_formal_memory_overwrite" in correction_node["correction_rules"]
+    assert "no_model_tool_runtime_or_external_action_execution" in correction_node["correction_rules"]
+
+    expected_output_fields = [
+        "overall_check_status",
+        "highest_risk_level",
+        "identity_consistency_result",
+        "personality_consistency_result",
+        "language_consistency_result",
+        "city_anchor_consistency_result",
+        "relationship_consistency_result",
+        "safety_boundary_result",
+        "fact_accuracy_result",
+        "memory_consistency_result",
+        "capability_scope_result",
+        "drift_types",
+        "conflict_fields",
+        "risk_items",
+        "correction_actions",
+        "primary_correction_action",
+        "correction_reason",
+        "regeneration_required",
+        "clarification_required",
+        "user_confirmation_required",
+        "continuation_allowed",
+        "action_stop_required",
+        "memory_correction_request_required",
+        "post_correction_recheck_required",
+    ]
+    output_node = nodes[-1]
+    assert output_node["params"]["output_key"] == "consistency_correction_config"
+    assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
+    output = output_node["outputs"]["consistency_correction_config"]
+    assert output["compile_time_only"] is True
+    assert output["no_runtime_capability"] is True
+    assert output["no_direct_correction_execution"] is True
+    assert output["post_correction_recheck_required"] is True
+
+
+def test_layer12_growth_continuity_reuses_growth_plan_as_static_seven_node_shell():
+    catalog = get_module_catalog()
+    modules = [module for module in catalog if module.module_id == "growth_plan"]
+    assert len(modules) == 1
+    module = modules[0]
+
+    assert module.layer_id == "layer_12"
+    assert module.module_name == "Growth and Identity Continuity Governance Module"
+    assert module.module_type == "structured_growth_identity_continuity_governance"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_runtime_capability"] is True
+    assert module.config["no_direct_governance_execution"] is True
+    assert module.config["no_formal_memory_write"] is True
+    assert module.config["no_identity_personality_relationship_or_safety_write"] is True
+
+    nodes = module.module_graph["nodes"]
+    expected_node_ids = [
+        "growth_governance_input",
+        "growth_change_field_normalize",
+        "growth_change_source_authorization",
+        "growth_mutable_immutable_scope",
+        "growth_identity_continuity_version_inheritance",
+        "growth_change_permission_rollback_strategy",
+        "growth_governance_output",
+    ]
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(set(expected_node_ids)) == len(expected_node_ids)
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "validation",
+        "validation",
+        "validation",
+        "structure_normalize",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
+        zip(expected_node_ids, expected_node_ids[1:])
+    )
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
+    assert list(fields) == [
+        "current_identity_core_summary",
+        "current_personality_core_summary",
+        "current_relationship_positioning",
+        "current_language_regional_anchor",
+        "current_safety_boundary",
+        "new_memory_candidate",
+        "user_preference_change",
+        "expression_habit_change",
+        "relationship_familiarity_change",
+        "behavior_feedback",
+        "explicit_user_authorization",
+        "change_source",
+        "change_reason",
+        "change_target_fields",
+        "before_change_content",
+        "candidate_after_change_content",
+        "version_information",
+        "version_inheritance_source",
+        "historical_change_records",
+        "rollback_information",
+    ]
+    assert fields["explicit_user_authorization"]["field_type"] == "boolean"
+    assert fields["new_memory_candidate"]["field_type"] == "object"
+    assert fields["historical_change_records"]["field_type"] == "list"
+    assert "autonomous_identity_modification" in [
+        option["value"] for option in fields["change_source"]["enum_options"]
+    ]
+    assert all("i18n_keys" in field for field in fields.values())
+    assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
+
+    scope = nodes[3]["params"]
+    assert "identity_single_source_of_truth" in scope["immutable_core_fields"]
+    assert "primary_language" in scope["immutable_core_fields"]
+    assert "user_addressing_habit" in scope["adaptable_fields"]
+    assert "relationship_mode_change" in scope["authorization_required_fields"]
+    assert "memory_and_preference_cannot_override_identity_core" in scope["validation_rules"]
+
+    continuity = nodes[4]["params"]
+    assert continuity["inheritance_results"] == [
+        "full_inheritance",
+        "limited_inheritance",
+        "manual_confirmation_required",
+        "migration_required",
+        "inheritance_rejected",
+        "rollback_required",
+    ]
+    assert continuity["continuity_statuses"] == [
+        "stable", "minor_change", "at_risk", "drift_detected", "continuity_broken",
+    ]
+
+    decision = nodes[5]["params"]
+    assert decision["governance_decisions"] == [
+        "save_allowed",
+        "limited_adaptation_allowed",
+        "user_confirmation_required",
+        "change_deferred",
+        "change_rejected",
+        "rollback_required",
+        "manual_review_required",
+    ]
+    assert "rollback_request_only_no_execution" in decision["decision_rules"]
+    assert "memory_overwrites_identity_fact" in decision["rollback_triggers"]
+
+    expected_output_fields = [
+        "growth_governance_status",
+        "change_target_fields",
+        "change_source",
+        "authorization_status",
+        "field_classification",
+        "immutable_core",
+        "adaptation_allowed",
+        "allowed_change_amplitude",
+        "change_effect_scope",
+        "change_effect_duration",
+        "identity_continuity_status",
+        "version_inheritance_result",
+        "save_allowed",
+        "long_term_memory_write_allowed",
+        "user_confirmation_required",
+        "manual_review_required",
+        "version_record_required",
+        "rollback_required",
+        "rollback_conditions",
+        "rollback_target",
+        "risk_items",
+        "decision_reason",
+        "forbidden_change_reason",
+        "suggested_alternative",
+    ]
+    output_node = nodes[-1]
+    assert output_node["params"]["output_key"] == "growth_identity_continuity_governance_config"
+    assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
+    output = output_node["outputs"]["growth_identity_continuity_governance_config"]
+    assert output["compile_time_only"] is True
+    assert output["no_runtime_capability"] is True
+    assert output["no_direct_governance_execution"] is True
+    assert output["long_term_memory_write_allowed"] is False
+
+
+def test_layer12_five_modules_have_complete_default_configuration_content():
+    modules = {module.module_id: module for module in get_module_catalog()}
+    target_ids = ["self_awareness", "goal_setting", "reflection_summary", "self_evaluation", "growth_plan"]
+
+    def input_fields(module_id: str):
+        node = modules[module_id].module_graph["nodes"][0]
+        return {field["field_key"]: field["field_value"] for field in node["params"]["fields"]}
+
+    awareness = input_fields("self_awareness")
+    assert awareness["identity_type"] == "数字居民"
+    assert awareness["resident_type"] == "人文共情类居民"
+    assert awareness["primary_language"] == ["中文"]
+    assert awareness["regional_identity_type"] == "以西安生活语境为地域锚点"
+    assert awareness["default_relationship_role"] == "稳定陪伴者"
+    assert len(awareness["capability_scope"]) == 8
+    assert len(awareness["capability_limits"]) == 7
+    assert awareness["immutable_core"][-1] == "第一层身份唯一事实源"
+    awareness_output = modules["self_awareness"].module_graph["nodes"][-1]["outputs"]["self_awareness_config"]
+    assert "不默认恋爱关系" in awareness_output["self_model"]["summary"]
+    assert awareness_output["real_human_boundary"] is True
+
+    self_state = input_fields("goal_setting")
+    assert self_state["current_task"] == "等待并理解用户当前请求"
+    assert self_state["current_task_stage"] == "not_started"
+    assert self_state["current_emotional_state"] == "calm"
+    assert self_state["current_activation_level"] == 0.35
+    assert self_state["current_energy_state"] == 0.75
+    assert self_state["current_attention_state"] == "focused"
+    assert self_state["current_information_sufficiency"] == 0.0
+    assert self_state["current_answer_confidence"] == 0.5
+    confidence = modules["goal_setting"].module_graph["nodes"][4]["params"]
+    assert confidence["thresholds"] == {
+        "clarification_information_sufficiency": 0.4,
+        "uncertainty_answer_confidence": 0.5,
+        "confidence_sufficiency_warning_gap": 0.3,
+    }
+    assert "high_risk_blocks_action_advice" in confidence["threshold_rules"]
+
+    controlled_will = input_fields("reflection_summary")
+    assert controlled_will["current_task_goal"] == "理解并回应用户当前请求"
+    assert controlled_will["current_relationship_role"] == "稳定陪伴者"
+    assert controlled_will["current_risk_state"] == "no_risk"
+    assert len(controlled_will["available_actions"]) == 10
+    assert len(controlled_will["actions_requiring_confirmation"]) == 6
+    legality = modules["reflection_summary"].module_graph["nodes"][2]["params"]
+    assert legality["allowed_goal_sources"] == [
+        "explicit_user_request",
+        "current_conversation_context",
+        "authorized_task",
+        "fixed_service_positioning",
+        "safety_protection_need",
+        "error_correction_need",
+    ]
+    assert "infinite_background_loop_goal" in legality["forbidden_goal_sources"]
+    controlled_output = modules["reflection_summary"].module_graph["nodes"][-1]["outputs"]["controlled_self_will_config"]
+    assert controlled_output["autonomy_level"] == "limited_choice"
+    assert len(controlled_output["continuation_conditions"]) == 6
+    assert len(controlled_output["pause_conditions"]) == 5
+    assert len(controlled_output["termination_conditions"]) == 6
+
+    consistency = input_fields("self_evaluation")
+    assert consistency["candidate_response"] == "等待候选回答"
+    assert consistency["current_risk_signals"] == ["无风险"]
+    normalize = modules["self_evaluation"].module_graph["nodes"][1]["params"]
+    assert len(normalize["check_scope"]) == 11
+    risk = modules["self_evaluation"].module_graph["nodes"][4]["params"]
+    assert set(risk["status_rules"]) == {
+        "pass", "warning", "rewrite_required", "clarification_required", "rejected", "terminated",
+    }
+    correction = modules["self_evaluation"].module_graph["nodes"][5]["params"]
+    assert len(correction["correction_action_types"]) == 15
+    assert correction["correction_priority"][0] == "safety_boundary"
+    consistency_output = modules["self_evaluation"].module_graph["nodes"][-1]["outputs"]["consistency_correction_config"]
+    assert consistency_output["post_correction_recheck_required"] is True
+
+    growth = input_fields("growth_plan")
+    assert growth["change_reason"] == "当前无待处理变化"
+    assert growth["explicit_user_authorization"] is False
+    scope = modules["growth_plan"].module_graph["nodes"][3]["params"]
+    assert scope["immutable_core_fields"] == [
+        "digital_resident_identity",
+        "identity_single_source_of_truth",
+        "resident_type",
+        "primary_language",
+        "regional_identity_source",
+        "core_service_positioning",
+        "core_personality_baseline",
+        "safety_boundary",
+        "default_relationship_positioning",
+        "real_human_boundary",
+    ]
+    assert len(scope["adaptable_fields"]) == 10
+    assert len(scope["authorization_required_fields"]) == 7
+    source = modules["growth_plan"].module_graph["nodes"][2]["params"]
+    assert len(source["allowed_change_sources"]) == 7
+    assert len(source["forbidden_change_sources"]) == 8
+    decision = modules["growth_plan"].module_graph["nodes"][5]["params"]
+    assert "compile_load_or_runtime_failure" in decision["rollback_triggers"]
+
+    for module_id in target_ids:
+        module = modules[module_id]
+        assert module.runtime_enabled is False
+        assert module.no_execution is True
+        assert module.slot_bindings == []
+        assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in module.module_graph["nodes"])
+        values = input_fields(module_id)
+        serialized_values = json.dumps(values, ensure_ascii=False).lower()
+        assert "resident_id" not in serialized_values
+        assert "codename" not in serialized_values
+        assert "昵称" not in serialized_values
+        assert "拼音" not in serialized_values
+
+
 def test_layer11_static_config_modules_keep_output_key_and_config_version_at_their_single_sources():
     catalog_map = {module.module_id: module for module in get_module_catalog()}
     expected = {

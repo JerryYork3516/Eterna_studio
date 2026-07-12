@@ -21,7 +21,138 @@ const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "event_memory",
   "memory_update",
   "self_awareness",
+  "goal_setting",
+  "reflection_summary",
+  "self_evaluation",
+  "growth_plan",
 ]);
+const LAYER12_CONTENT_SEED_MODULE_IDS = new Set([
+  "self_awareness",
+  "goal_setting",
+  "reflection_summary",
+  "self_evaluation",
+  "growth_plan",
+]);
+const LAYER12_PREVIOUS_FIELD_VALUES: Record<string, Record<string, unknown>> = {
+  self_awareness: {
+    identity_type: "digital_resident",
+    resident_type: "configured_digital_resident",
+    primary_language: ["zh-CN"],
+    regional_identity_type: "regional_context_without_real_world_identity",
+    core_service_positioning: "user_confirmed_digital_resident_support",
+    default_relationship_role: "stable_companion",
+    capability_scope: [],
+    capability_limits: [],
+    immutable_core: [],
+  },
+  goal_setting: {
+    current_task: "",
+    current_focus: [],
+    current_emotional_state: "neutral",
+    current_activation_level: 0,
+    current_energy_state: 0,
+    current_attention_state: "waiting_for_information",
+    current_relationship_state: {},
+    current_memory_context: [],
+    current_answer_confidence: 0,
+    recent_error_state: {},
+    current_risk_signals: [],
+  },
+  reflection_summary: {
+    user_current_request: "",
+    current_task_goal: "",
+    current_self_state: {},
+    current_capability_scope: [],
+    current_limitation_scope: [],
+    current_relationship_role: "",
+    actions_requiring_confirmation: [],
+    authorized_continuous_tasks: [],
+    current_interrupt_stop_signals: [],
+  },
+  self_evaluation: {
+    candidate_response: "",
+    candidate_action: {},
+    current_self_model: {},
+    current_self_state: {},
+    current_goal_intent: {},
+    identity_rule_summary: "",
+    personality_rule_summary: "",
+    city_anchor_summary: "",
+    primary_language_rule: "",
+    emotional_expression_rules: [],
+    safety_boundary_summary: "",
+    relationship_boundary_summary: "",
+    capability_limitation_summary: "",
+    memory_reference_list: [],
+    current_fact_basis: [],
+    current_risk_signals: [],
+    user_stop_correction_signals: [],
+  },
+  growth_plan: {
+    current_identity_core_summary: "",
+    current_personality_core_summary: "",
+    current_relationship_positioning: "",
+    current_language_regional_anchor: "",
+    current_safety_boundary: "",
+    new_memory_candidate: {},
+    user_preference_change: {},
+    expression_habit_change: {},
+    relationship_familiarity_change: {},
+    behavior_feedback: [],
+    change_reason: "",
+    before_change_content: {},
+    candidate_after_change_content: {},
+    version_information: {},
+    version_inheritance_source: "",
+    historical_change_records: [],
+    rollback_information: {},
+  },
+};
+const LAYER12_CONTENT_PARAM_KEYS: Record<string, Record<string, string[]>> = {
+  goal_setting: {
+    self_state_confidence_uncertainty_assessment: ["state_rules", "threshold_rules", "thresholds"],
+    self_state_consistency_validation: ["state_rules", "threshold_rules"],
+  },
+  reflection_summary: {
+    controlled_will_goal_source_legality: ["allowed_goal_sources", "forbidden_goal_sources"],
+    controlled_will_intent_generation: ["default_intent"],
+  },
+  self_evaluation: {
+    consistency_check_field_normalize: ["check_scope"],
+    consistency_identity_personality_relationship_detection: ["check_scope"],
+    consistency_drift_risk_classification: ["status_rules"],
+    consistency_self_correction_strategy: ["correction_priority"],
+  },
+  growth_plan: {
+    growth_change_source_authorization: ["allowed_change_sources", "forbidden_change_sources"],
+    growth_mutable_immutable_scope: ["immutable_core_fields", "adaptable_fields", "authorization_required_fields"],
+    growth_change_permission_rollback_strategy: ["rollback_triggers"],
+  },
+};
+const LAYER12_PREVIOUS_PARAM_VALUES: Record<string, Record<string, Record<string, unknown>>> = {
+  growth_plan: {
+    growth_mutable_immutable_scope: {
+      immutable_core_fields: ["resident_unique_identity", "name_reference_source", "resident_id_reference_source", "resident_type", "regional_identity_source", "primary_language", "core_personality_baseline", "core_service_positioning", "safety_boundary", "default_relationship_positioning", "digital_resident_identity_declaration", "real_human_boundary", "identity_single_source_of_truth"],
+      adaptable_fields: ["user_addressing_habit", "response_length", "expression_rhythm", "preferred_phrasing", "explicit_user_preference", "daily_interaction_style", "authorized_companionship_memory", "current_task_habit", "familiarity_expression", "non_core_visual_preference", "non_core_conversation_detail"],
+      authorization_required_fields: ["relationship_mode_upgrade", "long_term_behavior_preference", "long_term_memory_write", "important_value_tendency_adjustment", "version_migration", "multi_layer_configuration_change", "identity_expression_affecting_user_understanding"],
+    },
+    growth_change_permission_rollback_strategy: {
+      rollback_triggers: ["identity_conflict", "major_personality_drift", "unauthorized_relationship_upgrade", "safety_boundary_weakened", "memory_overwrites_identity_fact", "version_migration_failed", "user_revokes_authorization", "data_source_confirmed_invalid", "change_causes_runtime_or_load_failure"],
+    },
+  },
+};
+const LAYER12_PREVIOUS_OUTPUT_VALUES: Record<string, Record<string, unknown>> = {
+  goal_setting: {
+    current_emotional_state: "neutral",
+    current_attention_state: "waiting_for_information",
+    current_energy_state: 0,
+    current_answer_confidence: 0,
+  },
+  reflection_summary: {
+    autonomy_level: "response_only",
+    user_confirmation_required: false,
+  },
+};
 const GENERIC_FIELD_MIGRATION_NODE_TYPES = new Set(["field_input", "text_input"]);
 const LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS = new Set([
   "humanistic_content_safety_config_v0_1",
@@ -1336,14 +1467,138 @@ function mergeCatalogLayoutSeed(
   };
 }
 
+function shouldUseLayer12SeedValue(current: unknown, previous: unknown, hasPrevious: boolean) {
+  return isEmptyDisplayValue(current) || (hasPrevious && stableJson(current) === stableJson(previous));
+}
+
+function mergeLayer12ContentSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[]
+): ModuleGraph | null {
+  const moduleId = catalogModuleIdFromSeed(initialNodes);
+  if (!LAYER12_CONTENT_SEED_MODULE_IDS.has(moduleId) || !initialNodes?.length || !graph.nodes?.length) {
+    return null;
+  }
+
+  const seedEntries = initialNodes
+    .map(schemaNodeRecord)
+    .filter((node): node is Record<string, unknown> => Boolean(node))
+    .map((node): [string, Record<string, unknown>] => [String(schemaDataRecord(node).catalog_node_id || node.node_id || ""), node])
+    .filter(([nodeId]) => Boolean(nodeId));
+  const seedByNodeId = new Map<string, Record<string, unknown>>(seedEntries);
+  const previousFields = LAYER12_PREVIOUS_FIELD_VALUES[moduleId] ?? {};
+  const previousOutputs = LAYER12_PREVIOUS_OUTPUT_VALUES[moduleId] ?? {};
+  const contentParamKeys = LAYER12_CONTENT_PARAM_KEYS[moduleId] ?? {};
+  const previousParams = LAYER12_PREVIOUS_PARAM_VALUES[moduleId] ?? {};
+  const seededFieldValues = new Map<string, unknown>();
+  let changed = false;
+
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) return nextNode;
+    const catalogNodeId = catalogNodeIdFromGraphNode(nextNode);
+    const seedNode = seedByNodeId.get(catalogNodeId);
+    if (!seedNode) return nextNode;
+
+    const data = schemaDataRecord(schemaNode);
+    const seedData = schemaDataRecord(seedNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const seedParams = isRecord(seedData.params) ? seedData.params : {};
+    const existingFields = Array.isArray(params.fields)
+      ? params.fields.filter(isRecord)
+      : Array.isArray(data.fields)
+        ? data.fields.filter(isRecord)
+        : [];
+    const seedFields = Array.isArray(seedParams.fields) ? seedParams.fields.filter(isRecord) : [];
+
+    if (existingFields.length && seedFields.length) {
+      const seedFieldsByKey = new Map(seedFields.map((field) => [String(field.field_key || field.field_id || ""), field]));
+      const nextFields = existingFields.map((field) => {
+        const fieldKey = String(field.field_key || field.field_id || "");
+        const seedField = seedFieldsByKey.get(fieldKey);
+        if (!seedField) return field;
+        const valueKey = "field_value" in field ? "field_value" : "value";
+        const seedValue = "field_value" in seedField ? seedField.field_value : seedField.value;
+        const hasPrevious = Object.prototype.hasOwnProperty.call(previousFields, fieldKey);
+        const currentValue = field[valueKey];
+        if (shouldUseLayer12SeedValue(currentValue, previousFields[fieldKey], hasPrevious) && stableJson(currentValue) !== stableJson(seedValue)) {
+          changed = true;
+          const nextField = { ...field, [valueKey]: cloneJson(seedValue) };
+          seededFieldValues.set(fieldKey, cloneJson(seedValue));
+          return nextField;
+        }
+        seededFieldValues.set(fieldKey, cloneJson(currentValue));
+        return field;
+      });
+      params.fields = nextFields;
+      data.params = params;
+      if (Array.isArray(data.fields)) data.fields = cloneJson(nextFields);
+    }
+
+    const keys = contentParamKeys[catalogNodeId] ?? [];
+    if (keys.length) {
+      const previousNodeParams = previousParams[catalogNodeId] ?? {};
+      for (const key of keys) {
+        if (!(key in seedParams)) continue;
+        const hasPrevious = Object.prototype.hasOwnProperty.call(previousNodeParams, key);
+        if (!(key in params) || shouldUseLayer12SeedValue(params[key], previousNodeParams[key], hasPrevious)) {
+          if (stableJson(params[key]) !== stableJson(seedParams[key])) {
+            params[key] = cloneJson(seedParams[key]);
+            changed = true;
+          }
+        }
+      }
+      data.params = params;
+    }
+
+    const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+    const seedOutputs = isRecord(seedData.outputs) ? seedData.outputs : {};
+    for (const [outputKey, seedOutput] of Object.entries(seedOutputs)) {
+      if (!isRecord(seedOutput)) {
+        if (!(outputKey in outputs)) {
+          outputs[outputKey] = cloneJson(seedOutput);
+          changed = true;
+        }
+        continue;
+      }
+      const currentOutput = isRecord(outputs[outputKey]) ? { ...(outputs[outputKey] as Record<string, unknown>) } : {};
+      for (const [key, seedValue] of Object.entries(seedOutput)) {
+        if (key === "fields" && isRecord(seedValue)) {
+          const nextFieldOutput = { ...(isRecord(currentOutput.fields) ? currentOutput.fields : {}) };
+          for (const [fieldKey, value] of seededFieldValues) nextFieldOutput[fieldKey] = cloneJson(value);
+          if (stableJson(currentOutput.fields) !== stableJson(nextFieldOutput)) {
+            currentOutput.fields = nextFieldOutput;
+            changed = true;
+          }
+          continue;
+        }
+        const hasPrevious = Object.prototype.hasOwnProperty.call(previousOutputs, key);
+        if (!(key in currentOutput) || shouldUseLayer12SeedValue(currentOutput[key], previousOutputs[key], hasPrevious)) {
+          if (stableJson(currentOutput[key]) !== stableJson(seedValue)) {
+            currentOutput[key] = cloneJson(seedValue);
+            changed = true;
+          }
+        }
+      }
+      outputs[outputKey] = currentOutput;
+    }
+    if (Object.keys(seedOutputs).length) data.outputs = outputs;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ): ModuleGraph | null {
   const fieldMerged = mergeCatalogFieldSeed(graph, initialNodes, initialEdges);
-  const layoutMerged = mergeCatalogLayoutSeed(fieldMerged ?? graph, initialNodes, initialEdges);
-  return layoutMerged ?? fieldMerged;
+  const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graph, initialNodes);
+  const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graph, initialNodes, initialEdges);
+  return layoutMerged ?? contentMerged ?? fieldMerged;
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {

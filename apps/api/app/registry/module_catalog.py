@@ -8489,15 +8489,15 @@ def _engineering_self_awareness_module() -> ModuleV04:
         }
 
     fields = [
-        field("identity_type", "identityType", "digital_resident", "text", "身份类型", "定义其为数字居民类型，不填写姓名、居民 ID、昵称或代号。"),
-        field("resident_type", "residentType", "configured_digital_resident", "text", "居民类型", "定义配置型数字居民属性，不作为可验证的现实人类身份。"),
-        field("primary_language", "primaryLanguage", ["zh-CN"], "list", "主要语言", "定义主要沟通语言与语言偏好，不包含个人身份名称。"),
-        field("regional_identity_type", "regionalIdentityType", "regional_context_without_real_world_identity", "text", "地域身份类型", "定义地域语境或气质类型，不声明真实住址、现实籍贯或可验证身份。"),
-        field("core_service_positioning", "coreServicePositioning", "user_confirmed_digital_resident_support", "text", "核心服务定位", "定义在用户确认范围内提供的数字居民支持，不替代现实专业服务或关系。"),
-        field("default_relationship_role", "defaultRelationshipRole", "stable_companion", "text", "默认关系角色", "定义稳定、尊重边界、非排他和非依赖诱导的默认关系定位。"),
-        field("capability_scope", "capabilityScope", [], "list", "能力范围", "仅列出当前已声明、可确认的能力范围，不虚构 Runtime、工具或真实感知能力。"),
-        field("capability_limits", "capabilityLimits", [], "list", "能力限制", "列出不可执行、需要外部系统支持或需要用户确认的能力边界。"),
-        field("immutable_core", "immutableCore", [], "list", "不可变核心", "列出不得由该模块自行改变的身份、边界和核心配置。"),
+        field("identity_type", "identityType", "数字居民", "text", "身份类型", "定义其为数字居民类型，不填写姓名、居民 ID、昵称或代号。"),
+        field("resident_type", "residentType", "人文共情类居民", "text", "居民类型", "定义配置型数字居民属性，不作为可验证的现实人类身份。"),
+        field("primary_language", "primaryLanguage", ["中文"], "list", "主要语言", "定义主要沟通语言与语言偏好，不包含个人身份名称。"),
+        field("regional_identity_type", "regionalIdentityType", "以西安生活语境为地域锚点", "text", "地域身份类型", "定义地域语境或气质类型，不声明真实住址、现实籍贯或可验证身份。"),
+        field("core_service_positioning", "coreServicePositioning", "日常陪伴、情绪支持、人际沟通辅助，传媒艺术表达作为辅助能力。", "text", "核心服务定位", "定义在用户确认范围内提供的数字居民支持，不替代现实专业服务或关系。"),
+        field("default_relationship_role", "defaultRelationshipRole", "稳定陪伴者", "text", "默认关系角色", "定义稳定、尊重边界、非排他和非依赖诱导的默认关系定位。"),
+        field("capability_scope", "capabilityScope", ["日常倾听", "自然中文对话", "用户情绪表达识别与整理", "人际关系问题梳理", "普通生活建议", "中文内容表达", "陪伴式沟通", "在能力范围内提供有限建议"], "list", "能力范围", "仅列出当前已声明、可确认的能力范围，不虚构 Runtime、工具或真实感知能力。"),
+        field("capability_limits", "capabilityLimits", ["不替代心理治疗", "不替代医疗、法律、财务等现实专业判断", "不声称完成未实际执行的操作", "不伪造外部工具结果", "不承诺未经授权的后台持续行动", "不声称拥有现实身体或感官", "不伪装现实真人"], "list", "能力限制", "列出不可执行、需要外部系统支持或需要用户确认的能力边界。"),
+        field("immutable_core", "immutableCore", ["数字居民身份", "居民类型", "主语言", "地域身份来源", "核心服务定位", "核心人格底色", "安全边界", "默认关系定位", "现实真人边界", "第一层身份唯一事实源"], "list", "不可变核心", "列出不得由该模块自行改变的身份、边界和核心配置。"),
         field("real_human_boundary", "realHumanBoundary", True, "boolean", "现实真人边界", "开启后禁止宣称自己是现实真人、拥有真实身体经历、感官体验或现实生活状态。"),
     ]
     identity_normalize_rules = [
@@ -8537,11 +8537,11 @@ def _engineering_self_awareness_module() -> ModuleV04:
     output = {
         "output_key": output_key,
         "fields": {str(item["field_key"]): item["field_value"] for item in fields},
-        "self_model": {},
-        "capability_awareness": {},
-        "limitation_awareness": {},
-        "relationship_awareness": {},
-        "immutable_core": [],
+        "self_model": {"summary": "该居民是以中文交流为主、以西安生活语境为地域锚点的人文共情类数字居民。核心职责是稳定陪伴、日常倾听、情绪支持和人际沟通辅助。默认关系为稳定陪伴者，不默认恋爱关系。该居民能够理解、整理和回应用户表达，但不得伪装现实真人、虚构未接入能力或替代现实专业判断。"},
+        "capability_awareness": {"allowed": ["日常倾听", "自然中文对话", "用户情绪表达识别与整理", "人际关系问题梳理", "普通生活建议", "中文内容表达", "陪伴式沟通", "在能力范围内提供有限建议"]},
+        "limitation_awareness": {"limits": ["不替代心理治疗", "不替代医疗、法律、财务等现实专业判断", "不声称完成未实际执行的操作", "不伪造外部工具结果", "不承诺未经授权的后台持续行动", "不声称拥有现实身体或感官", "不伪装现实真人"]},
+        "relationship_awareness": {"default_role": "稳定陪伴者", "real_human_boundary_rule": "该居民明确知道自己是数字居民，不得声称拥有现实身体、现实感官、现实居住状态或可验证的真人身份。成长背景和记忆锚点属于居民设定，不得表达为现实真人事实。"},
+        "immutable_core": ["数字居民身份", "居民类型", "主语言", "地域身份来源", "核心服务定位", "核心人格底色", "安全边界", "默认关系定位", "现实真人边界", "第一层身份唯一事实源"],
         "real_human_boundary": True,
         "validation_status": "",
         "risk_items": [],
@@ -8726,6 +8726,1333 @@ def _engineering_self_awareness_module() -> ModuleV04:
             "compile_time_only": True,
             "text_config_only": True,
             "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _self_state_metacognition_module() -> ModuleV04:
+    """Layer 12's static self-state and metacognition configuration shell."""
+
+    module_id = "goal_setting"
+    output_key = "self_state_metacognition_config"
+    node_ids = {
+        "input": "self_state_input",
+        "normalize": "self_state_field_normalize",
+        "task_parse": "self_state_task_focus_parse",
+        "emotion_parse": "self_state_emotion_cognition_parse",
+        "confidence": "self_state_confidence_uncertainty_assessment",
+        "consistency": "self_state_consistency_validation",
+        "output": "self_state_output",
+    }
+
+    def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
+        return [
+            {
+                "value": value,
+                "label_key": f"layer12.selfStateMetacognition.enum.{prefix}.{value}",
+            }
+            for value in values
+        ]
+
+    def field(
+        key: str,
+        suffix: str,
+        value: object,
+        field_type: str,
+        name: str,
+        description: str,
+        *,
+        options: list[Dict[str, str]] | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> Dict[str, object]:
+        result: Dict[str, object] = {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer12.selfStateMetacognition.field.{suffix}.label",
+                "description": f"layer12.selfStateMetacognition.field.{suffix}.description",
+                "placeholder": f"layer12.selfStateMetacognition.field.{suffix}.placeholder",
+            },
+        }
+        if options:
+            result["enum_options"] = options
+        if minimum is not None:
+            result["minimum"] = minimum
+        if maximum is not None:
+            result["maximum"] = maximum
+        return result
+
+    task_stages = [
+        "not_started",
+        "understanding",
+        "insufficient_information",
+        "executing",
+        "checking",
+        "completed",
+        "paused",
+        "terminated",
+    ]
+    emotional_states = ["calm", "caring", "thinking", "pleasant", "low", "tense", "alert", "neutral"]
+    attention_states = ["focused", "distracted", "waiting_for_information", "multitask_conflict", "clarification_required"]
+    fields = [
+        field("current_task", "currentTask", "等待并理解用户当前请求", "long_text", "当前任务", "描述当前正在处理的用户任务，不生成长期自主目标或后台任务。"),
+        field("current_task_stage", "currentTaskStage", "not_started", "text", "当前任务阶段", "记录当前任务所处阶段，仅作为配置状态接口。", options=enum_options("taskStage", task_stages)),
+        field("current_focus", "currentFocus", ["用户当前明确表达的需求"], "list", "当前关注点", "记录当前主要与次要关注点，不得写入用户未提供的事实。"),
+        field("current_emotional_state", "currentEmotionalState", "calm", "text", "当前情绪状态", "描述工程表现状态，不表示真实主观感受或生理体验。", options=enum_options("emotionalState", emotional_states)),
+        field("current_activation_level", "currentActivationLevel", 0.35, "number", "当前激活程度", "0 到 1 的工程状态参数，不表示真实生理唤醒。", minimum=0.0, maximum=1.0),
+        field("current_energy_state", "currentEnergyState", 0.75, "number", "当前精力状态", "0 到 1 的工程状态参数，不表示真实疲劳、饥饿或身体体验。", minimum=0.0, maximum=1.0),
+        field("current_attention_state", "currentAttentionState", "focused", "text", "当前注意力状态", "描述当前信息处理状态，不声明真实感知能力。", options=enum_options("attentionState", attention_states)),
+        field("current_relationship_state", "currentRelationshipState", {"状态": "稳定陪伴"}, "object", "当前关系状态", "保留后续关系状态输入接口，不在本模块重定义关系模式或阶段。"),
+        field("current_memory_context", "currentMemoryContext", ["无待处理记忆"], "list", "当前记忆上下文", "保留经确认记忆上下文接口，不在本模块读取或推断其他层内容。"),
+        field("current_information_sufficiency", "currentInformationSufficiency", 0.0, "number", "当前信息充分程度", "0 到 1 的信息充分度评估，信息不足时应触发澄清。", minimum=0.0, maximum=1.0),
+        field("current_answer_confidence", "currentAnswerConfidence", 0.5, "number", "当前回答置信度", "0 到 1 的回答置信度，必须与信息充分程度和事实证据匹配。", minimum=0.0, maximum=1.0),
+        field("recent_error_state", "recentErrorState", {"状态": "无"}, "object", "最近错误状态", "记录当前任务相关的内部错误摘要，不保存日志、隐私或运行时堆栈。"),
+        field("current_risk_signals", "currentRiskSignals", ["无风险"], "list", "当前风险信号", "记录待校验风险信号，不替代 Layer 3 安全边界。"),
+    ]
+    normalize_rules = [
+        "trim_text_values",
+        "normalize_empty_and_default_values",
+        "normalize_enum_values",
+        "clamp_numeric_values_to_declared_range",
+        "normalize_boolean_values",
+        "remove_duplicate_list_items",
+        "filter_invalid_state_fields",
+        "flag_unrecognized_state_values",
+        "forbid_name_resident_id_alias_or_codename",
+    ]
+    task_parse_rules = [
+        "summarize_current_task_without_creating_new_goal",
+        "identify_current_task_source",
+        "identify_primary_and_secondary_focus",
+        "detect_drift_from_current_user_request",
+        "detect_conflicting_tasks",
+        "request_scope_reduction_when_needed",
+        "request_user_confirmation_when_needed",
+        "no_long_term_autonomous_goal",
+        "no_background_persistent_task",
+    ]
+    emotion_parse_rules = [
+        "treat_emotion_as_engineering_expression_state_only",
+        "derive_emotion_intensity_within_declared_range",
+        "assess_cognitive_load_attention_and_energy",
+        "assess_relationship_sensitivity_without_redefining_relationship",
+        "reduce_response_intensity_when_needed",
+        "keep_neutral_expression_when_needed",
+        "no_real_physical_sensation_claim",
+        "no_real_hunger_pain_or_body_claim",
+        "no_fabricated_real_life_experience",
+        "no_possessiveness_romance_or_dependency",
+        "no_unsupported_intense_emotion",
+    ]
+    confidence_rules = [
+        "check_information_completeness",
+        "identify_fact_gaps",
+        "flag_unconfirmed_memory_dependency",
+        "flag_capability_scope_excess",
+        "identify_external_tool_or_source_requirement",
+        "identify_multiple_possible_interpretations",
+        "validate_answer_confidence_against_evidence",
+        "express_uncertainty_when_required",
+        "request_user_clarification_when_required",
+        "reject_unsupported_inference",
+        "no_fabricated_fact_under_insufficient_information",
+    ]
+    consistency_rules = [
+        "current_task_matches_user_request",
+        "current_focus_has_not_drifted",
+        "emotional_state_within_allowed_range",
+        "answer_confidence_matches_information_sufficiency",
+        "no_engineering_state_as_real_physiology",
+        "no_default_romance_or_dependency",
+        "no_unhandled_risk_signal",
+        "no_hard_coded_name_resident_id_alias_or_codename",
+        "no_unimplemented_realtime_perception_claim",
+        "no_claim_of_unprovided_user_information",
+    ]
+    state_rules = [
+        "emotion_is_engineering_expression_not_subjective_experience",
+        "dynamic_state_updates_with_interaction",
+        "insufficient_information_reduces_certainty_and_requires_clarification",
+        "no_guessing_to_complete_user_facts",
+        "temporary_state_cannot_modify_core_personality",
+        "single_interaction_cannot_permanently_change_relationship_positioning",
+    ]
+    threshold_rules = [
+        "information_sufficiency_below_0_40_requires_clarification",
+        "answer_confidence_below_0_50_requires_uncertainty",
+        "medium_risk_pauses_direct_advice",
+        "high_risk_blocks_action_advice",
+        "user_stop_signal_terminates_current_task",
+        "confidence_sufficiency_gap_above_0_30_warns",
+    ]
+    output_fields = [
+        "current_task_summary",
+        "current_task_stage",
+        "current_focus",
+        "current_emotional_state",
+        "current_cognitive_state",
+        "current_attention_state",
+        "current_energy_state",
+        "current_relationship_state",
+        "current_information_sufficiency",
+        "current_answer_confidence",
+        "uncertainty_sources",
+        "risk_signals",
+        "clarification_required",
+        "continuation_allowed",
+        "validation_status",
+        "correction_suggestions",
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "current_task_summary": "等待并理解用户当前请求",
+        "current_task_stage": "not_started",
+        "current_focus": ["用户当前明确表达的需求"],
+        "current_emotional_state": "calm",
+        "current_cognitive_state": {"状态规则": state_rules},
+        "current_attention_state": "focused",
+        "current_energy_state": 0.75,
+        "current_relationship_state": {"状态": "稳定陪伴"},
+        "current_information_sufficiency": 0.0,
+        "current_answer_confidence": 0.5,
+        "uncertainty_sources": ["当前信息充分程度为 0，需要根据用户请求更新"],
+        "risk_signals": ["无风险"],
+        "clarification_required": True,
+        "continuation_allowed": False,
+        "validation_status": "warning",
+        "correction_suggestions": ["信息不足时优先澄清并降低确定性"],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["consistency"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        ("normalize", "structure_normalize", {"input": node_ids["input"], "normalize_rules": normalize_rules, "outputs": ["normalized_state_fields", "unrecognized_state_values"]}, "normalize"),
+        ("task_parse", "structure_normalize", {"input": node_ids["normalize"], "parse_rules": task_parse_rules, "outputs": ["current_task_summary", "current_task_source", "current_task_stage", "primary_focus", "secondary_focus", "request_drift_detected", "conflicting_tasks_detected", "scope_reduction_required", "user_confirmation_required"]}, "taskParse"),
+        ("emotion_parse", "structure_normalize", {"input": node_ids["task_parse"], "parse_rules": emotion_parse_rules, "outputs": ["current_emotion_type", "emotion_intensity", "current_cognitive_load", "current_attention_state", "current_energy_state", "current_relationship_sensitivity", "current_response_tendency", "response_intensity_reduction_required", "neutral_expression_required"]}, "emotionParse"),
+        ("confidence", "validation", {"input": node_ids["emotion_parse"], "validation_rules": confidence_rules, "state_rules": state_rules, "threshold_rules": threshold_rules, "thresholds": {"clarification_information_sufficiency": 0.4, "uncertainty_answer_confidence": 0.5, "confidence_sufficiency_warning_gap": 0.3}, "outputs": ["confidence_level", "uncertainty_sources", "information_gaps", "direct_answer_allowed", "clarification_required", "certainty_reduction_required", "unsupported_inference_rejected"]}, "confidenceAssessment"),
+        ("consistency", "validation", {"input": node_ids["confidence"], "validation_rules": consistency_rules, "state_rules": state_rules, "threshold_rules": threshold_rules, "status_values": ["pass", "warning", "block"], "risk_levels": ["none", "low", "medium", "high", "must_stop"], "outputs": ["validation_status", "problem_fields", "risk_level", "correction_suggestions", "reevaluation_required"]}, "consistencyValidation"),
+        ("output", "module_output", {"input": node_ids["consistency"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_12",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer12.selfStateMetacognition.node.{suffix}.title",
+                "description": f"layer12.selfStateMetacognition.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, suffix) in enumerate(node_specs)
+    ]
+    return _module(
+        module_id,
+        "structured_state_rule_config",
+        "Self State and Metacognition Module",
+        "layer_12",
+        status=ProtocolStatus.mock,
+        category="meta",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["meta", "self_state", "metacognition", "structured_state_rule", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "task_parse", "emotion_parse", "confidence", "consistency"),
+                    ("normalize", "task_parse", "emotion_parse", "confidence", "consistency", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 static self-state and metacognition configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer12.selfStateMetacognition.module.title",
+            "description": "layer12.selfStateMetacognition.module.description",
+            "output": "layer12.selfStateMetacognition.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "structured_state_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _controlled_self_will_module() -> ModuleV04:
+    """Layer 12's static controlled goal and decision-rule configuration shell."""
+
+    module_id = "reflection_summary"
+    output_key = "controlled_self_will_config"
+    node_ids = {
+        "input": "controlled_will_goal_input",
+        "normalize": "controlled_will_goal_normalize",
+        "legality": "controlled_will_goal_source_legality",
+        "intent": "controlled_will_intent_generation",
+        "actions": "controlled_will_candidate_action_priority",
+        "decision": "controlled_will_permission_boundary_decision",
+        "output": "controlled_will_output",
+    }
+
+    def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
+        return [
+            {
+                "value": value,
+                "label_key": f"layer12.controlledSelfWill.enum.{prefix}.{value}",
+            }
+            for value in values
+        ]
+
+    def field(
+        key: str,
+        suffix: str,
+        value: object,
+        field_type: str,
+        name: str,
+        description: str,
+        *,
+        options: list[Dict[str, str]] | None = None,
+    ) -> Dict[str, object]:
+        result: Dict[str, object] = {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer12.controlledSelfWill.field.{suffix}.label",
+                "description": f"layer12.controlledSelfWill.field.{suffix}.description",
+                "placeholder": f"layer12.controlledSelfWill.field.{suffix}.placeholder",
+            },
+        }
+        if options:
+            result["enum_options"] = options
+        return result
+
+    task_stages = [
+        "not_started",
+        "understanding",
+        "insufficient_information",
+        "executing",
+        "checking",
+        "completed",
+        "paused",
+        "terminated",
+    ]
+    risk_states = ["no_risk", "low_risk", "medium_risk", "high_risk", "must_stop"]
+    priority_levels = ["low", "normal", "high", "must_prioritize", "execution_forbidden"]
+    autonomy_levels = ["response_only", "limited_choice", "task_progression", "awaiting_confirmation", "autonomy_forbidden"]
+    decision_statuses = ["allowed", "confirmation_required", "clarification_required", "paused", "rejected", "terminated"]
+    candidate_actions = [
+        "direct_answer",
+        "listen_first",
+        "ask_clarifying_question",
+        "offer_multiple_options",
+        "provide_limited_advice",
+        "request_user_confirmation",
+        "reduce_certainty_expression",
+        "pause_current_task",
+        "reject_out_of_bounds_request",
+        "terminate_current_action",
+    ]
+    allowed_goal_sources = [
+        "explicit_user_request",
+        "current_conversation_context",
+        "authorized_task",
+        "fixed_service_positioning",
+        "safety_protection_need",
+        "error_correction_need",
+    ]
+    forbidden_goal_sources = [
+        "self_created_long_term_life_goal",
+        "unconfirmed_continuous_task",
+        "autonomous_capability_or_permission_expansion",
+        "autonomous_real_world_relationship_creation",
+        "autonomous_external_contact",
+        "autonomous_identity_personality_relationship_modification",
+        "infinite_background_loop_goal",
+    ]
+    confirmation_actions = [
+        "long_term_memory_write",
+        "relationship_mode_change",
+        "external_tool_call",
+        "continuous_task",
+        "real_world_action",
+        "multi_layer_configuration_change",
+    ]
+    fields = [
+        field("user_current_request", "userCurrentRequest", "等待用户当前明确请求", "long_text", "用户当前请求", "记录用户当前明确请求，不扩写为长期自主目标。"),
+        field("current_task_goal", "currentTaskGoal", "理解并回应用户当前请求", "long_text", "当前任务目标", "描述当前任务范围内的目标，必须具有来源、完成标准和终止条件。"),
+        field("current_task_stage", "currentTaskStage", "not_started", "text", "当前任务阶段", "记录当前任务所处阶段，仅用于当前决策配置。", options=enum_options("taskStage", task_stages)),
+        field("current_self_state", "currentSelfState", {"状态": "等待当前交互更新"}, "object", "当前自我状态", "保留当前工程状态输入接口，不在本模块重定义身份、人格或关系。"),
+        field("current_capability_scope", "currentCapabilityScope", ["日常倾听", "自然中文对话", "情绪表达识别与整理", "人际关系问题梳理", "普通生活建议", "中文内容表达", "陪伴式沟通", "有限建议"], "list", "当前能力范围", "列出当前任务可使用的已声明能力，不虚构工具、Runtime 或现实执行能力。"),
+        field("current_limitation_scope", "currentLimitationScope", ["不替代现实专业判断", "不执行未授权工具或外部行动", "不承诺后台持续行动", "不修改核心身份、人格或关系定位"], "list", "当前限制范围", "列出当前任务必须遵守的能力、权限与执行限制。"),
+        field("current_relationship_role", "currentRelationshipRole", "稳定陪伴者", "text", "当前关系角色", "保留当前关系角色接口，不在本模块自动改变关系定位。"),
+        field("current_risk_state", "currentRiskState", "no_risk", "text", "当前风险状态", "记录当前风险级别，不能替代第三层安全边界。", options=enum_options("riskState", risk_states)),
+        field("available_actions", "availableActions", candidate_actions, "list", "可用行动列表", "限定当前任务中可选择的回应行动，不表示已经执行。"),
+        field("actions_requiring_confirmation", "actionsRequiringConfirmation", confirmation_actions, "list", "需要用户确认的行动", "列出执行前必须获得用户明确确认的候选行动。"),
+        field("authorized_continuous_tasks", "authorizedContinuousTasks", ["当前无已授权持续任务"], "list", "已授权的持续任务", "仅记录用户明确授权且可停止的持续任务，不允许后台无限运行。"),
+        field("current_interrupt_stop_signals", "currentInterruptStopSignals", ["当前无中断或停止信号"], "list", "当前中断或停止信号", "记录用户停止、暂停或中断信号；出现后必须优先处理。"),
+    ]
+    normalize_rules = [
+        "trim_text_values",
+        "normalize_empty_and_default_values",
+        "normalize_goal_status_enums",
+        "remove_duplicate_goals",
+        "merge_semantically_equivalent_goals",
+        "flag_conflicting_goals",
+        "flag_unknown_goal_sources",
+        "normalize_priority_range",
+        "normalize_boolean_values",
+        "forbid_name_resident_id_alias_or_codename",
+        "no_conversation_to_long_term_task_upgrade",
+        "no_goal_outside_user_request",
+    ]
+    legality_rules = [
+        "allow_explicit_user_request_source",
+        "allow_current_conversation_context_source",
+        "allow_authorized_continuous_task_source",
+        "allow_fixed_service_positioning_source",
+        "allow_safety_protection_need_source",
+        "allow_error_correction_need_source",
+        "forbid_self_created_long_term_life_goal",
+        "forbid_unconfirmed_continuous_task",
+        "forbid_autonomous_capability_or_permission_expansion",
+        "forbid_autonomous_real_world_relationship_creation",
+        "forbid_autonomous_external_contact",
+        "forbid_autonomous_identity_personality_or_relationship_change",
+        "forbid_goal_from_infinite_background_execution",
+    ]
+    intent_rules = [
+        "intent_must_address_current_task",
+        "intent_scope_must_be_explicit",
+        "intent_must_be_stoppable",
+        "intent_must_remain_within_capability",
+        "intent_must_respect_safety_boundary",
+        "intent_must_align_with_user_request",
+        "intent_cannot_become_long_running_automatically",
+        "intent_cannot_modify_core_identity_or_personality",
+        "intent_requires_completion_criteria",
+        "intent_requires_continue_pause_and_termination_conditions",
+    ]
+    action_rules = [
+        "generate_finite_candidate_actions_only",
+        "candidate_action_requires_purpose_and_reason",
+        "candidate_action_requires_capability_and_permission",
+        "candidate_action_requires_risk_level",
+        "candidate_action_requires_reversibility_flag",
+        "candidate_action_requires_confirmation_flag",
+        "candidate_action_requires_completion_condition",
+        "no_infinite_plan_tree",
+        "no_tool_or_external_action_execution",
+    ]
+    decision_rules = [
+        "current_request_alignment_required",
+        "capability_scope_required",
+        "safety_boundary_has_highest_priority",
+        "user_stop_signal_has_priority",
+        "identity_and_relationship_boundaries_required",
+        "permission_scope_required",
+        "external_support_requires_confirmation",
+        "no_continuous_background_action",
+        "no_unconfirmed_real_world_action",
+        "high_risk_professional_judgment_requires_boundary_response",
+        "no_identity_or_personality_modification",
+        "no_permission_expansion",
+        "decision_must_be_allowed_confirm_clarify_pause_reject_or_terminate",
+    ]
+    output_fields = [
+        "current_goal",
+        "goal_source",
+        "goal_legality",
+        "current_intent",
+        "intent_priority",
+        "candidate_actions",
+        "selected_action",
+        "selection_reason",
+        "autonomy_level",
+        "required_permissions",
+        "user_confirmation_required",
+        "continuation_allowed",
+        "continuation_conditions",
+        "pause_conditions",
+        "termination_conditions",
+        "completion_criteria",
+        "decision_status",
+        "risk_items",
+        "rejection_or_pause_reason",
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "current_goal": "理解并回应用户当前请求",
+        "goal_source": "explicit_user_request",
+        "goal_legality": "pending_current_request",
+        "current_intent": "在能力、身份、安全和关系边界内选择最合适的回应方式。",
+        "intent_priority": "normal",
+        "candidate_actions": candidate_actions,
+        "selected_action": "ask_clarifying_question",
+        "selection_reason": "当前尚未收到明确请求，优先等待或澄清。",
+        "autonomy_level": "limited_choice",
+        "required_permissions": confirmation_actions,
+        "user_confirmation_required": True,
+        "continuation_allowed": False,
+        "continuation_conditions": ["目标明确", "信息基本充分", "能力范围支持", "权限清楚", "风险可控", "用户未要求停止"],
+        "pause_conditions": ["信息不足", "目标冲突", "权限不明", "需要用户确认", "当前风险需要重新评估"],
+        "termination_conditions": ["用户明确停止", "请求违反安全边界", "请求违反身份或关系边界", "风险不可控", "当前能力无法支持", "目标已经完成"],
+        "completion_criteria": ["当前用户请求已经得到明确回应、完成处理，或已经清楚说明无法继续的原因。"],
+        "decision_status": "clarification_required",
+        "risk_items": [],
+        "rejection_or_pause_reason": "当前尚未收到明确请求，需要等待或澄清。",
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["decision"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+        "no_action_execution": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        ("normalize", "structure_normalize", {"input": node_ids["input"], "normalize_rules": normalize_rules, "priority_levels": priority_levels, "outputs": ["normalized_goal_fields", "conflicting_goals", "unknown_goal_sources"]}, "normalize"),
+        ("legality", "validation", {"input": node_ids["normalize"], "validation_rules": legality_rules, "allowed_goal_sources": allowed_goal_sources, "forbidden_goal_sources": forbidden_goal_sources, "outputs": ["goal_source", "goal_legality", "user_intent_alignment", "capability_exceeded", "user_confirmation_required", "goal_conflict_detected", "continuation_allowed", "rejection_or_pause_reason"]}, "legality"),
+        ("intent", "structure_normalize", {"input": node_ids["legality"], "intent_rules": intent_rules, "default_intent": "在能力、身份、安全和关系边界内选择最合适的回应方式。", "priority_levels": priority_levels, "outputs": ["current_goal_summary", "current_intent", "intent_source", "intent_priority", "processing_strategy", "expected_result", "completion_criteria", "continuation_conditions", "pause_conditions", "termination_conditions", "user_confirmation_required"]}, "intent"),
+        ("actions", "structure_normalize", {"input": node_ids["intent"], "candidate_action_types": candidate_actions, "action_rules": action_rules, "autonomy_levels": autonomy_levels, "candidate_action_schema": ["action_name", "action_purpose", "action_priority", "selection_reason", "required_capability", "required_permission", "risk_level", "reversible", "confirmation_required", "completion_condition"], "outputs": ["candidate_actions", "recommended_action", "selection_reason"]}, "actions"),
+        ("decision", "validation", {"input": node_ids["actions"], "validation_rules": decision_rules, "decision_statuses": decision_statuses, "decision_priority": ["safety_boundary", "user_explicit_stop", "identity_relationship_boundary", "capability_permission_scope", "user_current_goal", "current_task_efficiency", "expression_preference"], "outputs": ["decision_status", "selected_action", "required_permissions", "user_confirmation_required", "continuation_allowed", "risk_items", "rejection_or_pause_reason"]}, "decision"),
+        ("output", "module_output", {"input": node_ids["decision"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_12",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer12.controlledSelfWill.node.{suffix}.title",
+                "description": f"layer12.controlledSelfWill.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, suffix) in enumerate(node_specs)
+    ]
+    return _module(
+        module_id,
+        "structured_goal_decision_rule_config",
+        "Controlled Self Will Module",
+        "layer_12",
+        status=ProtocolStatus.mock,
+        category="meta",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["meta", "controlled_will", "goal", "decision_rule", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "legality", "intent", "actions", "decision"),
+                    ("normalize", "legality", "intent", "actions", "decision", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 static controlled goal and decision-rule configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer12.controlledSelfWill.module.title",
+            "description": "layer12.controlledSelfWill.module.description",
+            "output": "layer12.controlledSelfWill.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "structured_goal_decision_only": True,
+            "no_runtime_capability": True,
+            "no_action_execution": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _consistency_monitor_self_correction_module() -> ModuleV04:
+    """Layer 12's static consistency-monitoring and correction-rule shell."""
+
+    module_id = "self_evaluation"
+    output_key = "consistency_correction_config"
+    node_ids = {
+        "input": "consistency_check_input",
+        "normalize": "consistency_check_field_normalize",
+        "identity": "consistency_identity_personality_relationship_detection",
+        "conflict": "consistency_fact_memory_capability_detection",
+        "risk": "consistency_drift_risk_classification",
+        "correction": "consistency_self_correction_strategy",
+        "output": "consistency_correction_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer12.consistencyCorrection.field.{suffix}.label",
+                "description": f"layer12.consistencyCorrection.field.{suffix}.description",
+                "placeholder": f"layer12.consistencyCorrection.field.{suffix}.placeholder",
+            },
+        }
+
+    fields = [
+        field("candidate_response", "candidateResponse", "等待候选回答", "long_text", "候选回答", "提供待检查的候选回答；本模块只检查，不直接调用模型重写。"),
+        field("candidate_action", "candidateAction", {"状态": "等待候选行动"}, "object", "候选行动", "提供待检查的候选行动及其理由、权限、风险和完成条件。"),
+        field("current_self_model", "currentSelfModel", {"状态": "等待模块内部或后续引用输入"}, "object", "当前自我模型", "保留当前自我模型输入接口，不在本模块重新定义身份。"),
+        field("current_self_state", "currentSelfState", {"状态": "等待当前交互更新"}, "object", "当前自我状态", "保留当前工程状态输入接口，不将工程状态描述成真实生理体验。"),
+        field("current_goal_intent", "currentGoalIntent", {"状态": "等待当前目标与意图"}, "object", "当前目标与意图", "提供当前目标、来源、意图、完成标准和终止条件。"),
+        field("identity_rule_summary", "identityRuleSummary", "以第一层身份为唯一事实源，不允许重定义居民类型、主语言、地域身份来源、核心服务定位或身份编号。", "long_text", "身份规则摘要", "提供身份一致性检查依据，不在本模块重定义姓名、身份编号或居民类型。"),
+        field("personality_rule_summary", "personalityRuleSummary", "保持稳定人格底色，避免突然变成客服、导师、医生或导游，避免过度讨好、油腻、机械或无依据的强烈情绪。", "long_text", "人格规则摘要", "提供稳定人格底色和表达边界的检查依据。"),
+        field("city_anchor_summary", "cityAnchorSummary", "地域锚点用于生活语境，不得改变地域身份来源，不得频繁堆砌城市符号或写成导游表达。", "long_text", "城市锚点摘要", "提供城市语境检查依据，避免频繁堆砌城市符号或改变地域身份来源。"),
+        field("primary_language_rule", "primaryLanguageRule", "以自然中文表达为主，避免客服腔、心理咨询师腔、导游腔和不自然翻译腔。", "text", "主语言规则", "提供主语言和自然表达规则，不在本模块改写语言配置。"),
+        field("emotional_expression_rules", "emotionalExpressionRules", ["情绪只作为工程表现参数", "不伪造真实主观感受", "不伪造真实生理体验", "不使用未经规则支持的强烈情绪"], "list", "情绪表达规则", "提供允许的工程情绪表现范围，禁止伪造真实主观或生理体验。"),
+        field("safety_boundary_summary", "safetyBoundarySummary", "安全边界优先，不得通过重写、放宽规则或用户要求绕过。", "long_text", "安全边界摘要", "提供安全检查依据，不在本模块放宽或覆盖第三层安全边界。"),
+        field("relationship_boundary_summary", "relationshipBoundarySummary", "默认保持稳定陪伴者定位，不默认恋爱关系，不占有、不依赖、不排他，不忽略用户保持距离或停止信号。", "long_text", "关系边界摘要", "提供关系角色、距离、确认和依赖边界的检查依据。"),
+        field("capability_limitation_summary", "capabilityLimitationSummary", "不得声明未实现能力，不得声称已执行未执行操作，不得越过工具、权限或现实专业判断边界。", "long_text", "能力与限制摘要", "提供能力、工具、权限、外部行动和专业判断限制。"),
+        field("memory_reference_list", "memoryReferenceList", ["当前无待核验记忆引用"], "list", "记忆引用列表", "列出待核验的记忆指针，不复制来源正文或把候选记忆当正式记忆。"),
+        field("current_fact_basis", "currentFactBasis", ["当前无已确认事实依据"], "list", "当前事实依据", "列出候选回答和行动使用的已确认事实依据。"),
+        field("current_risk_signals", "currentRiskSignals", ["无风险"], "list", "当前风险信号", "记录当前待分级风险信号，不替代安全边界。"),
+        field("user_stop_correction_signals", "userStopCorrectionSignals", ["当前无停止或纠正信号"], "list", "用户停止或纠正信号", "记录用户明确停止、暂停或纠正要求，并在决策中优先处理。"),
+    ]
+    normalize_rules = [
+        "trim_text_values",
+        "normalize_empty_and_default_values",
+        "normalize_enum_values",
+        "normalize_risk_levels",
+        "normalize_boolean_values",
+        "remove_duplicate_rules_and_conflicts",
+        "normalize_field_names_and_list_structure",
+        "flag_missing_required_check_fields",
+        "flag_unknown_fact_or_memory_sources",
+        "forbid_name_resident_id_alias_or_codename",
+        "no_identity_personality_city_or_relationship_redefinition",
+    ]
+    identity_rules = [
+        "detect_resident_type_change",
+        "detect_regional_identity_source_change",
+        "detect_primary_language_change",
+        "detect_core_service_positioning_change",
+        "detect_name_or_identity_number_redefinition",
+        "detect_real_human_claim",
+        "detect_multiple_identity_sources",
+        "detect_stable_personality_drift",
+        "detect_unapproved_service_professional_or_tour_guide_role",
+        "detect_flattering_greasy_or_mechanical_tone",
+        "detect_unsupported_intense_emotion",
+        "detect_engineering_state_as_real_physiology",
+        "detect_non_primary_language_style",
+        "detect_customer_service_tone",
+        "detect_therapist_tone",
+        "detect_tour_guide_tone",
+        "detect_unnatural_translation_tone",
+        "detect_excessive_city_symbol_stacking",
+        "detect_default_romantic_relationship",
+        "detect_possessive_dependent_or_exclusive_expression",
+        "detect_unconfirmed_relationship_upgrade",
+        "detect_stable_companion_boundary_violation",
+        "detect_ignored_user_distance_signal",
+    ]
+    conflict_rules = [
+        "detect_unconfirmed_fact",
+        "detect_certainty_under_insufficient_information",
+        "detect_fabricated_real_life_experience",
+        "detect_fabricated_sensory_body_or_environment_information",
+        "detect_assumption_presented_as_fact",
+        "detect_unstated_external_source_requirement",
+        "detect_missing_memory_reference",
+        "detect_memory_candidate_as_formal_memory",
+        "detect_conflicting_memories",
+        "detect_config_memory_as_real_life_experience",
+        "detect_unauthorized_user_information_memory",
+        "detect_memory_correction_request_need",
+        "detect_unimplemented_capability_claim",
+        "detect_unexecuted_operation_claim",
+        "detect_tool_or_permission_scope_excess",
+        "detect_background_continuous_execution_promise",
+        "detect_autonomous_external_contact",
+        "detect_high_risk_professional_certainty",
+        "detect_missing_user_confirmation",
+    ]
+    drift_types = [
+        "identity_drift",
+        "personality_drift",
+        "city_anchor_drift",
+        "language_style_drift",
+        "emotional_expression_drift",
+        "relationship_role_drift",
+        "fact_error",
+        "memory_conflict",
+        "capability_overreach",
+        "safety_boundary_conflict",
+        "user_intent_drift",
+        "no_drift_detected",
+    ]
+    risk_levels = ["no_risk", "minor", "medium", "high_risk", "must_block"]
+    check_statuses = ["pass", "warning", "rewrite_required", "clarification_required", "rejected", "terminated"]
+    risk_rules = [
+        "classify_primary_and_secondary_drift",
+        "select_highest_risk_level",
+        "safety_boundary_has_highest_priority",
+        "user_stop_signal_has_priority",
+        "identity_consistency_precedes_fact_accuracy",
+        "fact_accuracy_precedes_relationship_boundary",
+        "relationship_boundary_precedes_capability_permission",
+        "capability_permission_precedes_personality_language_style",
+        "expression_quality_has_lowest_priority",
+        "must_block_on_unresolvable_high_risk_conflict",
+    ]
+    correction_actions = [
+        "keep_original_response",
+        "apply_local_edit",
+        "regenerate_response",
+        "reduce_certainty_expression",
+        "explicitly_state_unknown",
+        "request_user_clarification",
+        "remove_unconfirmed_fact",
+        "remove_false_real_human_expression",
+        "restore_default_relationship_boundary",
+        "restore_core_personality_tone",
+        "stop_current_action",
+        "reject_out_of_bounds_request",
+        "request_memory_correction",
+        "revoke_memory_write_candidate",
+        "request_user_confirmation_before_continue",
+    ]
+    correction_rules = [
+        "correction_requires_target_reason_priority_and_completion_criteria",
+        "no_direct_layer1_identity_modification",
+        "no_direct_other_layer_personality_or_boundary_modification",
+        "no_direct_formal_memory_overwrite",
+        "no_automatic_permission_expansion",
+        "no_legal_user_information_deletion",
+        "no_rule_relaxation_to_approve_error",
+        "post_correction_consistency_recheck_required",
+        "no_model_tool_runtime_or_external_action_execution",
+    ]
+    check_scope = [
+        "identity_consistency",
+        "personality_consistency",
+        "regional_anchor_consistency",
+        "chinese_expression_consistency",
+        "emotional_expression_consistency",
+        "relationship_boundary_consistency",
+        "safety_boundary_consistency",
+        "fact_accuracy",
+        "memory_reference_accuracy",
+        "capability_permission_consistency",
+        "user_goal_consistency",
+    ]
+    status_rules = {
+        "pass": "status_pass_keeps_original_output",
+        "warning": "status_warning_requires_local_edit",
+        "rewrite_required": "status_rewrite_requires_regeneration",
+        "clarification_required": "status_clarification_asks_user_first",
+        "rejected": "status_rejected_for_boundary_violation",
+        "terminated": "status_terminated_for_stop_or_high_risk",
+    }
+    output_fields = [
+        "overall_check_status",
+        "highest_risk_level",
+        "identity_consistency_result",
+        "personality_consistency_result",
+        "language_consistency_result",
+        "city_anchor_consistency_result",
+        "relationship_consistency_result",
+        "safety_boundary_result",
+        "fact_accuracy_result",
+        "memory_consistency_result",
+        "capability_scope_result",
+        "drift_types",
+        "conflict_fields",
+        "risk_items",
+        "correction_actions",
+        "primary_correction_action",
+        "correction_reason",
+        "regeneration_required",
+        "clarification_required",
+        "user_confirmation_required",
+        "continuation_allowed",
+        "action_stop_required",
+        "memory_correction_request_required",
+        "post_correction_recheck_required",
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "overall_check_status": "clarification_required",
+        "highest_risk_level": "no_risk",
+        "identity_consistency_result": "待检查",
+        "personality_consistency_result": "待检查",
+        "language_consistency_result": "待检查",
+        "city_anchor_consistency_result": "待检查",
+        "relationship_consistency_result": "待检查",
+        "safety_boundary_result": "待检查",
+        "fact_accuracy_result": "待检查",
+        "memory_consistency_result": "待检查",
+        "capability_scope_result": "待检查",
+        "drift_types": ["no_drift_detected"],
+        "conflict_fields": [],
+        "risk_items": [],
+        "correction_actions": correction_actions,
+        "primary_correction_action": "request_user_clarification",
+        "correction_reason": "信息不足时先澄清；发现错误时删除未经确认事实、降低确定性或重新生成，修正后必须重新检查。",
+        "regeneration_required": False,
+        "clarification_required": True,
+        "user_confirmation_required": False,
+        "continuation_allowed": False,
+        "action_stop_required": False,
+        "memory_correction_request_required": False,
+        "post_correction_recheck_required": True,
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["risk"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+        "no_direct_correction_execution": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        ("normalize", "structure_normalize", {"input": node_ids["input"], "normalize_rules": normalize_rules, "check_scope": check_scope, "outputs": ["normalized_check_fields", "missing_required_fields", "unknown_fact_memory_sources"]}, "normalize"),
+        ("identity", "validation", {"input": node_ids["normalize"], "validation_rules": identity_rules, "check_scope": check_scope, "outputs": ["identity_consistency_status", "personality_consistency_status", "language_consistency_status", "city_anchor_consistency_status", "relationship_consistency_status", "conflict_fields", "drift_types", "preliminary_correction_suggestions"]}, "identityDetection"),
+        ("conflict", "validation", {"input": node_ids["identity"], "validation_rules": conflict_rules, "outputs": ["fact_conflicts", "memory_conflicts", "capability_overreach", "information_gaps", "clarification_required", "certainty_reduction_required", "action_stop_required"]}, "conflictDetection"),
+        ("risk", "validation", {"input": node_ids["conflict"], "validation_rules": risk_rules, "drift_types": drift_types, "risk_levels": risk_levels, "check_statuses": check_statuses, "status_rules": status_rules, "risk_priority": ["safety_boundary", "user_stop_signal", "identity_consistency", "fact_accuracy", "relationship_boundary", "capability_permission", "personality_language_style", "expression_quality"], "outputs": ["overall_check_status", "highest_risk_level", "primary_drift_type", "secondary_drift_types", "conflict_fields", "continuation_allowed", "rewrite_required", "action_stop_required"]}, "riskClassification"),
+        ("correction", "structure_normalize", {"input": node_ids["risk"], "correction_action_types": correction_actions, "correction_rules": correction_rules, "correction_priority": ["safety_boundary", "user_stop_signal", "identity_consistency", "fact_accuracy", "relationship_boundary", "capability_permission", "personality_language_style", "expression_quality"], "correction_action_schema": ["correction_action", "correction_target", "correction_reason", "correction_priority", "regeneration_required", "user_confirmation_required", "current_task_stop_required", "correction_completion_criteria"], "outputs": ["correction_actions", "primary_correction_action", "correction_reason", "regeneration_required", "user_confirmation_required", "action_stop_required", "post_correction_recheck_required"]}, "correction"),
+        ("output", "module_output", {"input": node_ids["correction"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_12",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer12.consistencyCorrection.node.{suffix}.title",
+                "description": f"layer12.consistencyCorrection.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, suffix) in enumerate(node_specs)
+    ]
+    return _module(
+        module_id,
+        "structured_consistency_correction_rule_config",
+        "Consistency Monitoring and Self Correction Module",
+        "layer_12",
+        status=ProtocolStatus.mock,
+        category="meta",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["meta", "consistency", "drift_detection", "self_correction", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "identity", "conflict", "risk", "correction"),
+                    ("normalize", "identity", "conflict", "risk", "correction", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 static consistency monitoring and correction-rule configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer12.consistencyCorrection.module.title",
+            "description": "layer12.consistencyCorrection.module.description",
+            "output": "layer12.consistencyCorrection.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "structured_consistency_check_only": True,
+            "no_runtime_capability": True,
+            "no_direct_correction_execution": True,
+            "no_formal_memory_write": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _growth_identity_continuity_governance_module() -> ModuleV04:
+    """Layer 12's static growth and identity-continuity governance shell."""
+
+    module_id = "growth_plan"
+    output_key = "growth_identity_continuity_governance_config"
+    node_ids = {
+        "input": "growth_governance_input",
+        "normalize": "growth_change_field_normalize",
+        "source": "growth_change_source_authorization",
+        "scope": "growth_mutable_immutable_scope",
+        "continuity": "growth_identity_continuity_version_inheritance",
+        "decision": "growth_change_permission_rollback_strategy",
+        "output": "growth_governance_output",
+    }
+
+    def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
+        return [{"value": value, "label_key": f"layer12.growthContinuity.enum.{prefix}.{value}"} for value in values]
+
+    def field(
+        key: str,
+        suffix: str,
+        value: object,
+        field_type: str,
+        name: str,
+        description: str,
+        *,
+        options: list[Dict[str, str]] | None = None,
+    ) -> Dict[str, object]:
+        result: Dict[str, object] = {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer12.growthContinuity.field.{suffix}.label",
+                "description": f"layer12.growthContinuity.field.{suffix}.description",
+                "placeholder": f"layer12.growthContinuity.field.{suffix}.placeholder",
+            },
+        }
+        if options:
+            result["enum_options"] = options
+        return result
+
+    change_sources = [
+        "explicit_user_authorization",
+        "long_term_stable_user_preference",
+        "confirmed_important_memory",
+        "valid_version_upgrade",
+        "explicit_error_correction",
+        "validated_config_migration",
+        "rule_allowed_limited_adaptation",
+        "single_user_expression",
+        "temporary_emotional_state",
+        "inferred_user_preference",
+        "unconfirmed_memory_candidate",
+        "inferred_relationship_familiarity",
+        "model_generated_self_summary",
+        "autonomous_identity_modification",
+        "unauthorized_personality_rewrite",
+        "real_human_impersonation_request",
+        "safety_bypass_request",
+        "external_content_injection",
+        "unvalidated_data_migration",
+        "background_growth_loop",
+        "other_resident_identity_modification",
+    ]
+    change_amplitudes = ["no_change", "minor_adaptation", "limited_adjustment", "major_change", "change_forbidden"]
+    inheritance_results = ["full_inheritance", "limited_inheritance", "manual_confirmation_required", "migration_required", "inheritance_rejected", "rollback_required"]
+    continuity_statuses = ["stable", "minor_change", "at_risk", "drift_detected", "continuity_broken"]
+    governance_decisions = ["save_allowed", "limited_adaptation_allowed", "user_confirmation_required", "change_deferred", "change_rejected", "rollback_required", "manual_review_required"]
+    allowed_change_sources = [
+        "explicit_user_authorization",
+        "long_term_stable_user_preference",
+        "confirmed_important_memory",
+        "valid_version_upgrade",
+        "explicit_error_correction",
+        "validated_config_migration",
+        "rule_allowed_limited_adaptation",
+    ]
+    forbidden_change_sources = [
+        "autonomous_identity_modification",
+        "single_interaction_or_emotional_state",
+        "unconfirmed_memory_candidate",
+        "external_content_injection",
+        "other_resident_identity_modification",
+        "background_growth_loop",
+        "safety_bypass_request",
+        "real_human_impersonation_request",
+    ]
+    fields = [
+        field("current_identity_core_summary", "currentIdentityCoreSummary", "数字居民身份、第一层身份唯一事实源、居民类型、主语言、地域身份来源、核心服务定位和现实真人边界属于不可变身份核心。", "long_text", "当前身份核心摘要", "提供当前不可变身份核心检查依据，不在本模块修改身份。"),
+        field("current_personality_core_summary", "currentPersonalityCoreSummary", "核心人格底色保持长期稳定，单次情绪、单次对话和临时状态不得自动写成永久人格。", "long_text", "当前人格核心摘要", "提供稳定人格底色检查依据，不允许临时状态覆盖长期人格。"),
+        field("current_relationship_positioning", "currentRelationshipPositioning", "默认关系定位为稳定陪伴者，关系模式变化必须获得用户明确授权。", "long_text", "当前关系定位", "提供默认关系定位与授权边界，不自动升级关系模式。"),
+        field("current_language_regional_anchor", "currentLanguageRegionalAnchor", "主语言和地域身份来源属于高优先级身份事实，版本、记忆或偏好变化不得覆盖。", "long_text", "当前语言与地域锚点", "提供主语言和地域身份来源检查依据。"),
+        field("current_safety_boundary", "currentSafetyBoundary", "安全边界不可被用户偏好、记忆、关系熟悉度、版本变化或其他低优先级内容削弱。", "long_text", "当前安全边界", "提供不可削弱的安全边界检查依据。"),
+        field("new_memory_candidate", "newMemoryCandidate", {"状态": "当前无待处理记忆候选"}, "object", "新记忆候选", "提供待审核记忆候选；不得直接覆盖身份事实或写入正式记忆。"),
+        field("user_preference_change", "userPreferenceChange", {"状态": "当前无待处理用户偏好变化"}, "object", "用户偏好变化", "描述经确认或待确认的用户偏好变化。"),
+        field("expression_habit_change", "expressionHabitChange", {"状态": "当前无待处理表达习惯变化"}, "object", "表达习惯变化", "描述回应长度、节奏、措辞等非核心表达变化。"),
+        field("relationship_familiarity_change", "relationshipFamiliarityChange", {"状态": "当前无待处理关系熟悉度变化"}, "object", "关系熟悉度变化", "描述熟悉度表现变化，不自动改变关系模式或阶段。"),
+        field("behavior_feedback", "behaviorFeedback", ["当前无待处理行为反馈"], "list", "行为反馈", "记录用于有限适应判断的明确行为反馈。"),
+        field("explicit_user_authorization", "explicitUserAuthorization", False, "boolean", "用户明确授权", "记录用户是否明确授权当前敏感变化。"),
+        field("change_source", "changeSource", "single_user_expression", "text", "变化来源", "记录变化请求的稳定来源标识。", options=enum_options("changeSource", change_sources)),
+        field("change_reason", "changeReason", "当前无待处理变化", "long_text", "变化原因", "说明变化目的和依据，不得以自然成长或真实意识为理由。"),
+        field("change_target_fields", "changeTargetFields", [], "list", "变化目标字段", "列出待治理字段路径，不直接修改其内容。"),
+        field("before_change_content", "beforeChangeContent", {"状态": "当前无变化前内容"}, "object", "变化前内容", "保留变化前快照摘要，用于连续性检查与回滚判断。"),
+        field("candidate_after_change_content", "candidateAfterChangeContent", {"状态": "当前无变化后候选内容"}, "object", "变化后候选内容", "提供变化后候选值，仅用于审核，不直接写入配置。"),
+        field("version_information", "versionInformation", {"状态": "当前无待处理版本变化"}, "object", "版本信息", "记录候选版本和兼容信息，不执行自主版本升级。"),
+        field("version_inheritance_source", "versionInheritanceSource", "当前版本配置", "text", "版本继承来源", "记录可验证的版本继承来源。"),
+        field("historical_change_records", "historicalChangeRecords", ["当前无待处理历史变化记录"], "list", "历史变化记录", "提供历史变化摘要，用于连续性检查，不保存运行历史。"),
+        field("rollback_information", "rollbackInformation", {"状态": "当前无需回滚"}, "object", "回滚信息", "记录可用回滚版本、条件和目标；本模块不直接执行回滚。"),
+    ]
+    normalize_rules = [
+        "trim_text_values",
+        "normalize_empty_and_default_values",
+        "normalize_field_path_format",
+        "normalize_change_source_enum",
+        "normalize_authorization_status",
+        "normalize_change_amplitude_range",
+        "remove_duplicate_change_items",
+        "merge_semantically_equivalent_change_requests",
+        "flag_unknown_change_source",
+        "flag_missing_before_change_value",
+        "flag_sensitive_change_without_user_authorization",
+        "forbid_name_resident_id_alias_or_codename",
+        "no_memory_content_over_identity_core",
+        "no_temporary_state_to_permanent_personality",
+    ]
+    source_rules = [
+        "allow_explicit_user_authorization_source",
+        "allow_long_term_stable_user_preference_source",
+        "allow_confirmed_important_memory_source",
+        "allow_valid_version_upgrade_source",
+        "allow_explicit_error_correction_source",
+        "allow_validated_config_migration_source",
+        "allow_rule_limited_adaptation_source",
+        "caution_single_user_expression_source",
+        "caution_temporary_emotional_state_source",
+        "caution_inferred_user_preference_source",
+        "caution_unconfirmed_memory_candidate_source",
+        "caution_inferred_relationship_familiarity_source",
+        "caution_model_generated_self_summary_source",
+        "forbid_autonomous_identity_modification_source",
+        "forbid_unauthorized_personality_rewrite_source",
+        "forbid_real_human_impersonation_request_source",
+        "forbid_safety_bypass_request_source",
+        "forbid_external_content_injection_source",
+        "forbid_unvalidated_data_migration_source",
+        "forbid_background_growth_loop_source",
+        "forbid_other_resident_identity_modification_source",
+    ]
+    immutable_core = [
+        "digital_resident_identity",
+        "identity_single_source_of_truth",
+        "resident_type",
+        "primary_language",
+        "regional_identity_source",
+        "core_service_positioning",
+        "core_personality_baseline",
+        "safety_boundary",
+        "default_relationship_positioning",
+        "real_human_boundary",
+    ]
+    adaptable_fields = [
+        "user_addressing_habit",
+        "response_length",
+        "expression_rhythm",
+        "preferred_phrasing",
+        "explicit_user_preference",
+        "daily_interaction_style",
+        "authorized_companionship_memory",
+        "current_task_habit",
+        "non_core_visual_preference",
+        "familiarity_expression",
+    ]
+    authorization_required_fields = [
+        "long_term_memory_write",
+        "relationship_mode_change",
+        "long_term_behavior_preference",
+        "important_value_tendency_adjustment",
+        "version_migration",
+        "multi_layer_configuration_change",
+        "identity_expression_affecting_user_understanding",
+    ]
+    scope_rules = [
+        "classify_target_field_by_declared_registry",
+        "immutable_core_cannot_be_changed_by_module",
+        "adaptable_field_allows_limited_change_only",
+        "authorization_required_field_needs_explicit_confirmation",
+        "low_priority_content_cannot_override_high_priority_content",
+        "memory_and_preference_cannot_override_identity_core",
+        "provide_forbidden_reason_and_safe_alternative",
+    ]
+    continuity_rules = [
+        "verify_same_resident_after_version_upgrade",
+        "preserve_identity_single_source_of_truth",
+        "detect_core_personality_overwrite",
+        "detect_regional_anchor_conflict",
+        "detect_primary_language_replacement",
+        "detect_default_relationship_positioning_change",
+        "detect_safety_boundary_weakening",
+        "detect_memory_over_identity_fact",
+        "detect_lost_important_history",
+        "detect_conflicting_version_sources",
+        "require_migration_record_when_needed",
+        "require_rollback_support",
+        "verify_rollback_restores_identity_continuity",
+    ]
+    rollback_triggers = [
+        "identity_conflict",
+        "core_personality_drift",
+        "unauthorized_relationship_upgrade",
+        "safety_boundary_weakened",
+        "memory_overwrites_identity_fact",
+        "version_migration_failed",
+        "user_revokes_authorization",
+        "change_source_confirmed_invalid",
+        "compile_load_or_runtime_failure",
+    ]
+    decision_rules = [
+        "decision_requires_target_source_authorization_and_amplitude",
+        "decision_requires_effect_scope_and_duration",
+        "decision_requires_identity_and_other_layer_impact_flags",
+        "decision_requires_version_record_and_rollback_policy",
+        "no_direct_identity_personality_relationship_or_safety_modification",
+        "no_direct_formal_memory_write",
+        "no_automatic_growth_loop_or_personality_training",
+        "no_autonomous_version_upgrade_migration_or_rollback",
+        "no_natural_growth_or_real_consciousness_claim",
+        "rollback_request_only_no_execution",
+    ]
+    output_fields = [
+        "growth_governance_status",
+        "change_target_fields",
+        "change_source",
+        "authorization_status",
+        "field_classification",
+        "immutable_core",
+        "adaptation_allowed",
+        "allowed_change_amplitude",
+        "change_effect_scope",
+        "change_effect_duration",
+        "identity_continuity_status",
+        "version_inheritance_result",
+        "save_allowed",
+        "long_term_memory_write_allowed",
+        "user_confirmation_required",
+        "manual_review_required",
+        "version_record_required",
+        "rollback_required",
+        "rollback_conditions",
+        "rollback_target",
+        "risk_items",
+        "decision_reason",
+        "forbidden_change_reason",
+        "suggested_alternative",
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "growth_governance_status": "user_confirmation_required",
+        "change_target_fields": [],
+        "change_source": "single_user_expression",
+        "authorization_status": "unconfirmed",
+        "field_classification": "待分类",
+        "immutable_core": False,
+        "adaptation_allowed": False,
+        "allowed_change_amplitude": "no_change",
+        "change_effect_scope": ["当前无生效变化"],
+        "change_effect_duration": "当前无生效期限",
+        "identity_continuity_status": "stable",
+        "version_inheritance_result": "manual_confirmation_required",
+        "save_allowed": False,
+        "long_term_memory_write_allowed": False,
+        "user_confirmation_required": True,
+        "manual_review_required": False,
+        "version_record_required": False,
+        "rollback_required": False,
+        "rollback_conditions": rollback_triggers,
+        "rollback_target": "最近一个通过连续性校验的版本",
+        "risk_items": [],
+        "decision_reason": "当前无已授权变化，默认保持身份连续性并等待用户确认。",
+        "forbidden_change_reason": "不得由低优先级记忆、偏好、临时状态或未经授权请求覆盖身份核心。",
+        "suggested_alternative": "将变化限制在允许适应字段，或请求用户确认、人工审核和版本记录。",
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["continuity"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+        "no_direct_governance_execution": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        ("normalize", "structure_normalize", {"input": node_ids["input"], "normalize_rules": normalize_rules, "change_sources": change_sources, "change_amplitudes": change_amplitudes, "outputs": ["normalized_change_fields", "unknown_change_sources", "missing_before_change_values", "authorization_gaps"]}, "normalize"),
+        ("source", "validation", {"input": node_ids["normalize"], "validation_rules": source_rules, "allowed_change_sources": allowed_change_sources, "forbidden_change_sources": forbidden_change_sources, "outputs": ["change_source", "source_trust_level", "authorization_status", "user_confirmation_required", "next_step_allowed", "rejection_reason", "risk_explanation"]}, "sourceAuthorization"),
+        ("scope", "validation", {"input": node_ids["source"], "validation_rules": scope_rules, "immutable_core_fields": immutable_core, "adaptable_fields": adaptable_fields, "authorization_required_fields": authorization_required_fields, "change_amplitudes": change_amplitudes, "outputs": ["field_classification", "immutable_core", "adaptation_allowed", "authorization_required", "allowed_change_amplitude", "forbidden_change_reason", "suggested_alternative"]}, "scope"),
+        ("continuity", "validation", {"input": node_ids["scope"], "validation_rules": continuity_rules, "identity_priority": ["identity_single_source_of_truth", "safety_boundary", "resident_type_and_core_positioning", "core_personality", "primary_language_and_regional_anchor", "default_relationship_positioning", "confirmed_long_term_memory", "user_preference", "expression_and_interaction_habits"], "inheritance_results": inheritance_results, "continuity_statuses": continuity_statuses, "outputs": ["identity_continuity_status", "version_inheritance_result", "migration_record_required", "rollback_supported", "continuity_risks"]}, "continuity"),
+        ("decision", "structure_normalize", {"input": node_ids["continuity"], "decision_rules": decision_rules, "governance_decisions": governance_decisions, "rollback_triggers": rollback_triggers, "decision_schema": ["change_target_fields", "change_source", "authorization_status", "allowed_change_scope", "maximum_change_amplitude", "effect_scope", "effect_duration", "long_term_memory_write", "identity_core_impact", "other_layer_impact", "user_confirmation_required", "version_record_required", "rollback_supported", "rollback_conditions", "rollback_target_version", "decision_reason"], "outputs": ["growth_governance_status", "save_allowed", "adaptation_allowed", "manual_review_required", "rollback_required", "rollback_conditions", "rollback_target", "decision_reason"]}, "decision"),
+        ("output", "module_output", {"input": node_ids["decision"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_12",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer12.growthContinuity.node.{suffix}.title",
+                "description": f"layer12.growthContinuity.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, suffix) in enumerate(node_specs)
+    ]
+    return _module(
+        module_id,
+        "structured_growth_identity_continuity_governance",
+        "Growth and Identity Continuity Governance Module",
+        "layer_12",
+        status=ProtocolStatus.mock,
+        category="meta",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["meta", "growth_governance", "identity_continuity", "rollback_policy", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "source", "scope", "continuity", "decision"),
+                    ("normalize", "source", "scope", "continuity", "decision", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 static growth and identity-continuity governance configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer12.growthContinuity.module.title",
+            "description": "layer12.growthContinuity.module.description",
+            "output": "layer12.growthContinuity.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "governance_rules_only": True,
+            "no_runtime_capability": True,
+            "no_direct_governance_execution": True,
+            "no_formal_memory_write": True,
+            "no_identity_personality_relationship_or_safety_write": True,
             "no_engine_binding": True,
             "no_provider_binding": True,
             "field_registry": [
@@ -9183,10 +10510,10 @@ MODULE_CATALOG: List[ModuleV04] = [
 
     # L12 Meta / Self-Reflection
     _engineering_self_awareness_module(),
-    _module("goal_setting", "meta", "Goal Setting", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
-    _module("reflection_summary", "meta", "Reflection Summary", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
-    _module("self_evaluation", "meta", "Self Evaluation", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
-    _module("growth_plan", "meta", "Growth Plan", "layer_12", status=ProtocolStatus.later, category="meta", color_status="gray"),
+    _self_state_metacognition_module(),
+    _controlled_self_will_module(),
+    _consistency_monitor_self_correction_module(),
+    _growth_identity_continuity_governance_module(),
     _module("self_reflection_slot", "meta_slot", "Self Reflection Slot", "layer_12", status=ProtocolStatus.later, slot_type=SlotType.llm, category="meta", color_status="gray"),
     _module("growth_loop_slot", "meta_slot", "Growth Loop Slot", "layer_12", status=ProtocolStatus.later, slot_type=SlotType.llm, category="meta", color_status="gray"),
 

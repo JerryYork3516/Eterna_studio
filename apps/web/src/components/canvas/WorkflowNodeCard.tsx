@@ -335,9 +335,27 @@ function stableI18nKeyPart(value: string) {
     .toLowerCase();
 }
 
+function layer12CoreParamPrefix(moduleId?: string) {
+  if (moduleId === "self_awareness") return "layer12.engineeringSelfAwareness.param";
+  if (moduleId === "goal_setting") return "layer12.selfStateMetacognition.param";
+  if (moduleId === "reflection_summary") return "layer12.controlledSelfWill.param";
+  if (moduleId === "self_evaluation") return "layer12.consistencyCorrection.param";
+  if (moduleId === "growth_plan") return "layer12.growthContinuity.param";
+  return "";
+}
+
+function usesLocalizedStructuredIds(moduleId?: string) {
+  return isLayer11Module(moduleId) || Boolean(layer12CoreParamPrefix(moduleId));
+}
+
 function localizedCoreKey(language: Language, key: string, moduleId?: string) {
   if (isLayer11Module(moduleId)) {
     return resolveLayer11DisplayText({ value: key, valueType: "key", moduleId, language });
+  }
+  const layer12Prefix = layer12CoreParamPrefix(moduleId);
+  if (layer12Prefix) {
+    const localized = translateIfPresent(language, `${layer12Prefix}.${key}`);
+    if (localized) return localized;
   }
   return (
     translateIfPresent(language, `assembly.field.${stableI18nKeyPart(key)}`) ||
@@ -350,6 +368,11 @@ function localizedCoreKey(language: Language, key: string, moduleId?: string) {
 function localizedCoreValue(language: Language, value: string, moduleId?: string) {
   if (isLayer11Module(moduleId)) {
     return resolveLayer11DisplayText({ value, valueType: "value", moduleId, language });
+  }
+  const layer12Prefix = layer12CoreParamPrefix(moduleId);
+  if (layer12Prefix) {
+    const localized = translateIfPresent(language, `${layer12Prefix}.${value}`);
+    if (localized) return localized;
   }
   const normalized = stableI18nKeyPart(value);
   return (
@@ -674,6 +697,23 @@ function normalizeGenericField(field: Record<string, unknown>, index: number): G
     reference_enabled: field.reference_enabled === true,
     field_key_auto: field.field_key_auto === true,
     dr_mapping_auto: field.dr_mapping_auto === true,
+    i18n_keys: isRecord(field.i18n_keys)
+      ? Object.fromEntries(
+          Object.entries(field.i18n_keys)
+            .filter(([, value]) => typeof value === "string" && value)
+            .map(([key, value]) => [key, String(value)])
+        )
+      : undefined,
+    field_name_custom: field.field_name_custom === true,
+    description_custom: field.description_custom === true,
+    enum_options: Array.isArray(field.enum_options)
+      ? field.enum_options
+          .filter(isRecord)
+          .map((option) => ({ value: stringValue(option.value), label_key: stringValue(option.label_key) }))
+          .filter((option) => option.value)
+      : undefined,
+    minimum: typeof field.minimum === "number" ? field.minimum : undefined,
+    maximum: typeof field.maximum === "number" ? field.maximum : undefined,
   };
 }
 
@@ -1274,7 +1314,9 @@ function StructuredValueEditor({
       <div className={`generic-fields-editor__structured-object generic-fields-editor__structured-object--depth-${Math.min(depth, 2)}`}>
         {entries.map(([key, item]) => (
           <div key={key} className="generic-fields-editor__structured-object-row">
-            <span title={isLayer11Module(moduleId) ? key : undefined}>{isLayer11Module(moduleId) ? resolveLayer11DisplayText({ value: key, valueType: "key", moduleId, language }) : key}</span>
+            <span title={usesLocalizedStructuredIds(moduleId) ? key : undefined}>
+              {usesLocalizedStructuredIds(moduleId) ? localizedCoreKey(language, key, moduleId) : key}
+            </span>
             <StructuredValueEditor value={item} language={language} depth={depth + 1} moduleId={moduleId} contextKey={key} onValueChange={(nextValue) => onValueChange({ ...value, [key]: nextValue })} />
           </div>
         ))}
@@ -1297,13 +1339,13 @@ function StructuredValueEditor({
     return <NodeTextInput className="nodrag" type="number" value={String(value)} onValueChange={(next) => onValueChange(next.trim() === "" ? "" : Number(next))} />;
   }
   const text = typeof value === "string" ? value : "";
-  if (text && isLayer11Module(moduleId) && /^[a-z][a-z0-9_]*$/.test(text)) {
+  if (text && usesLocalizedStructuredIds(moduleId) && /^[a-z][a-z0-9_]*$/.test(text)) {
     return (
       <div className="layer11-id-editor" title={text}>
-        <span>{resolveLayer11DisplayText({ value: text, valueType: "rule", moduleId, language })}</span>
+        <span>{localizedCoreValue(language, text, moduleId)}</span>
         <details className="layer11-id-editor__advanced">
           <summary>{translate(language, "layer11.common.internalId", "Internal ID")}</summary>
-          <NodeTextInput className="nodrag layer11-id-editor__raw" value={text} onValueChange={onValueChange} aria-label={resolveLayer11DisplayText({ value: contextKey || text, valueType: "key", moduleId, language })} />
+          <NodeTextInput className="nodrag layer11-id-editor__raw" value={text} onValueChange={onValueChange} aria-label={localizedCoreKey(language, contextKey || text, moduleId)} />
         </details>
       </div>
     );
@@ -1424,6 +1466,7 @@ function GenericTextInputRenderer({
     const shouldUpdateMapping = shouldAutoUpdateDrMapping(field, layerId, moduleId);
     patchField(index, {
       field_name: value,
+      field_name_custom: true,
       field_key: nextKey,
       field_key_auto: shouldUpdateKey ? true : field.field_key_auto,
       dr_mapping: shouldUpdateMapping ? genericFieldDrMapping(layerId, moduleId, nextKey) : field.dr_mapping,
@@ -1465,7 +1508,7 @@ function GenericTextInputRenderer({
       return next;
     });
   };
-  const renderFieldValueControl = (field: GenericField, index: number) => {
+  const renderFieldValueControl = (field: GenericField, index: number, placeholder?: string) => {
     if (field.field_type === "boolean") {
       return (
         <div className="generic-fields-editor__toggle generic-fields-editor__value-toggle">
@@ -1485,16 +1528,46 @@ function GenericTextInputRenderer({
         <NodeTextInput
           className="nodrag"
           type="number"
+          min={field.minimum}
+          max={field.maximum}
+          step={field.minimum === 0 && field.maximum === 1 ? 0.01 : undefined}
           value={genericFieldValueText(field.field_value)}
-          onValueChange={(value) => patchField(index, { field_value: value.trim() === "" ? "" : Number(value) })}
+          onValueChange={(value) => {
+            if (value.trim() === "") {
+              patchField(index, { field_value: "" });
+              return;
+            }
+            const parsed = Number(value);
+            const minimum = field.minimum ?? Number.NEGATIVE_INFINITY;
+            const maximum = field.maximum ?? Number.POSITIVE_INFINITY;
+            patchField(index, { field_value: Math.min(maximum, Math.max(minimum, parsed)) });
+          }}
         />
       );
     }
     if (field.field_type === "text") {
+      if (field.enum_options?.length) {
+        return (
+          <select
+            className="nodrag"
+            value={stringValue(field.field_value)}
+            onPointerDown={stopInputEventPropagation}
+            onKeyDown={stopInputEventPropagation}
+            onChange={(event) => patchField(index, { field_value: event.target.value })}
+          >
+            {field.enum_options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label_key ? translate(language, option.label_key, option.value) : option.value}
+              </option>
+            ))}
+          </select>
+        );
+      }
       return (
         <NodeTextInput
           className="nodrag"
           value={genericFieldValueText(field.field_value)}
+          placeholder={placeholder}
           onValueChange={(value) => patchField(index, { field_value: value })}
         />
       );
@@ -1529,6 +1602,7 @@ function GenericTextInputRenderer({
         className="nodrag"
         rows={3}
         value={genericFieldValueText(field.field_value)}
+        placeholder={placeholder}
         onValueChange={(value) => patchField(index, { field_value: value })}
       />
     );
@@ -1570,12 +1644,23 @@ function GenericTextInputRenderer({
             const warnings = genericFieldWarnings(genericFields, field, language);
             const fieldIdentity = `${index}:${field.field_key || field.field_name || "field"}`;
             const expanded = expandedFieldKeys.has(fieldIdentity);
+            const localizedFieldName =
+              !field.field_name_custom && field.i18n_keys?.label
+                ? translate(language, field.i18n_keys.label, field.field_name || field.field_key)
+                : field.field_name || field.field_key;
+            const localizedDescription =
+              !field.description_custom && field.i18n_keys?.description
+                ? translate(language, field.i18n_keys.description, field.description ?? "")
+                : field.description ?? "";
+            const localizedPlaceholder = field.i18n_keys?.placeholder
+              ? translate(language, field.i18n_keys.placeholder, "")
+              : undefined;
             return (
               <article key={`${index}-${field.field_key}`} className="generic-fields-editor__field-card">
               <div className="generic-fields-editor__field-head">
                 <label>
                   <span>{i18nText(language, "genericFields.fieldName")}</span>
-                  <NodeTextInput className="nodrag" value={field.field_name || field.field_key} onValueChange={(value) => patchFieldName(index, value)} />
+                  <NodeTextInput className="nodrag" value={localizedFieldName} onValueChange={(value) => patchFieldName(index, value)} />
                 </label>
                 <button className="generic-fields-editor__expand nodrag" type="button" onPointerDown={stopInputEventPropagation} onClick={() => toggleExpanded(fieldIdentity)} title={i18nText(language, expanded ? "genericFields.collapseField" : "genericFields.expandField")}>
                   {warnings.length && !expanded ? <span className="generic-fields-editor__warning-dot" aria-label={i18nText(language, "genericFields.warning")}>!</span> : null}
@@ -1584,11 +1669,16 @@ function GenericTextInputRenderer({
               </div>
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.fieldValue")}</span>
-                {renderFieldValueControl(field, index)}
+                {renderFieldValueControl(field, index, localizedPlaceholder)}
               </label>
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.description")}</span>
-                <NodeTextarea className="nodrag" rows={2} value={field.description ?? ""} onValueChange={(value) => patchField(index, { description: value })} />
+                <NodeTextarea
+                  className="nodrag"
+                  rows={2}
+                  value={localizedDescription}
+                  onValueChange={(value) => patchField(index, { description: value, description_custom: true })}
+                />
               </label>
               {expanded ? (
                 <section className="generic-fields-editor__advanced">
@@ -1895,6 +1985,12 @@ type GenericField = {
   reference_enabled?: boolean;
   field_key_auto?: boolean;
   dr_mapping_auto?: boolean;
+  i18n_keys?: Record<string, string>;
+  field_name_custom?: boolean;
+  description_custom?: boolean;
+  enum_options?: Array<{ value: string; label_key?: string }>;
+  minimum?: number;
+  maximum?: number;
 };
 
 type ReferenceOutputSource = {
