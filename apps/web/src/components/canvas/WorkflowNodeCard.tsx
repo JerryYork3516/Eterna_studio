@@ -17,6 +17,13 @@ import type { LLMProfileInput } from "@/lib/api";
 import type { WorkflowNode } from "@/lib/schema-types";
 import { getNodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
+import {
+  isLayer11Module,
+  isLayer11RoleCollection,
+  layer11ModuleId,
+  resolveLayer11DisplayText,
+  resolveLayer11RoleDescription,
+} from "./layer11-display";
 
 type CanvasNodeData = {
   schemaNode: WorkflowNode;
@@ -29,6 +36,8 @@ type CanvasNodeData = {
 type FlowNodeLike = {
   data?: unknown;
 };
+
+const CoreParamModuleContext = createContext<string | undefined>(undefined);
 
 const HIDDEN_PARAM_KEYS = new Set([
   "parent_module",
@@ -326,7 +335,10 @@ function stableI18nKeyPart(value: string) {
     .toLowerCase();
 }
 
-function localizedCoreKey(language: Language, key: string) {
+function localizedCoreKey(language: Language, key: string, moduleId?: string) {
+  if (isLayer11Module(moduleId)) {
+    return resolveLayer11DisplayText({ value: key, valueType: "key", moduleId, language });
+  }
   return (
     translateIfPresent(language, `assembly.field.${stableI18nKeyPart(key)}`) ||
     translateIfPresent(language, `node.coreParams.key.${key}`) ||
@@ -335,7 +347,10 @@ function localizedCoreKey(language: Language, key: string) {
   );
 }
 
-function localizedCoreValue(language: Language, value: string) {
+function localizedCoreValue(language: Language, value: string, moduleId?: string) {
+  if (isLayer11Module(moduleId)) {
+    return resolveLayer11DisplayText({ value, valueType: "value", moduleId, language });
+  }
   const normalized = stableI18nKeyPart(value);
   return (
     translateIfPresent(language, `validation.${value}`) ||
@@ -780,36 +795,8 @@ function genericFieldValueText(value: unknown) {
   }
 }
 
-function genericFieldListText(value: unknown) {
-  if (Array.isArray(value)) {
-    return value.map((item) => (typeof item === "string" ? item : genericFieldValueText(item))).join("\n");
-  }
-  return genericFieldValueText(value);
-}
-
-function genericFieldListValue(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch {
-    // Fall back to newline list editing.
-  }
-  return value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
-}
-
-function genericFieldObjectValue(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return isRecord(parsed) ? parsed : value;
-  } catch {
-    return value;
-  }
+function genericFieldListItems(value: unknown) {
+  return Array.isArray(value) ? value : [];
 }
 
 function compileTimeFieldKey(field: Record<string, unknown>, index: number) {
@@ -1149,6 +1136,23 @@ function CompileTimeFieldInputRenderer({
   onInput?: (key: string, value: unknown) => void;
 }) {
   if (!fields.length) {
+    const configuredParams = displayObjectEntries(
+      Object.fromEntries(
+        Object.entries(params).filter(
+          ([key, value]) =>
+            !HIDDEN_PARAM_KEYS.has(key) &&
+            !["mode", "field_registry", "config_mode", "checkbox_config"].includes(key) &&
+            !isEmptyDisplayValue(value)
+        )
+      )
+    );
+    if (Object.keys(configuredParams).length) {
+      return (
+        <div className="node-inputs__configured">
+          <CoreParamValue value={configuredParams} language={language} />
+        </div>
+      );
+    }
     return <div className="node-inputs__empty">{translate(language, "node.compileTime.fields.empty", "No fields configured")}</div>;
   }
 
@@ -1207,6 +1211,121 @@ function CompileTimeFieldInputRenderer({
             />
             {help ? <em>{help}</em> : null}
           </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function StructuredValueEditor({
+  value,
+  onValueChange,
+  language,
+  depth = 0,
+  moduleId,
+  contextKey,
+}: {
+  value: unknown;
+  onValueChange: (value: unknown) => void;
+  language: Language;
+  depth?: number;
+  moduleId?: string;
+  contextKey?: string;
+}) {
+  if (Array.isArray(value)) {
+    return (
+      <div className="generic-fields-editor__structured-list">
+        {value.map((item, index) => (
+          <div key={`${index}-${typeof item === "string" ? item : "item"}`} className="generic-fields-editor__structured-row">
+            <span className="generic-fields-editor__structured-index">{index + 1}</span>
+            <StructuredValueEditor
+              value={item}
+              language={language}
+              depth={depth + 1}
+              moduleId={moduleId}
+              contextKey={contextKey}
+              onValueChange={(nextValue) => onValueChange(value.map((candidate, candidateIndex) => (candidateIndex === index ? nextValue : candidate)))}
+            />
+            <button
+              className="generic-fields-editor__structured-action nodrag"
+              type="button"
+              onPointerDown={stopInputEventPropagation}
+              onClick={() => onValueChange(value.filter((_, candidateIndex) => candidateIndex !== index))}
+              aria-label={i18nText(language, "genericFields.removeField")}
+            >
+              −
+            </button>
+          </div>
+        ))}
+        <button
+          className="generic-fields-editor__structured-action generic-fields-editor__structured-add nodrag"
+          type="button"
+          onPointerDown={stopInputEventPropagation}
+          onClick={() => onValueChange([...value, ""])}
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    return (
+      <div className={`generic-fields-editor__structured-object generic-fields-editor__structured-object--depth-${Math.min(depth, 2)}`}>
+        {entries.map(([key, item]) => (
+          <div key={key} className="generic-fields-editor__structured-object-row">
+            <span title={isLayer11Module(moduleId) ? key : undefined}>{isLayer11Module(moduleId) ? resolveLayer11DisplayText({ value: key, valueType: "key", moduleId, language }) : key}</span>
+            <StructuredValueEditor value={item} language={language} depth={depth + 1} moduleId={moduleId} contextKey={key} onValueChange={(nextValue) => onValueChange({ ...value, [key]: nextValue })} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value === "boolean") {
+    return (
+      <input
+        className="nodrag"
+        type="checkbox"
+        checked={value}
+        onPointerDown={stopInputEventPropagation}
+        onKeyDown={stopInputEventPropagation}
+        onChange={(event) => onValueChange(event.target.checked)}
+      />
+    );
+  }
+  if (typeof value === "number") {
+    return <NodeTextInput className="nodrag" type="number" value={String(value)} onValueChange={(next) => onValueChange(next.trim() === "" ? "" : Number(next))} />;
+  }
+  const text = typeof value === "string" ? value : "";
+  if (text && isLayer11Module(moduleId) && /^[a-z][a-z0-9_]*$/.test(text)) {
+    return (
+      <div className="layer11-id-editor" title={text}>
+        <span>{resolveLayer11DisplayText({ value: text, valueType: "rule", moduleId, language })}</span>
+        <details className="layer11-id-editor__advanced">
+          <summary>{translate(language, "layer11.common.internalId", "Internal ID")}</summary>
+          <NodeTextInput className="nodrag layer11-id-editor__raw" value={text} onValueChange={onValueChange} aria-label={resolveLayer11DisplayText({ value: contextKey || text, valueType: "key", moduleId, language })} />
+        </details>
+      </div>
+    );
+  }
+  if (text.includes("\n") || text.length > 80) {
+    return <NodeTextarea className="nodrag" rows={2} value={text} onValueChange={onValueChange} />;
+  }
+  return <NodeTextInput className="nodrag" value={text} onValueChange={onValueChange} />;
+}
+
+function Layer11RoleCards({ value, moduleId, language }: { value: Record<string, unknown>; moduleId?: string; language: Language }) {
+  return (
+    <div className="layer11-role-cards">
+      {Object.entries(value).map(([roleId, role]) => {
+        const roleData = isRecord(role) ? role : {};
+        const name = resolveLayer11DisplayText({ value: roleId, valueType: "value", moduleId, language });
+        const description = resolveLayer11RoleDescription({ roleId, moduleId, language }) || stringValue(roleData.description);
+        return (
+          <article key={roleId} className="layer11-role-card" title={roleId}>
+            <strong>{name}</strong>
+            {description ? <small>{description}</small> : null}
+          </article>
         );
       })}
     </div>
@@ -1382,21 +1501,26 @@ function GenericTextInputRenderer({
     }
     if (field.field_type === "list") {
       return (
-        <NodeTextarea
-          className="nodrag"
-          rows={3}
-          value={genericFieldListText(field.field_value)}
-          onValueChange={(value) => patchField(index, { field_value: genericFieldListValue(value) })}
+        <StructuredValueEditor
+          value={genericFieldListItems(field.field_value)}
+          language={language}
+          moduleId={moduleId}
+          contextKey={field.field_key}
+          onValueChange={(value) => patchField(index, { field_value: Array.isArray(value) ? value : [] })}
         />
       );
     }
     if (field.field_type === "object") {
+      if (isRecord(field.field_value) && isLayer11RoleCollection(field.field_key, moduleId)) {
+        return <Layer11RoleCards value={field.field_value} moduleId={moduleId} language={language} />;
+      }
       return (
-        <NodeTextarea
-          className="nodrag"
-          rows={3}
-          value={genericFieldValueText(field.field_value)}
-          onValueChange={(value) => patchField(index, { field_value: genericFieldObjectValue(value) })}
+        <StructuredValueEditor
+          value={isRecord(field.field_value) ? field.field_value : {}}
+          language={language}
+          moduleId={moduleId}
+          contextKey={field.field_key}
+          onValueChange={(value) => patchField(index, { field_value: isRecord(value) ? value : {} })}
         />
       );
     }
@@ -2705,7 +2829,21 @@ function ChecklistTextConfigRenderer({
   );
 }
 
-function CoreParamValue({ value, language, depth = 0 }: { value: unknown; language: Language; depth?: number }) {
+function CoreParamValue({
+  value,
+  language,
+  depth = 0,
+  moduleId,
+  contextKey,
+}: {
+  value: unknown;
+  language: Language;
+  depth?: number;
+  moduleId?: string;
+  contextKey?: string;
+}) {
+  const inheritedModuleId = useContext(CoreParamModuleContext);
+  const displayModuleId = moduleId ?? inheritedModuleId;
   if (isEmptyDisplayValue(value)) {
     return <span className="core-params__empty">{translate(language, Array.isArray(value) ? "common.empty" : "common.notGenerated", Array.isArray(value) ? "Empty" : "Not generated")}</span>;
   }
@@ -2716,7 +2854,7 @@ function CoreParamValue({ value, language, depth = 0 }: { value: unknown; langua
     return <span>{String(value)}</span>;
   }
   if (typeof value === "string") {
-    return <span>{localizedCoreValue(language, value)}</span>;
+    return <span title={isLayer11Module(displayModuleId) ? value : undefined}>{localizedCoreValue(language, value, displayModuleId)}</span>;
   }
   if (Array.isArray(value)) {
     return (
@@ -2724,27 +2862,30 @@ function CoreParamValue({ value, language, depth = 0 }: { value: unknown; langua
         {value.length ? (
           value.map((item, index) => (
             <li key={`${index}-${String(typeof item === "object" ? index : item)}`}>
-              <CoreParamValue value={item} language={language} depth={depth + 1} />
+              <CoreParamValue value={item} language={language} depth={depth + 1} moduleId={displayModuleId} contextKey={contextKey} />
             </li>
           ))
         ) : (
           <li>
-            <CoreParamValue value={[]} language={language} depth={depth + 1} />
+            <CoreParamValue value={[]} language={language} depth={depth + 1} moduleId={displayModuleId} contextKey={contextKey} />
           </li>
         )}
       </ul>
     );
   }
   if (isRecord(value)) {
+    if (contextKey && isLayer11RoleCollection(contextKey, displayModuleId)) {
+      return <Layer11RoleCards value={value} moduleId={displayModuleId} language={language} />;
+    }
     const entries = Object.entries(value).filter(([, item]) => !isEmptyDisplayValue(item));
     if (!entries.length) {
-      return <CoreParamValue value={null} language={language} />;
+      return <CoreParamValue value={null} language={language} moduleId={displayModuleId} contextKey={contextKey} />;
     }
     if (depth >= 2) {
       return (
         <details className="core-params__nested">
           <summary>{translate(language, "node.coreParams.expand", "Expand")}</summary>
-          <CoreParamValue value={value} language={language} depth={0} />
+          <CoreParamValue value={value} language={language} depth={0} moduleId={displayModuleId} contextKey={contextKey} />
         </details>
       );
     }
@@ -2752,9 +2893,9 @@ function CoreParamValue({ value, language, depth = 0 }: { value: unknown; langua
       <dl className="core-params__object">
         {entries.map(([key, item]) => (
           <div key={key} className="core-params__object-row">
-            <dt>{localizedCoreKey(language, key)}</dt>
+            <dt>{localizedCoreKey(language, key, displayModuleId)}</dt>
             <dd>
-              <CoreParamValue value={item} language={language} depth={depth + 1} />
+              <CoreParamValue value={item} language={language} depth={depth + 1} moduleId={displayModuleId} contextKey={key} />
             </dd>
           </div>
         ))}
@@ -2769,18 +2910,22 @@ function CoreParamSection({
   titleFallback,
   value,
   language,
+  moduleId,
+  valueContextKey,
   tone = "default"
 }: {
   titleKey: string;
   titleFallback: string;
   value: unknown;
   language: Language;
+  moduleId?: string;
+  valueContextKey?: string;
   tone?: "default" | "warning";
 }) {
   return (
     <section className={`core-params__section is-${tone}`}>
       <h5>{translate(language, titleKey, titleFallback)}</h5>
-      <CoreParamValue value={value} language={language} />
+      <CoreParamValue value={value} language={language} moduleId={moduleId} contextKey={valueContextKey} />
     </section>
   );
 }
@@ -2843,6 +2988,7 @@ function updateRuleUserEditable(rule: Record<string, unknown>): boolean {
 }
 
 function UpdateRuleCards({ rules, language }: { rules: Record<string, unknown>[]; language: Language }) {
+  const moduleId = useContext(CoreParamModuleContext);
   if (!rules.length) {
     return <CoreParamValue value={[]} language={language} />;
   }
@@ -2850,7 +2996,7 @@ function UpdateRuleCards({ rules, language }: { rules: Record<string, unknown>[]
     <div className="core-params__rule-list">
       {rules.map((rule, index) => {
         const name = updateRuleDisplayName(rule) || `${translate(language, "common.field", "Field")} ${index + 1}`;
-        const displayName = localizedCoreValue(language, name);
+        const displayName = localizedCoreValue(language, name, moduleId);
         return (
           <article key={`${name}-${index}`} className="core-params__rule-card">
             <h6>{displayName}</h6>
@@ -3047,6 +3193,7 @@ function CompileTimeNodeSummary({
   data: Record<string, unknown>;
   language: Language;
 }) {
+  const moduleId = layer11ModuleId(data);
   const params = paramsFromNodeData(data);
   const outputs = isRecord(data.outputs) ? data.outputs : {};
   if (type === "module_output") {
@@ -3058,7 +3205,7 @@ function CompileTimeNodeSummary({
     return (
       <p className="node-inputs__empty">
         {translate(language, "node.compileTime.summary.moduleOutput", "Output: {output}; fields: {count}")
-          .replace("{output}", outputKey ? localizedCoreValue(language, outputKey) : translate(language, "common.unknown", "Unknown"))
+          .replace("{output}", outputKey ? localizedCoreValue(language, outputKey, moduleId) : translate(language, "common.unknown", "Unknown"))
           .replace("{count}", String(outputFields))}
       </p>
     );
@@ -3554,6 +3701,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
       <details className="workflow-node__params nodrag nopan" onPointerDown={(event) => event.stopPropagation()} open={!sections.core && !isCatalogPreconfigured}>
         <summary>{sectionTitle(language, "node.coreParams.title", "Core Params")}</summary>
         <div className="workflow-node__params-body">
+          <CoreParamModuleContext.Provider value={layer11ModuleId(nodeData)}>
           {showGenericTextInputForm ? (
             <GenericTextInputRenderer fields={inputSchema} data={nodeData} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
           ) : showReferenceOutputForm ? (
@@ -3583,6 +3731,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           )}
           {showLLMConfig ? <BrainConfigSection language={language} nodeData={nodeData} onInput={onInput} /> : null}
           {memoryMode ? <MemorySection mode={memoryMode} nodeData={nodeData} language={language} onInput={onInput} /> : null}
+          </CoreParamModuleContext.Provider>
         </div>
       </details>
 

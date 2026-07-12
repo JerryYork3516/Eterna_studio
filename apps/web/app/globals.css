@@ -5207,6 +5207,62 @@ dd {
   min-width: 0;
   max-width: 100%;
 }
+.layer11-role-cards {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.layer11-role-card {
+  display: grid;
+  gap: 2px;
+  padding: 6px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.2);
+}
+.layer11-role-card strong {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.layer11-role-card small {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.layer11-id-editor {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.layer11-id-editor > span {
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.layer11-id-editor .layer11-id-editor__raw {
+  color: var(--muted);
+  font-size: 9px;
+  opacity: 0.58;
+}
+.layer11-id-editor__advanced > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+  opacity: 0.68;
+}
+.layer11-id-editor__advanced[open] > summary {
+  margin-bottom: 3px;
+}
+.node-inputs__configured {
+  min-width: 0;
+}
 .node-inputs {
   display: grid;
   gap: 5px;
@@ -5622,6 +5678,63 @@ dd {
 
 .generic-fields-editor textarea {
   resize: vertical;
+}
+
+.generic-fields-editor__structured-list,
+.generic-fields-editor__structured-object {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.generic-fields-editor__structured-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.generic-fields-editor__structured-index,
+.generic-fields-editor__structured-object-row > span {
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.generic-fields-editor__structured-action {
+  width: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text);
+  padding: 0;
+  line-height: 1;
+}
+
+.generic-fields-editor__structured-add {
+  justify-self: start;
+}
+
+.generic-fields-editor__structured-object {
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.16);
+}
+
+.generic-fields-editor__structured-object-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.generic-fields-editor__structured-object-row > span {
+  padding-top: 5px;
 }
 
 .generic-fields-editor__warnings {

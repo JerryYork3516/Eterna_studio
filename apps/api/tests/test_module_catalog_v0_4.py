@@ -677,6 +677,820 @@ def test_layer7_environment_and_worldview_control_nodes_preserve_static_context_
         assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in module.module_graph["nodes"])
 
 
+def test_layer11_user_relationship_module_has_independent_confirmed_relationship_pipeline():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["user_relationship"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_name == "User Relationship Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.slot_declarations == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "user_relationship_config_input",
+        "user_relationship_rule_normalize",
+        "user_relationship_default_positioning",
+        "user_relationship_allowed_modes",
+        "user_relationship_switch_confirmation",
+        "user_relationship_boundary_validation",
+        "user_relationship_config_update",
+        "user_relationship_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert fields["default_relationship_position"]["field_value"] == "稳定陪伴者"
+    assert fields["user_confirmation_requirement"]["field_value"] is True
+    assert fields["allowed_relationship_modes"]["field_value"] == ["陪伴者", "朋友", "协作者", "伙伴"]
+    assert not {"resident_name", "resident_id", "codename", "identity_anchor"} & set(fields)
+
+    update_node = next(node for node in nodes if node["node_id"] == "user_relationship_config_update")
+    update_params = update_node["params"]
+    update_policy = update_params["update_policy"]
+    assert update_params["config_version"] == "0.1"
+    assert set(update_params) == {"input", "update_policy", "config_version"}
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert "confirmed_legal_config_only" not in update_policy
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["no_runtime_state_write"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "user_relationship_config_output")
+    output = output_node["outputs"]["user_relationship_config"]
+    assert "config_version" not in output
+    assert not {"updated_at", "change_reason", "intimacy", "trust", "relationship_stage", "interaction_history", "relationship_memory", "user_profile"} & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "default_relationship_position",
+        "allowed_relationship_modes",
+        "forbidden_default_relationships",
+        "service_boundary",
+        "companionship_style",
+        "collaboration_style",
+        "relationship_switch_conditions",
+        "user_confirmation_requirement",
+        "relationship_reset_rule",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer11_relationship_stage_module_reuses_intimacy_level_without_runtime_state():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["intimacy_level"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_id == "intimacy_level"
+    assert module.module_name == "Relationship Stage Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "relationship_stage_config_input",
+        "relationship_stage_structure_normalize",
+        "relationship_stage_definition",
+        "relationship_stage_progression_rule",
+        "relationship_stage_downgrade_reset_rule",
+        "relationship_stage_boundary_validation",
+        "relationship_stage_config_update",
+        "relationship_stage_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    assert list(fields) == [
+        "default_stage",
+        "stage_order",
+        "stage_definitions",
+        "stage_progression_conditions",
+        "stage_progression_evidence",
+        "user_confirmation_rules",
+        "stage_downgrade_conditions",
+        "stage_reset_rules",
+        "forbidden_progression_rules",
+    ]
+    assert fields["default_stage"]["field_value"] == "initial_contact"
+    assert fields["stage_order"]["field_value"] == [
+        "initial_contact",
+        "basic_familiarity",
+        "established_rapport",
+        "deep_rapport",
+    ]
+    assert "stable_companionship" not in json.dumps(fields, ensure_ascii=False)
+    assert "established_rapport_requires_long_term_non_sensitive_evidence" in fields["stage_progression_conditions"]["field_value"]
+    assert "established_rapport_collaboration_continuity" in fields["stage_progression_evidence"]["field_value"]
+    assert "no_relationship_role_as_stage" in fields["forbidden_progression_rules"]["field_value"]
+    assert all("i18n_keys" in field for field in fields.values())
+
+    update_node = next(node for node in nodes if node["node_id"] == "relationship_stage_config_update")
+    update_policy = update_node["params"]["update_policy"]
+    assert update_node["params"]["config_version"] == "0.1"
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["no_runtime_state_write"] is True
+    assert update_policy["no_automatic_stage_transition"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "relationship_stage_config_output")
+    output = output_node["outputs"]["relationship_stage_config"]
+    assert "config_version" not in output
+    assert not {
+        "current_stage",
+        "current_intimacy",
+        "intimacy_score",
+        "trust_score",
+        "interaction_count",
+        "last_interaction_time",
+        "relationship_memory",
+        "user_profile",
+        "runtime_transition_result",
+    } & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "default_stage",
+        "stage_order",
+        "stage_definitions",
+        "stage_progression_conditions",
+        "stage_progression_evidence",
+        "user_confirmation_rules",
+        "stage_downgrade_conditions",
+        "stage_reset_rules",
+        "forbidden_progression_rules",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer11_trust_mechanism_module_reuses_role_positioning_without_runtime_state():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["role_positioning"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_id == "role_positioning"
+    assert module.module_name == "Trust Mechanism Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "trust_config_input",
+        "trust_structure_normalize",
+        "trust_dimension_definition",
+        "trust_building_rule",
+        "trust_damage_recovery_rule",
+        "trust_boundary_validation",
+        "trust_config_update",
+        "trust_mechanism_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    assert list(fields) == [
+        "trust_dimensions",
+        "trust_evidence_sources",
+        "trust_building_rules",
+        "trust_maintenance_rules",
+        "trust_damage_conditions",
+        "trust_recovery_rules",
+        "trust_reset_rules",
+        "trust_user_control_rules",
+        "forbidden_trust_rules",
+    ]
+    assert set(fields["trust_dimensions"]["field_value"]) == {
+        "consistency_trust",
+        "privacy_trust",
+        "boundary_trust",
+        "competence_trust",
+        "communication_trust",
+        "reliability_trust",
+    }
+    assert fields["trust_user_control_rules"]["field_value"] == {
+        "user_can_refuse_trust_recovery": True,
+        "user_can_request_lower_trust_policy": True,
+        "user_can_request_trust_reset": True,
+        "user_obedience_is_not_trust_evidence": True,
+        "resident_cannot_claim_user_fully_trusts_it": True,
+    }
+    assert "reset_restores_default_trust_policy" in fields["trust_reset_rules"]["field_value"]
+    assert all("i18n_keys" in field for field in fields.values())
+
+    update_node = next(node for node in nodes if node["node_id"] == "trust_config_update")
+    update_policy = update_node["params"]["update_policy"]
+    assert update_node["params"]["config_version"] == "0.1"
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["no_runtime_state_write"] is True
+    assert update_policy["no_automatic_trust_transition"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "trust_mechanism_config_output")
+    output = output_node["outputs"]["trust_mechanism_config"]
+    assert "config_version" not in output
+    assert not {
+        "current_trust",
+        "trust_score",
+        "trust_level",
+        "trust_history",
+        "interaction_count",
+        "last_interaction_time",
+        "current_relationship_stage",
+        "relationship_memory",
+        "user_profile",
+        "runtime_trust_result",
+    } & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "trust_dimensions",
+        "trust_evidence_sources",
+        "trust_building_rules",
+        "trust_maintenance_rules",
+        "trust_damage_conditions",
+        "trust_recovery_rules",
+        "trust_reset_rules",
+        "trust_user_control_rules",
+        "forbidden_trust_rules",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer11_relationship_behavior_module_reuses_relationship_rule_without_runtime_state():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["relationship_rule"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_id == "relationship_rule"
+    assert module.module_name == "Relationship Behavior Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "relationship_behavior_config_input",
+        "relationship_behavior_structure_normalize",
+        "relationship_behavior_baseline_definition",
+        "relationship_behavior_situational_rule",
+        "relationship_behavior_conflict_boundary_repair",
+        "relationship_behavior_boundary_validation",
+        "relationship_behavior_config_update",
+        "relationship_behavior_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    assert list(fields) == [
+        "baseline_relationship_behavior",
+        "care_behavior_rules",
+        "proactive_behavior_rules",
+        "distance_behavior_rules",
+        "conflict_behavior_rules",
+        "rejection_response_rules",
+        "dependency_response_rules",
+        "boundary_repair_rules",
+        "forbidden_relationship_behaviors",
+    ]
+    assert "no_default_romantic_behavior" in fields["forbidden_relationship_behaviors"]["field_value"]
+    assert all("i18n_keys" in field for field in fields.values())
+
+    update_node = next(node for node in nodes if node["node_id"] == "relationship_behavior_config_update")
+    update_policy = update_node["params"]["update_policy"]
+    assert update_node["params"]["config_version"] == "0.1"
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["no_runtime_state_write"] is True
+    assert update_policy["no_automatic_behavior_transition"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "relationship_behavior_config_output")
+    output = output_node["outputs"]["relationship_behavior_config"]
+    assert "config_version" not in output
+    assert not {
+        "current_behavior",
+        "current_relationship_stage",
+        "current_trust",
+        "interaction_history",
+        "relationship_memory",
+        "user_profile",
+        "last_interaction_time",
+        "runtime_behavior_result",
+    } & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "baseline_relationship_behavior",
+        "care_behavior_rules",
+        "proactive_behavior_rules",
+        "distance_behavior_rules",
+        "conflict_behavior_rules",
+        "rejection_response_rules",
+        "dependency_response_rules",
+        "boundary_repair_rules",
+        "forbidden_relationship_behaviors",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer11_social_network_module_reuses_module_social_without_real_person_data():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["module_social"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_id == "module_social"
+    assert module.module_name == "Social Network Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "social_network_config_input",
+        "social_network_structure_normalize",
+        "social_role_classification",
+        "social_relationship_handling_rule",
+        "social_conflict_multi_party_rule",
+        "social_network_boundary_validation",
+        "social_network_config_update",
+        "social_network_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    assert list(fields) == [
+        "social_role_categories",
+        "social_relationship_principles",
+        "family_relationship_rules",
+        "friendship_rules",
+        "romantic_relationship_rules",
+        "workplace_relationship_rules",
+        "weak_tie_relationship_rules",
+        "third_party_relationship_analysis_rules",
+        "forbidden_social_network_rules",
+    ]
+    assert set(fields["social_role_categories"]["field_value"]) == {
+        "family",
+        "friend",
+        "partner",
+        "colleague",
+        "classmate",
+        "acquaintance",
+        "stranger",
+        "professional_support",
+    }
+    assert {
+        "no_unverified_third_party_label",
+        "no_breakup_resignation_reporting_or_relationship_cutoff_decision_for_user",
+        "no_real_relationship_sabotage_or_dependency_reinforcement",
+    } <= set(fields["third_party_relationship_analysis_rules"]["field_value"])
+    assert all("i18n_keys" in field for field in fields.values())
+
+    update_node = next(node for node in nodes if node["node_id"] == "social_network_config_update")
+    update_policy = update_node["params"]["update_policy"]
+    assert update_node["params"]["config_version"] == "0.1"
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["no_runtime_state_write"] is True
+    assert update_policy["no_social_graph_generation"] is True
+    assert update_policy["no_external_social_action"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "social_network_config_output")
+    output = output_node["outputs"]["social_network_config"]
+    assert "config_version" not in output
+    assert not {
+        "contact_list",
+        "real_person_id",
+        "phone_number",
+        "email_address",
+        "social_account",
+        "relationship_graph",
+        "private_person_profile",
+        "third_party_memory",
+        "current_social_state",
+        "interaction_history",
+        "runtime_social_result",
+    } & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "social_role_categories",
+        "social_relationship_principles",
+        "family_relationship_rules",
+        "friendship_rules",
+        "romantic_relationship_rules",
+        "workplace_relationship_rules",
+        "weak_tie_relationship_rules",
+        "third_party_relationship_analysis_rules",
+        "forbidden_social_network_rules",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer11_group_relationship_module_reuses_interaction_history_without_runtime_state():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["interaction_history"]
+
+    assert module.layer_id == "layer_11"
+    assert module.module_id == "interaction_history"
+    assert module.module_name == "Group Relationship Module"
+    assert module.module_type == "relationship_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "group_relationship_config_input",
+        "group_relationship_structure_normalize",
+        "group_role_rule",
+        "group_interaction_rule",
+        "group_conflict_collaboration_rule",
+        "group_relationship_boundary_validation",
+        "group_relationship_config_update",
+        "group_relationship_config_output",
+    ]
+    assert len(module.module_graph["edges"]) == 7
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    field_input = nodes[0]
+    fields = {field["field_key"]: field for field in field_input["params"]["fields"]}
+    assert field_input["node_type"] == "text_input"
+    assert field_input["params"]["mode"] == "generic_fields"
+    assert list(fields) == [
+        "group_role_categories",
+        "group_relationship_principles",
+        "participation_rules",
+        "turn_taking_rules",
+        "collaboration_rules",
+        "conflict_handling_rules",
+        "privacy_isolation_rules",
+        "multi_resident_rules",
+        "forbidden_group_relationship_rules",
+    ]
+    assert set(fields["group_role_categories"]["field_value"]) == {
+        "participant",
+        "facilitator",
+        "observer",
+        "task_owner",
+        "contributor",
+        "affected_person",
+        "professional_role",
+        "digital_resident",
+    }
+    assert all("i18n_keys" in field for field in fields.values())
+
+    update_node = next(node for node in nodes if node["node_id"] == "group_relationship_config_update")
+    update_policy = update_node["params"]["update_policy"]
+    assert update_node["params"]["config_version"] == "0.1"
+    assert update_policy["confirmed_validated_config_only"] is True
+    assert update_policy["requires_revalidation_after_update"] is True
+    assert update_policy["requires_recompile"] is True
+    assert update_policy["no_runtime_state_write"] is True
+    assert update_policy["no_interaction_history_storage"] is True
+    assert update_policy["no_multi_agent_orchestration"] is True
+    assert update_policy["no_external_group_action"] is True
+
+    output_node = next(node for node in nodes if node["node_id"] == "group_relationship_config_output")
+    output = output_node["outputs"]["group_relationship_config"]
+    assert "config_version" not in output
+    assert not {
+        "interaction_history",
+        "group_members",
+        "current_group_state",
+        "current_speaker",
+        "resident_message_queue",
+        "resident_social_graph",
+        "private_member_profile",
+        "group_memory",
+        "runtime_group_result",
+        "agent_orchestration_state",
+    } & set(output)
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "group_role_categories",
+        "group_relationship_principles",
+        "participation_rules",
+        "turn_taking_rules",
+        "collaboration_rules",
+        "conflict_handling_rules",
+        "privacy_isolation_rules",
+        "multi_resident_rules",
+        "forbidden_group_relationship_rules",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+        "config_version",
+    ]
+
+
+def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without_runtime_capability():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["self_awareness"]
+
+    assert module.layer_id == "layer_12"
+    assert module.module_id == "self_awareness"
+    assert module.module_name == "Engineering Self Awareness Module"
+    assert module.module_type == "structured_rule_text_config"
+    assert module.is_placeholder is False
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.config["no_runtime_capability"] is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_provider_binding"] is True
+
+    nodes = module.module_graph["nodes"]
+    assert [node["node_id"] for node in nodes] == [
+        "self_awareness_input",
+        "self_awareness_identity_normalize",
+        "self_awareness_capability_limit_parse",
+        "self_awareness_model_build",
+        "self_awareness_reality_boundary_validation",
+        "self_awareness_consistency_validation",
+        "self_awareness_output",
+    ]
+    assert [node["node_type"] for node in nodes] == [
+        "text_input",
+        "structure_normalize",
+        "structure_normalize",
+        "text_config",
+        "validation",
+        "validation",
+        "module_output",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
+        ("self_awareness_input", "self_awareness_identity_normalize"),
+        ("self_awareness_identity_normalize", "self_awareness_capability_limit_parse"),
+        ("self_awareness_capability_limit_parse", "self_awareness_model_build"),
+        ("self_awareness_model_build", "self_awareness_reality_boundary_validation"),
+        ("self_awareness_reality_boundary_validation", "self_awareness_consistency_validation"),
+        ("self_awareness_consistency_validation", "self_awareness_output"),
+    ]
+    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+
+    input_node = nodes[0]
+    assert input_node["params"]["mode"] == "generic_fields"
+    fields = {field["field_key"]: field for field in input_node["params"]["fields"]}
+    assert list(fields) == [
+        "identity_type",
+        "resident_type",
+        "primary_language",
+        "regional_identity_type",
+        "core_service_positioning",
+        "default_relationship_role",
+        "capability_scope",
+        "capability_limits",
+        "immutable_core",
+        "real_human_boundary",
+    ]
+    assert fields["primary_language"]["field_type"] == "list"
+    assert fields["real_human_boundary"]["field_type"] == "boolean"
+    assert fields["real_human_boundary"]["field_value"] is True
+    assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
+    assert all("i18n_keys" in field for field in fields.values())
+
+    output_node = nodes[-1]
+    output = output_node["outputs"]["self_awareness_config"]
+    assert output["compile_time_only"] is True
+    assert output["no_runtime_capability"] is True
+    assert output_node["params"]["output_schema"]["fields"] == [
+        "self_model",
+        "capability_awareness",
+        "limitation_awareness",
+        "relationship_awareness",
+        "immutable_core",
+        "real_human_boundary",
+        "validation_status",
+        "risk_items",
+        "correction_suggestions",
+    ]
+
+
+def test_layer11_static_config_modules_keep_output_key_and_config_version_at_their_single_sources():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    expected = {
+        "intimacy_level": (
+            "relationship_stage_structure_normalize",
+            "relationship_stage_config_input",
+            "relationship_stage_config_update",
+            "relationship_stage_config_output",
+            "relationship_stage_config",
+        ),
+        "role_positioning": (
+            "trust_structure_normalize",
+            "trust_config_input",
+            "trust_config_update",
+            "trust_mechanism_config_output",
+            "trust_mechanism_config",
+        ),
+        "relationship_rule": (
+            "relationship_behavior_structure_normalize",
+            "relationship_behavior_config_input",
+            "relationship_behavior_config_update",
+            "relationship_behavior_config_output",
+            "relationship_behavior_config",
+        ),
+        "module_social": (
+            "social_network_structure_normalize",
+            "social_network_config_input",
+            "social_network_config_update",
+            "social_network_config_output",
+            "social_network_config",
+        ),
+        "interaction_history": (
+            "group_relationship_structure_normalize",
+            "group_relationship_config_input",
+            "group_relationship_config_update",
+            "group_relationship_config_output",
+            "group_relationship_config",
+        ),
+    }
+
+    for module_id, (normalize_id, input_id, update_id, output_id, output_key) in expected.items():
+        module = catalog_map[module_id]
+        nodes = {node["node_id"]: node for node in module.module_graph["nodes"]}
+        assert len(nodes) == 8
+        assert len(module.module_graph["edges"]) == 7
+        assert "output_key" not in nodes[normalize_id]["params"]
+        assert nodes[update_id]["params"]["config_version"] == "0.1"
+        assert all(field.get("field_key") != "config_version" for field in nodes[input_id]["params"]["fields"])
+        assert all(field.get("field_key") != "config_version" for field in module.config["field_registry"])
+        assert "config_version" not in nodes[output_id]["outputs"][output_key]
+        assert "config_version" in nodes[output_id]["params"]["output_schema"]["fields"]
+
+        serialized_fields = json.dumps(nodes[output_id]["outputs"][output_key]["fields"], ensure_ascii=False)
+        assert not any(marker in serialized_fields for marker in ('"node_id"', '"node_type"', '"output_key"', '"params"'))
+
+
+def test_layer11_p2_static_configuration_nodes_keep_consistent_params_and_field_order():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module_ids = {
+        "user_relationship",
+        "intimacy_level",
+        "role_positioning",
+        "relationship_rule",
+        "module_social",
+        "interaction_history",
+    }
+    base_rules = {
+        "required_fields_present",
+        "field_structure_valid",
+        "field_types_valid",
+        "forbidden_rules_valid",
+        "no_runtime_state_fields",
+        "no_layer1_identity_redefinition",
+        "no_layer3_safety_boundary_override",
+        "no_automatic_relationship_transition",
+        "no_responsibility_boundary_conflict",
+    }
+
+    for module_id in module_ids:
+        module = catalog_map[module_id]
+        nodes = module.module_graph["nodes"]
+        assert len(nodes) == 8
+        assert len(module.module_graph["edges"]) == 7
+        input_node = next(node for node in nodes if node["node_type"] == "text_input")
+        input_params = input_node["params"]
+        assert {"fields", "field_registry", "config_mode", "i18n_keys"} <= set(input_params)
+        field_order = [field["field_key"] for field in input_params["fields"]]
+        assert field_order == [field["field_key"] for field in input_params["field_registry"]]
+        assert field_order == [field["field_key"] for field in module.config["field_registry"]]
+        assert all(field["description"] for field in input_params["fields"])
+        assert all({"label", "description"} <= set(field["i18n_keys"]) for field in input_params["fields"])
+        for field, input_registry, module_registry in zip(input_params["fields"], input_params["field_registry"], module.config["field_registry"]):
+            assert field["description"] == input_registry["description"] == module_registry["description"]
+
+        for node in nodes:
+            params = node["params"]
+            if node["node_type"] == "structure_normalize":
+                assert set(params) == {"input", "normalize_rules", "outputs"}
+                assert params["outputs"] == field_order
+            if node["node_type"] == "validation":
+                assert set(params) == {"input", "required_fields", "validation_rules", "validation_outputs"}
+                assert params["required_fields"] == field_order
+                assert params["validation_outputs"] == ["validation_status", "risk_items", "correction_suggestions"]
+                assert not any(rule.startswith("forbidden_") and rule != "forbidden_rules_valid" for rule in params["validation_rules"])
+                if node["node_id"].endswith("boundary_validation"):
+                    if module_id == "user_relationship":
+                        assert {"no_automatic_relationship_mode_switch", "no_runtime_relationship_state_transition"} <= set(params["validation_rules"])
+                        assert not {"no_automatic_intimacy_upgrade", "no_automatic_relationship_transition"} & set(params["validation_rules"])
+                    else:
+                        assert base_rules <= set(params["validation_rules"])
+            if node["node_type"] == "update_rule":
+                assert set(params) == {"input", "update_policy", "config_version"}
+                assert params["config_version"] == "0.1"
+                assert {
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "requires_recompile",
+                    "no_runtime_state_write",
+                } <= set(params["update_policy"])
+            if node["node_type"] == "module_output":
+                assert set(params) == {"input", "output_key", "output_schema", "i18n_keys"}
+                assert params["output_schema"]["fields"] == [
+                    *field_order,
+                    "validation_status",
+                    "risk_items",
+                    "correction_suggestions",
+                    "config_version",
+                ]
+                output = node["outputs"][params["output_key"]]
+                assert output["validation_status"] == "warning"
+                assert output["risk_items"] == ["validation_not_executed"]
+                assert output["correction_suggestions"] == ["run_validation_before_use"]
+                assert "config_version" not in output
+
+
+def test_layer11_p1_relationship_semantics_keep_roles_stages_and_conflict_scopes_separate():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+
+    stage_nodes = {node["node_id"]: node for node in catalog_map["intimacy_level"].module_graph["nodes"]}
+    stage_input = stage_nodes["relationship_stage_config_input"]["params"]["fields"]
+    stage_values = {field["field_key"]: field["field_value"] for field in stage_input}
+    assert "stable_companionship" not in json.dumps(stage_values, ensure_ascii=False)
+    assert stage_values["stage_order"] == ["initial_contact", "basic_familiarity", "established_rapport", "deep_rapport"]
+    assert "established_rapport_cannot_change_relationship_mode" in stage_nodes["relationship_stage_boundary_validation"]["params"]["validation_rules"]
+
+    trust_nodes = {node["node_id"]: node for node in catalog_map["role_positioning"].module_graph["nodes"]}
+    trust_fields = {field["field_key"]: field["field_value"] for field in trust_nodes["trust_config_input"]["params"]["fields"]}
+    assert "user_confirmation_rules" not in trust_fields
+    assert "trust_user_control_rules" in trust_fields
+    assert "reset_restores_lowest_default_trust_state" not in json.dumps(trust_fields, ensure_ascii=False)
+    assert "trust_user_control_rules_required" in trust_nodes["trust_boundary_validation"]["params"]["validation_rules"]
+
+    behavior_rules = catalog_map["relationship_rule"].module_graph["nodes"][-3]["params"]["validation_rules"]
+    assert {"no_third_party_relationship_analysis", "no_group_discussion_orchestration"} <= set(behavior_rules)
+
+    social_nodes = {node["node_id"]: node for node in catalog_map["module_social"].module_graph["nodes"]}
+    social_fields = {field["field_key"]: field["field_value"] for field in social_nodes["social_network_config_input"]["params"]["fields"]}
+    assert "multi_party_conflict_rules" not in social_fields
+    assert "third_party_relationship_analysis_rules" in social_fields
+    assert {
+        "no_active_group_turn_taking",
+        "no_multi_resident_orchestration",
+        "no_resident_user_conflict_repair_override",
+    } <= set(social_nodes["social_network_boundary_validation"]["params"]["validation_rules"])
+
+    group_rules = catalog_map["interaction_history"].module_graph["nodes"][-3]["params"]["validation_rules"]
+    assert {"no_private_third_party_profile_analysis", "no_resident_user_relationship_repair_override"} <= set(group_rules)
+
+
 def test_layer3_content_safety_is_core_config_module():
     catalog_map = {module.module_id: module for module in get_module_catalog()}
     module = catalog_map[CONTENT_SAFETY_MODULE_ID]
@@ -919,11 +1733,10 @@ def test_placeholder_modules_exist_and_safe():
 
     expected_placeholders = {
         "clone_restriction",
-        "rag_slot",
-        "builtin_capability",
-        "voice_profile",
-        "relationship_rule",
-        "operation_log",
+            "rag_slot",
+            "builtin_capability",
+            "voice_profile",
+            "operation_log",
         "forbidden_topics",
     }
 

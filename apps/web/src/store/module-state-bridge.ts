@@ -20,6 +20,7 @@ const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "preference_memory",
   "event_memory",
   "memory_update",
+  "self_awareness",
 ]);
 const GENERIC_FIELD_MIGRATION_NODE_TYPES = new Set(["field_input", "text_input"]);
 const LAYER3_GENERIC_FIELD_MIGRATION_MODULE_IDS = new Set([
@@ -253,6 +254,613 @@ const ENVIRONMENT_FIELD_MAPPING_KEYS = new Set([
 
 function environmentFieldDrMapping(fieldKey: string) {
   return genericFieldDrMapping(ENVIRONMENT_MODULE_LAYER_ID, ENVIRONMENT_MODULE_ID, fieldKey);
+}
+
+const USER_RELATIONSHIP_LAYER_ID = "layer_11";
+const USER_RELATIONSHIP_MODULE_ID = "user_relationship";
+const USER_RELATIONSHIP_UPDATE_NODE_ID = "user_relationship_config_update";
+const USER_RELATIONSHIP_OUTPUT_NODE_ID = "user_relationship_config_output";
+const USER_RELATIONSHIP_OUTPUT_KEY = "user_relationship_config";
+const LAYER11_STATIC_CONFIG_MODULES = {
+  intimacy_level: {
+    inputNodeId: "relationship_stage_config_input",
+    normalizeNodeId: "relationship_stage_structure_normalize",
+    updateNodeId: "relationship_stage_config_update",
+    outputNodeId: "relationship_stage_config_output",
+    outputKey: "relationship_stage_config",
+  },
+  role_positioning: {
+    inputNodeId: "trust_config_input",
+    normalizeNodeId: "trust_structure_normalize",
+    updateNodeId: "trust_config_update",
+    outputNodeId: "trust_config_output",
+    outputKey: "trust_mechanism_config",
+  },
+  relationship_rule: {
+    inputNodeId: "relationship_behavior_config_input",
+    normalizeNodeId: "relationship_behavior_structure_normalize",
+    updateNodeId: "relationship_behavior_config_update",
+    outputNodeId: "relationship_behavior_config_output",
+    outputKey: "relationship_behavior_config",
+  },
+  module_social: {
+    inputNodeId: "social_network_config_input",
+    normalizeNodeId: "social_network_structure_normalize",
+    updateNodeId: "social_network_config_update",
+    outputNodeId: "social_network_config_output",
+    outputKey: "social_network_config",
+  },
+  interaction_history: {
+    inputNodeId: "group_relationship_config_input",
+    normalizeNodeId: "group_relationship_structure_normalize",
+    updateNodeId: "group_relationship_config_update",
+    outputNodeId: "group_relationship_config_output",
+    outputKey: "group_relationship_config",
+  },
+} as const;
+const LAYER11_SEMANTIC_REPLACEMENTS: Record<string, Record<string, string>> = {
+  intimacy_level: {
+    stable_companionship: "established_rapport",
+    stableCompanionship: "establishedRapport",
+    "稳定陪伴阶段": "稳定默契阶段",
+    "Stable Companionship": "Established Rapport",
+    "layer11.relationshipStage.stage.stable_companionship.name": "layer11.relationshipStage.stage.established_rapport.name",
+    "layer11.relationshipStage.stage.stable_companionship.description": "layer11.relationshipStage.stage.established_rapport.description",
+    confirmed_collaboration_continuity: "established_rapport_collaboration_continuity",
+  },
+  role_positioning: {
+    user_confirmation_rules: "trust_user_control_rules",
+    userConfirmationRules: "trustUserControlRules",
+    "用户确认规则": "信任用户控制规则",
+    "User Confirmation Rules": "Trust User-Control Rules",
+    "layer11.trustMechanism.field.userConfirmationRules.label": "layer11.trustMechanism.field.trustUserControlRules.label",
+    "layer11.trustMechanism.field.userConfirmationRules.description": "layer11.trustMechanism.field.trustUserControlRules.description",
+    reset_restores_lowest_default_trust_state: "reset_restores_default_trust_policy",
+  },
+  module_social: {
+    multi_party_conflict_rules: "third_party_relationship_analysis_rules",
+    multiPartyConflictRules: "thirdPartyRelationshipAnalysisRules",
+    "多方冲突规则": "现实第三方关系分析规则",
+    "Multi-party Conflict Rules": "Third-Party Relationship Analysis Rules",
+    "layer11.socialNetwork.field.multiPartyConflictRules.label": "layer11.socialNetwork.field.thirdPartyRelationshipAnalysisRules.label",
+    "layer11.socialNetwork.field.multiPartyConflictRules.description": "layer11.socialNetwork.field.thirdPartyRelationshipAnalysisRules.description",
+  },
+};
+const LAYER11_TRUST_USER_CONTROL_DEFAULTS = {
+  user_can_refuse_trust_recovery: true,
+  user_can_request_lower_trust_policy: true,
+  user_can_request_trust_reset: true,
+  user_obedience_is_not_trust_evidence: true,
+  resident_cannot_claim_user_fully_trusts_it: true,
+};
+const LAYER11_SEMANTIC_LIST_ADDITIONS: Record<string, Record<string, string[]>> = {
+  intimacy_level: {
+    stage_progression_conditions: ["established_rapport_requires_long_term_non_sensitive_evidence"],
+    stage_progression_evidence: ["established_rapport_collaboration_continuity"],
+    forbidden_progression_rules: ["no_relationship_role_as_stage"],
+  },
+  module_social: {
+    third_party_relationship_analysis_rules: [
+      "no_unverified_third_party_label",
+      "no_breakup_resignation_reporting_or_relationship_cutoff_decision_for_user",
+      "no_real_relationship_sabotage_or_dependency_reinforcement",
+    ],
+  },
+};
+const LAYER11_P2_MODULE_IDS = new Set([
+  "user_relationship",
+  "intimacy_level",
+  "role_positioning",
+  "relationship_rule",
+  "module_social",
+  "interaction_history",
+]);
+const LAYER11_REVIEW_BASE_VALIDATION_RULES = [
+  "required_fields_present",
+  "field_structure_valid",
+  "field_types_valid",
+  "forbidden_rules_valid",
+  "no_runtime_state_fields",
+  "no_layer1_identity_redefinition",
+  "no_layer3_safety_boundary_override",
+  "no_automatic_relationship_transition",
+  "no_responsibility_boundary_conflict",
+];
+const LAYER11_P2_VALIDATION_OUTPUTS = ["validation_status", "risk_items", "correction_suggestions"];
+const LAYER11_P2_I18N_PREFIX: Record<string, string> = {
+  user_relationship: "layer11.userRelationship",
+  intimacy_level: "layer11.relationshipStage",
+  role_positioning: "layer11.trustMechanism",
+  relationship_rule: "layer11.relationshipBehavior",
+  module_social: "layer11.socialNetwork",
+  interaction_history: "layer11.groupRelationship",
+};
+const LAYER11_REVIEW_FIELD_DESCRIPTIONS: Record<string, Record<string, string>> = {
+  intimacy_level: {
+    stage_order: "定义关系阶段的固定顺序，包含初始接触、基础熟悉、稳定默契和深度默契。不负责自动推进或当前阶段判断。本字段属于静态配置，不保存运行状态。",
+    stage_definitions: "定义初始接触、基础熟悉、稳定默契和深度默契各阶段的边界与含义。不负责改变关系角色或执行阶段升级。本字段属于静态配置，不保存运行状态。",
+    stage_progression_conditions: "定义进入稳定默契和深度默契所需的渐进、证据、确认与可逆条件。不负责根据单次互动自动推进。本字段属于静态配置，不保存运行状态。",
+    stage_progression_evidence: "定义支持稳定默契与深度默契判断的长期、稳定、非敏感证据类型。不负责保存实时互动证据或计算阶段。本字段属于静态配置，不保存运行状态。",
+  },
+  role_positioning: {
+    trust_user_control_rules: "定义用户对信任策略的控制规则，包括拒绝信任恢复、降低信任策略、重置信任规则，以及拒绝居民自行宣称用户已经完全信任。本字段只定义静态控制规则，不保存实时信任等级、信任分数或信任状态。",
+  },
+  relationship_rule: {
+    conflict_behavior_rules: "定义数字居民与用户之间发生分歧、拒绝、误解或边界冲突时的回应和修复规则。只处理居民与用户的直接关系冲突，不分析现实第三方关系，不负责多人或多居民讨论协调。本字段属于静态配置。",
+  },
+  module_social: {
+    third_party_relationship_analysis_rules: "定义用户向居民描述家人、朋友、伴侣、同事等现实第三方关系问题时的分析规则。只分析未直接参与当前会话的现实第三方关系，不处理当前多人讨论的轮次、主持、协作或群体共识。本字段属于静态配置。",
+  },
+};
+const LAYER11_REVIEW_MODULE_VALIDATION_RULES: Record<string, string[]> = {
+  intimacy_level: ["stage_order_valid", "stage_definitions_complete", "progression_requires_confirmed_evidence", "no_stage_skipping", "no_numeric_intimacy_score", "no_runtime_stage_state", "established_rapport_cannot_change_relationship_mode"],
+  role_positioning: ["trust_dimensions_valid", "trust_evidence_sources_valid", "trust_user_control_preserved", "no_runtime_trust_state", "reset_restores_default_trust_policy", "trust_user_control_rules_required"],
+  relationship_rule: ["no_third_party_relationship_analysis", "no_group_discussion_orchestration", "resident_user_conflict_scope_valid", "rejection_response_preserves_user_autonomy", "no_runtime_behavior_state"],
+  module_social: ["third_party_analysis_scope_valid", "no_active_group_turn_taking", "no_multi_resident_orchestration", "no_resident_user_conflict_repair_override", "no_third_party_sensitive_profile"],
+  interaction_history: ["active_group_scope_valid", "no_private_third_party_profile_analysis", "no_resident_user_relationship_repair_override", "no_multi_agent_runtime_orchestration", "no_runtime_group_state"],
+};
+const USER_RELATIONSHIP_NODE_I18N_SUFFIX: Record<string, string> = {
+  user_relationship_config_input: "configInput",
+  user_relationship_rule_normalize: "ruleNormalize",
+  user_relationship_default_positioning: "defaultPosition",
+  user_relationship_allowed_modes: "allowedModes",
+  user_relationship_switch_confirmation: "switchConfirmation",
+  user_relationship_boundary_validation: "boundaryValidation",
+  user_relationship_config_update: "configUpdate",
+  user_relationship_config_output: "configOutput",
+};
+
+function withoutConfigVersionField(value: unknown) {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  return value.filter((field) => {
+    if (!isRecord(field)) {
+      return true;
+    }
+    return stringValue(field.field_key) !== "config_version" && stringValue(field.field_id) !== "config_version";
+  });
+}
+
+function replaceLayer11SemanticValue(value: unknown, replacements: Record<string, string>): unknown {
+  if (typeof value === "string") {
+    return replacements[value] ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceLayer11SemanticValue(item, replacements));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [replacements[key] ?? key, replaceLayer11SemanticValue(item, replacements)])
+  );
+}
+
+function ensureLayer11ListItems(value: unknown, items: string[]) {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  return [...new Set([...value, ...items])];
+}
+
+function normalizeLayer11SemanticFields(value: unknown, moduleId: string) {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  const additions = LAYER11_SEMANTIC_LIST_ADDITIONS[moduleId] ?? {};
+  return value.map((rawField) => {
+    if (!isRecord(rawField)) {
+      return rawField;
+    }
+    const fieldKey = stringValue(rawField.field_key) || stringValue(rawField.field_id);
+    let nextField = rawField;
+    if (fieldKey && additions[fieldKey]) {
+      const valueKey = "field_value" in rawField ? "field_value" : "value";
+      nextField = { ...nextField, [valueKey]: ensureLayer11ListItems(rawField[valueKey], additions[fieldKey]) };
+    }
+    if (moduleId === "role_positioning" && fieldKey === "trust_user_control_rules") {
+      const valueKey = "field_value" in rawField ? "field_value" : "value";
+      const current = isRecord(rawField[valueKey]) ? { ...rawField[valueKey] } : {};
+      delete current.trust_cannot_change_relationship_stage;
+      nextField = { ...nextField, [valueKey]: { ...LAYER11_TRUST_USER_CONTROL_DEFAULTS, ...current } };
+    }
+    return nextField;
+  });
+}
+
+function normalizeLayer11SemanticParams(params: Record<string, unknown>, moduleId: string, catalogNodeId: string) {
+  const replacements = LAYER11_SEMANTIC_REPLACEMENTS[moduleId];
+  if (!replacements) {
+    return params;
+  }
+  let nextParams = replaceLayer11SemanticValue(params, replacements) as Record<string, unknown>;
+  if ("fields" in nextParams) {
+    nextParams = { ...nextParams, fields: normalizeLayer11SemanticFields(nextParams.fields, moduleId) };
+  }
+  if (moduleId === "intimacy_level") {
+    if (catalogNodeId === "relationship_stage_progression_rule") {
+      nextParams = {
+        ...nextParams,
+        progression_conditions: ensureLayer11ListItems(nextParams.progression_conditions, ["established_rapport_requires_long_term_non_sensitive_evidence"]),
+        progression_evidence: ensureLayer11ListItems(nextParams.progression_evidence, ["established_rapport_collaboration_continuity"]),
+      };
+    }
+    if (catalogNodeId === "relationship_stage_boundary_validation") {
+      nextParams = {
+        ...nextParams,
+        validation_rules: ensureLayer11ListItems(nextParams.validation_rules, ["established_rapport_cannot_change_relationship_mode"]),
+      };
+    }
+  }
+  if (moduleId === "role_positioning" && catalogNodeId === "trust_boundary_validation") {
+    nextParams = {
+      ...nextParams,
+      validation_rules: ensureLayer11ListItems(nextParams.validation_rules, ["trust_user_control_rules_required"]),
+    };
+  }
+  if (moduleId === "relationship_rule" && catalogNodeId === "relationship_behavior_boundary_validation") {
+    nextParams = {
+      ...nextParams,
+      validation_rules: ensureLayer11ListItems(nextParams.validation_rules, [
+        "no_third_party_relationship_analysis",
+        "no_group_discussion_orchestration",
+        "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+      ]),
+    };
+  }
+  if (moduleId === "module_social") {
+    if (catalogNodeId === "social_conflict_multi_party_rule") {
+      nextParams = {
+        ...nextParams,
+        third_party_relationship_analysis_rules: ensureLayer11ListItems(nextParams.third_party_relationship_analysis_rules, additionsForLayer11SemanticField(moduleId, "third_party_relationship_analysis_rules")),
+      };
+    }
+    if (catalogNodeId === "social_network_boundary_validation") {
+      nextParams = {
+        ...nextParams,
+        validation_rules: ensureLayer11ListItems(nextParams.validation_rules, [
+          "no_active_group_turn_taking",
+          "no_multi_resident_orchestration",
+          "no_resident_user_conflict_repair_override",
+          "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+        ]),
+      };
+    }
+  }
+  if (moduleId === "interaction_history" && catalogNodeId === "group_relationship_boundary_validation") {
+    nextParams = {
+      ...nextParams,
+      validation_rules: ensureLayer11ListItems(nextParams.validation_rules, [
+        "no_private_third_party_profile_analysis",
+        "no_resident_user_relationship_repair_override",
+        "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+      ]),
+    };
+  }
+  return nextParams;
+}
+
+function additionsForLayer11SemanticField(moduleId: string, fieldKey: string) {
+  return LAYER11_SEMANTIC_LIST_ADDITIONS[moduleId]?.[fieldKey] ?? [];
+}
+
+function layer11P2FieldKey(field: Record<string, unknown>) {
+  return stringValue(field.field_key) || stringValue(field.field_id);
+}
+
+function layer11P2I18nSuffix(fieldKey: string) {
+  return fieldKey.replace(/_([a-z0-9])/g, (_, character: string) => character.toUpperCase());
+}
+
+function layer11P2Description(value: unknown) {
+  const description = stringValue(value).replace(/。+$/, "");
+  if (description.includes("本字段属于静态配置")) {
+    return `${description}。`;
+  }
+  return `${description}。不负责当前运行状态、实时判断或实际操作。本字段属于静态配置，不保存当前状态。`;
+}
+
+function normalizeLayer11P2FieldDefinitions(value: unknown, moduleId: string) {
+  if (!Array.isArray(value)) {
+    return [] as Record<string, unknown>[];
+  }
+  const prefix = LAYER11_P2_I18N_PREFIX[moduleId] ?? "";
+  return value
+    .filter(isRecord)
+    .filter((field) => layer11P2FieldKey(field) !== "config_version")
+    .map((field) => {
+      const fieldKey = layer11P2FieldKey(field);
+      const i18n = isRecord(field.i18n_keys) ? field.i18n_keys : {};
+      const suffix = layer11P2I18nSuffix(fieldKey);
+      return {
+        ...field,
+        field_key: fieldKey,
+        description: LAYER11_REVIEW_FIELD_DESCRIPTIONS[moduleId]?.[fieldKey] ?? layer11P2Description(field.description),
+        i18n_keys: {
+          ...i18n,
+          label: stringValue(i18n.label) || `${prefix}.field.${suffix}.label`,
+          description: stringValue(i18n.description) || `${prefix}.field.${suffix}.description`,
+        },
+      };
+    });
+}
+
+function materializeLayer11P2Fields(fieldRegistry: Record<string, unknown>[], inputFields: unknown) {
+  const values = new Map(
+    (Array.isArray(inputFields) ? inputFields : [])
+      .filter(isRecord)
+      .map((field) => [layer11P2FieldKey(field), "field_value" in field ? field.field_value : field.value])
+  );
+  return fieldRegistry.map((field) => ({
+    ...Object.fromEntries(Object.entries(field).filter(([key]) => key !== "owner_node_id" && key !== "field_value")),
+    field_value: values.has(layer11P2FieldKey(field)) ? values.get(layer11P2FieldKey(field)) : field.field_value ?? "",
+  }));
+}
+
+function layer11P2ValidationRules(moduleId: string, nodeId: string, value: unknown) {
+  if (moduleId === "user_relationship") {
+    return nodeId.endsWith("boundary_validation")
+      ? ["required_fields_present", "field_structure_valid", "field_types_valid", "forbidden_rules_valid", "no_layer1_identity_redefinition", "no_layer3_safety_boundary_override", "no_automatic_relationship_mode_switch", "no_runtime_relationship_state_transition"]
+      : ["relationship_switch_requires_explicit_user_request", "user_can_revoke_or_restore_default_relationship", "relationship_switch_cannot_change_identity_core"];
+  }
+  const terminal = nodeId.endsWith("boundary_validation");
+  if (terminal) {
+    return [...LAYER11_REVIEW_BASE_VALIDATION_RULES, ...(LAYER11_REVIEW_MODULE_VALIDATION_RULES[moduleId] ?? [])];
+  }
+  const rules = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return [...new Set(rules.filter((rule) => !rule.toLowerCase().includes("forbidden")))];
+}
+
+function layer11P2UpdatePolicy(value: unknown) {
+  const existing = isRecord(value) ? value : {};
+  const cleaned = Object.fromEntries(
+    Object.entries(existing).filter(([key]) => !["confirmed_legal_config_only", "requires_revalidation", "no_runtime_capability"].includes(key))
+  );
+  return {
+    ...cleaned,
+    confirmed_validated_config_only: true,
+    requires_revalidation_after_update: true,
+    requires_recompile: true,
+    no_runtime_state_write: true,
+  };
+}
+
+function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, ModuleInstance>): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (identity.layerId !== "layer_11" || !LAYER11_P2_MODULE_IDS.has(identity.moduleId)) {
+    return null;
+  }
+  const prefix = LAYER11_P2_I18N_PREFIX[identity.moduleId] ?? "";
+  const schemaNodes = graph.nodes
+    .map((node) => schemaNodeRecord(node))
+    .filter((node): node is WorkflowNode => Boolean(node));
+  const inputNode = schemaNodes.find((node) => String(schemaDataRecord(node).node_type || node.type || "") === "text_input");
+  const inputData = inputNode ? schemaDataRecord(inputNode) : {};
+  const inputParams = isRecord(inputData.params) ? inputData.params : {};
+  const definitionSource = Array.isArray(inputParams.field_registry) && inputParams.field_registry.length ? inputParams.field_registry : inputParams.fields;
+  const registryFields = normalizeLayer11P2FieldDefinitions(definitionSource, identity.moduleId).map((field) => ({
+    ...Object.fromEntries(Object.entries(field).filter(([key]) => key !== "field_value")),
+    owner_node_id: inputNode?.node_id ?? "",
+  }));
+  const fields = materializeLayer11P2Fields(registryFields, inputParams.fields);
+  const fieldKeys = registryFields.map(layer11P2FieldKey).filter(Boolean);
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) return nextNode;
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? data.params : {};
+    const nodeType = String(data.node_type || schemaNode.type || "");
+    const nodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    const nodeI18n = isRecord(data.i18n_keys) ? data.i18n_keys : {};
+    let nextParams: Record<string, unknown> | null = null;
+
+    if (nodeType === "text_input") {
+      nextParams = {
+        mode: "generic_fields",
+        fields,
+        field_registry: registryFields,
+        config_mode: "static_config",
+        i18n_keys: {
+          title: stringValue(nodeI18n.name),
+          description: stringValue(nodeI18n.description),
+        },
+        ...(stringValue(params.text) ? { text: stringValue(params.text) } : {}),
+      };
+      data.fields = fields;
+    } else if (nodeType === "structure_normalize") {
+      nextParams = {
+        input: params.input ?? "",
+        normalize_rules: Array.isArray(params.normalize_rules) ? [...new Set(params.normalize_rules.filter((item): item is string => typeof item === "string"))] : [],
+        outputs: fieldKeys,
+      };
+    } else if (nodeType === "validation") {
+      nextParams = {
+        input: params.input ?? "",
+        required_fields: fieldKeys,
+        validation_rules: layer11P2ValidationRules(identity.moduleId, nodeId, params.validation_rules),
+        validation_outputs: LAYER11_P2_VALIDATION_OUTPUTS,
+      };
+    } else if (nodeType === "update_rule") {
+      nextParams = {
+        input: params.input ?? "",
+        update_policy: layer11P2UpdatePolicy(params.update_policy),
+        config_version: "0.1",
+      };
+    } else if (nodeType === "module_output") {
+      const outputKey = stringValue(params.output_key);
+      nextParams = {
+        input: params.input ?? "",
+        output_key: outputKey,
+        output_schema: { type: "object", required: true, fields: [...fieldKeys, ...LAYER11_P2_VALIDATION_OUTPUTS, "config_version"] },
+        i18n_keys: {
+          title: stringValue(nodeI18n.name),
+          description: stringValue(nodeI18n.description),
+        },
+      };
+      const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+      const output = outputKey && isRecord(outputs[outputKey]) ? { ...outputs[outputKey] } : {};
+      if (outputKey) {
+        delete output.config_version;
+        data.outputs = {
+          ...outputs,
+          [outputKey]: {
+            ...output,
+            validation_status: "warning",
+            risk_items: ["validation_not_executed"],
+            correction_suggestions: ["run_validation_before_use"],
+          },
+        };
+      }
+    }
+    if (nextParams) {
+      data.params = nextParams;
+    }
+    if (stableJson(data) !== stableJson(schemaDataRecord(schemaNode))) {
+      schemaNode.data = data;
+      changed = true;
+    }
+    return nextNode;
+  });
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
+function migrateLayer11SemanticGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  const replacements = identity.layerId === "layer_11" ? LAYER11_SEMANTIC_REPLACEMENTS[identity.moduleId] : undefined;
+  if (!replacements) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    const params = isRecord(data.params) ? data.params : {};
+    const nextParams = normalizeLayer11SemanticParams(params, identity.moduleId, catalogNodeId);
+    const nextData = replaceLayer11SemanticValue(data, replacements) as Record<string, unknown>;
+    nextData.params = nextParams;
+    nextData.fields = normalizeLayer11SemanticFields(nextData.fields, identity.moduleId);
+    if (stableJson(nextData) !== stableJson(data)) {
+      schemaNode.data = nextData;
+      changed = true;
+    }
+    return nextNode;
+  });
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
+function normalizeLayer11StaticConfigGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  const definition = identity.layerId === "layer_11" ? LAYER11_STATIC_CONFIG_MODULES[identity.moduleId as keyof typeof LAYER11_STATIC_CONFIG_MODULES] : undefined;
+  if (!definition) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    const params = isRecord(data.params) ? { ...data.params } : {};
+
+    if (catalogNodeId === definition.normalizeNodeId && "output_key" in params) {
+      delete params.output_key;
+      data.params = params;
+      changed = true;
+    }
+    if (catalogNodeId === definition.inputNodeId) {
+      let inputChanged = false;
+      for (const key of ["fields", "field_registry", "input_fields", "default_fields"] as const) {
+        const nextValue = withoutConfigVersionField(params[key]);
+        if (stableJson(nextValue) !== stableJson(params[key])) {
+          params[key] = nextValue;
+          inputChanged = true;
+        }
+        const nextDataValue = withoutConfigVersionField(data[key]);
+        if (stableJson(nextDataValue) !== stableJson(data[key])) {
+          data[key] = nextDataValue;
+          inputChanged = true;
+        }
+      }
+      if (inputChanged) {
+        data.params = params;
+        changed = true;
+      }
+    }
+    if (catalogNodeId === definition.updateNodeId && params.config_version !== "0.1") {
+      data.params = { ...params, config_version: "0.1" };
+      changed = true;
+    }
+    if (catalogNodeId === definition.outputNodeId) {
+      const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+      const existingOutput = outputs[definition.outputKey];
+      const output = isRecord(existingOutput) ? { ...existingOutput } : {};
+      if ("config_version" in output) {
+        delete output.config_version;
+        data.outputs = { ...outputs, [definition.outputKey]: output };
+        changed = true;
+      }
+    }
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
+function normalizeUserRelationshipUpdateParams(params: Record<string, unknown>) {
+  const updatePolicy = isRecord(params.update_policy) ? { ...params.update_policy } : {};
+  const auditMetadata = isRecord(params.audit_metadata) ? params.audit_metadata : {};
+  delete updatePolicy.confirmed_legal_config_only;
+  const ruleNames = Array.isArray(params.rule_names)
+    ? params.rule_names
+        .filter((rule): rule is string => typeof rule === "string" && Boolean(rule))
+        .map((rule) => (rule === "confirmed_legal_config_only" ? "confirmed_validated_config_only" : rule))
+    : [];
+  return {
+    ...params,
+    config_version: "0.1",
+    audit_metadata: {
+      ...auditMetadata,
+      updated_at: stringValue(auditMetadata.updated_at),
+      change_reason: stringValue(auditMetadata.change_reason),
+    },
+    rule_names: [...new Set([...ruleNames, "confirmed_validated_config_only"])],
+    update_policy: {
+      ...updatePolicy,
+      confirmed_validated_config_only: true,
+      requires_recompile: true,
+    },
+  };
+}
+
+function normalizeUserRelationshipOutput(outputs: Record<string, unknown>) {
+  const relationshipOutput = isRecord(outputs[USER_RELATIONSHIP_OUTPUT_KEY])
+    ? { ...outputs[USER_RELATIONSHIP_OUTPUT_KEY] }
+    : {};
+  if (stringValue(relationshipOutput.config_version) === "0.1" && USER_RELATIONSHIP_OUTPUT_KEY in outputs) {
+    return outputs;
+  }
+  relationshipOutput.config_version = "0.1";
+  return { ...outputs, [USER_RELATIONSHIP_OUTPUT_KEY]: relationshipOutput };
 }
 
 function legacyTextValue(data: Record<string, unknown>, params: Record<string, unknown>) {
@@ -1124,6 +1732,61 @@ function migrateEnvironmentFieldMappingsGraph(
   return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
+function migrateUserRelationshipConfigGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (identity.layerId !== USER_RELATIONSHIP_LAYER_ID || identity.moduleId !== USER_RELATIONSHIP_MODULE_ID) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return nextNode;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const catalogNodeId = String(data.catalog_node_id || schemaNode.node_id || "").split(MODULE_INSTANCE_SEPARATOR).pop() ?? "";
+    const i18nSuffix = USER_RELATIONSHIP_NODE_I18N_SUFFIX[catalogNodeId];
+    if (i18nSuffix) {
+      const nodeType = String(data.node_type || schemaNode.type || "");
+      const expectedI18n = {
+        name: `layer11.userRelationship.node.${i18nSuffix}.title`,
+        description: `layer11.userRelationship.node.${i18nSuffix}.description`,
+        type_name: `node.type.${nodeType}`,
+      };
+      const currentI18n = isRecord(data.i18n_keys) ? data.i18n_keys : {};
+      const nextI18n = { ...currentI18n, ...expectedI18n };
+      if (stableJson(currentI18n) !== stableJson(nextI18n)) {
+        data.i18n_keys = nextI18n;
+        changed = true;
+      }
+    }
+    if (catalogNodeId === USER_RELATIONSHIP_UPDATE_NODE_ID) {
+      const params = isRecord(data.params) ? { ...data.params } : {};
+      const nextParams = normalizeUserRelationshipUpdateParams(params);
+      if (stableJson(nextParams) !== stableJson(params)) {
+        data.params = nextParams;
+        changed = true;
+      }
+    }
+    if (catalogNodeId === USER_RELATIONSHIP_OUTPUT_NODE_ID) {
+      const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+      const nextOutputs = normalizeUserRelationshipOutput(outputs);
+      if (stableJson(nextOutputs) !== stableJson(outputs)) {
+        data.outputs = nextOutputs;
+        changed = true;
+      }
+    }
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
 function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
   if (!nodeIdMap.size) {
     return;
@@ -1208,7 +1871,63 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
   }
   const graphAfterEnvironmentMappingsMigration = environmentMappingsMigration ?? graphAfterMemoryRouterOperationsMigration;
-  const migratedGraph = migrateGenericFieldsGraph(graphAfterEnvironmentMappingsMigration, store.moduleInstanceRegistry);
+  const userRelationshipMigration = migrateUserRelationshipConfigGraph(graphAfterEnvironmentMappingsMigration, store.moduleInstanceRegistry);
+  if (userRelationshipMigration) {
+    store.updateModuleGraph(
+      userRelationshipMigration.moduleNodeId,
+      userRelationshipMigration.nodes,
+      userRelationshipMigration.edges,
+      userRelationshipMigration.viewport
+    );
+    saveModuleGraphState(userRelationshipMigration.moduleNodeId, userRelationshipMigration.nodes, userRelationshipMigration.edges);
+    console.log("[P1-BRIDGE] migrated user relationship configuration", {
+      moduleNodeId: userRelationshipMigration.moduleNodeId,
+    });
+  }
+  const graphAfterUserRelationshipMigration = userRelationshipMigration ?? graphAfterEnvironmentMappingsMigration;
+  const layer11StaticConfigMigration = normalizeLayer11StaticConfigGraph(graphAfterUserRelationshipMigration, store.moduleInstanceRegistry);
+  if (layer11StaticConfigMigration) {
+    store.updateModuleGraph(
+      layer11StaticConfigMigration.moduleNodeId,
+      layer11StaticConfigMigration.nodes,
+      layer11StaticConfigMigration.edges,
+      layer11StaticConfigMigration.viewport
+    );
+    saveModuleGraphState(layer11StaticConfigMigration.moduleNodeId, layer11StaticConfigMigration.nodes, layer11StaticConfigMigration.edges);
+    console.log("[P1-BRIDGE] normalized Layer 11 static configuration graph", {
+      moduleNodeId: layer11StaticConfigMigration.moduleNodeId,
+    });
+  }
+  const graphAfterLayer11StaticConfigMigration = layer11StaticConfigMigration ?? graphAfterUserRelationshipMigration;
+  const layer11SemanticMigration = migrateLayer11SemanticGraph(graphAfterLayer11StaticConfigMigration, store.moduleInstanceRegistry);
+  if (layer11SemanticMigration) {
+    store.updateModuleGraph(
+      layer11SemanticMigration.moduleNodeId,
+      layer11SemanticMigration.nodes,
+      layer11SemanticMigration.edges,
+      layer11SemanticMigration.viewport
+    );
+    saveModuleGraphState(layer11SemanticMigration.moduleNodeId, layer11SemanticMigration.nodes, layer11SemanticMigration.edges);
+    console.log("[P1-BRIDGE] migrated Layer 11 semantic configuration", {
+      moduleNodeId: layer11SemanticMigration.moduleNodeId,
+    });
+  }
+  const graphAfterLayer11SemanticMigration = layer11SemanticMigration ?? graphAfterLayer11StaticConfigMigration;
+  const layer11P2Migration = migrateLayer11P2Graph(graphAfterLayer11SemanticMigration, store.moduleInstanceRegistry);
+  if (layer11P2Migration) {
+    store.updateModuleGraph(
+      layer11P2Migration.moduleNodeId,
+      layer11P2Migration.nodes,
+      layer11P2Migration.edges,
+      layer11P2Migration.viewport
+    );
+    saveModuleGraphState(layer11P2Migration.moduleNodeId, layer11P2Migration.nodes, layer11P2Migration.edges);
+    console.log("[P2-BRIDGE] normalized Layer 11 relationship configuration", {
+      moduleNodeId: layer11P2Migration.moduleNodeId,
+    });
+  }
+  const graphAfterLayer11P2Migration = layer11P2Migration ?? graphAfterLayer11SemanticMigration;
+  const migratedGraph = migrateGenericFieldsGraph(graphAfterLayer11P2Migration, store.moduleInstanceRegistry);
   if (migratedGraph) {
     store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
     saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
@@ -1217,7 +1936,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
     return migratedGraph;
   }
-  return graphAfterEnvironmentMappingsMigration;
+  return graphAfterLayer11SemanticMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {

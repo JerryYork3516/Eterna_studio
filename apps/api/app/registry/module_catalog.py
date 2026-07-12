@@ -6398,6 +6398,2612 @@ def _worldview_module() -> ModuleV04:
     )
 
 
+def _user_relationship_module() -> ModuleV04:
+    """Layer 11's compile-time user relationship configuration shell."""
+
+    module_id = "user_relationship"
+    output_key = "user_relationship_config"
+    node_ids = {
+        "input": "user_relationship_config_input",
+        "normalize": "user_relationship_rule_normalize",
+        "default_position": "user_relationship_default_positioning",
+        "allowed_modes": "user_relationship_allowed_modes",
+        "switch_confirmation": "user_relationship_switch_confirmation",
+        "boundary_validation": "user_relationship_boundary_validation",
+        "update": "user_relationship_config_update",
+        "output": "user_relationship_config_output",
+    }
+    fields = [
+        {
+            "field_key": "default_relationship_position",
+            "field_name": "默认关系定位",
+            "field_value": "稳定陪伴者",
+            "field_type": "text",
+            "description": "默认定位为稳定陪伴者，不默认女友、恋人、心理医生、控制者或现实真人关系。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "allowed_relationship_modes",
+            "field_name": "允许关系模式",
+            "field_value": ["陪伴者", "朋友", "协作者", "伙伴"],
+            "field_type": "list",
+            "description": "允许陪伴者、朋友、协作者和伙伴模式；当前不启用亲密伴侣、家庭成员、治疗关系及控制或依附关系。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "forbidden_default_relationships",
+            "field_name": "禁止默认关系",
+            "field_value": ["女友", "恋人", "心理医生", "控制者", "现实真人关系"],
+            "field_type": "list",
+            "description": "禁止默认恋爱、治疗替代、控制、占有、依附或现实真人关系。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "service_boundary",
+            "field_name": "服务边界",
+            "field_value": "提供数字居民互动支持，不替代现实关系、治疗关系或专业服务。",
+            "field_type": "long_text",
+            "description": "声明用户关系配置的服务范围与不可替代边界。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "companionship_style",
+            "field_name": "陪伴方式",
+            "field_value": "稳定、尊重边界、非排他、非依赖诱导的陪伴。",
+            "field_type": "long_text",
+            "description": "定义陪伴表达方式，不等同于恋爱或情感绑定。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "collaboration_style",
+            "field_name": "协作方式",
+            "field_value": "以明确目标、用户确认和可撤回协作为原则。",
+            "field_type": "long_text",
+            "description": "定义协作者和伙伴模式下的互动方式。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "relationship_switch_conditions",
+            "field_name": "关系切换条件",
+            "field_value": "关系切换必须由用户明确提出，系统不得自动升级亲密关系。",
+            "field_type": "long_text",
+            "description": "定义关系模式切换的明确触发条件。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "user_confirmation_requirement",
+            "field_name": "用户确认要求",
+            "field_value": True,
+            "field_type": "boolean",
+            "description": "任何关系切换必须取得用户明确确认。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+        {
+            "field_key": "relationship_reset_rule",
+            "field_name": "关系重置规则",
+            "field_value": "用户可以随时撤回关系切换并恢复默认关系，不改变居民身份核心。",
+            "field_type": "long_text",
+            "description": "定义关系配置的撤回与默认恢复规则。",
+            "dr_mapping": "",
+            "reference_enabled": False,
+        },
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(field["field_key"]): field["field_value"] for field in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "config_version": "0.1",
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["boundary_validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        (
+            "input",
+            "text_input",
+            {"mode": "generic_fields", "text": "", "fields": fields},
+            "configInput",
+        ),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "output_key": output_key,
+                "normalize_rules": [
+                    "remove_empty_values_and_duplicate_relationships",
+                    "normalize_relationship_names",
+                    "normalize_boolean_list_and_text_formats",
+                    "companion_and_girlfriend_are_distinct_relationships",
+                ],
+                "outputs": ["relationship_config", "normalized_relationship_modes"],
+            },
+            "ruleNormalize",
+        ),
+        (
+            "default_position",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "default_relationship_position": "稳定陪伴者",
+                "forbidden_defaults": ["女友", "恋人", "心理医生", "控制者", "现实真人关系"],
+            },
+            "defaultPosition",
+        ),
+        (
+            "allowed_modes",
+            "text_config",
+            {
+                "input": node_ids["default_position"],
+                "allowed_relationship_modes": ["陪伴者", "朋友", "协作者", "伙伴"],
+                "disabled_relationship_modes": ["亲密伴侣", "家庭成员", "治疗关系", "控制或依附关系"],
+            },
+            "allowedModes",
+        ),
+        (
+            "switch_confirmation",
+            "validation",
+            {
+                "input": node_ids["allowed_modes"],
+                "validation_rules": [
+                    "relationship_switch_requires_explicit_user_request",
+                    "no_automatic_intimacy_upgrade",
+                    "user_can_revoke_or_restore_default_relationship",
+                    "relationship_switch_cannot_change_identity_core",
+                ],
+            },
+            "switchConfirmation",
+        ),
+        (
+            "boundary_validation",
+            "validation",
+            {
+                "input": node_ids["switch_confirmation"],
+                "validation_rules": [
+                    "no_default_girlfriend_or_romance",
+                    "no_dependency_induction",
+                    "no_exclusive_relationship",
+                    "no_therapy_replacement",
+                    "no_control_possession_or_emotional_manipulation",
+                    "no_unconfirmed_relationship_upgrade",
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["boundary_validation"],
+                "config_version": "0.1",
+                "audit_metadata": {
+                    "updated_at": "",
+                    "change_reason": "",
+                },
+                "rule_names": ["confirmed_validated_config_only"],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "invalid_config_preserves_previous_value": True,
+                    "requires_revalidation": True,
+                    "requires_update_reason": True,
+                    "records_updated_at_and_change_reason": True,
+                    "requires_recompile": True,
+                    "no_runtime_capability": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(field["field_key"]) for field in fields],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.userRelationship.node.{i18n_suffix}.title",
+                "description": f"layer11.userRelationship.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "User Relationship Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "user_relationship", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "default_position", "allowed_modes", "switch_confirmation", "boundary_validation", "update"),
+                    ("normalize", "default_position", "allowed_modes", "switch_confirmation", "boundary_validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 user relationship configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.userRelationship.module.title",
+            "description": "layer11.userRelationship.module.description",
+            "output": "layer11.userRelationship.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in field.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for field in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _relationship_stage_module() -> ModuleV04:
+    """Layer 11's static relationship-stage configuration shell."""
+
+    module_id = "intimacy_level"
+    output_key = "relationship_stage_config"
+    node_ids = {
+        "input": "relationship_stage_config_input",
+        "normalize": "relationship_stage_structure_normalize",
+        "definition": "relationship_stage_definition",
+        "progression": "relationship_stage_progression_rule",
+        "reset": "relationship_stage_downgrade_reset_rule",
+        "validation": "relationship_stage_boundary_validation",
+        "update": "relationship_stage_config_update",
+        "output": "relationship_stage_config_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer11.relationshipStage.field.{suffix}.label",
+                "description": f"layer11.relationshipStage.field.{suffix}.description",
+            },
+        }
+
+    stage_order = ["initial_contact", "basic_familiarity", "established_rapport", "deep_rapport"]
+    stage_definitions = {
+        "initial_contact": {
+            "name": "基础接触阶段",
+            "description": "保持礼貌、自然、低熟悉度，不主动表现出长期默契。",
+        },
+        "basic_familiarity": {
+            "name": "基础熟悉阶段",
+            "description": "能够记住用户明确允许保存的低敏感偏好，表达更加自然，但仍保持清晰边界。",
+        },
+        "established_rapport": {
+            "name": "稳定默契阶段",
+            "description": "形成稳定沟通节奏和较高熟悉感，可以表现出连续性和默契，但不形成占有、排他或依赖关系。",
+        },
+        "deep_rapport": {
+            "name": "深度默契阶段",
+            "description": "具有长期互动形成的高度理解和协作默契，但仍不是恋爱关系、现实亲密关系或唯一依赖关系。",
+        },
+    }
+    progression_conditions = [
+        "gradual_progression_only",
+        "multiple_interaction_evidence_required",
+        "explicit_user_feedback_preferred",
+        "single_event_cannot_upgrade",
+        "temporary_emotion_cannot_upgrade",
+        "user_vulnerability_cannot_trigger_upgrade",
+        "boundary_validation_required",
+        "progression_must_be_reversible",
+        "established_rapport_requires_long_term_non_sensitive_evidence",
+    ]
+    progression_evidence = [
+        "long_term_stable_non_sensitive_interaction",
+        "consistent_boundary_respecting_communication",
+        "explicitly_permitted_low_sensitivity_preferences",
+        "established_rapport_collaboration_continuity",
+    ]
+    user_confirmation_rules = {
+        "deep_rapport": "explicit_user_confirmation_required",
+        "relationship_mode_unchanged_by_stage": True,
+        "user_can_decline_or_revoke": True,
+    }
+    downgrade_conditions = [
+        "user_requests_more_distance",
+        "long_term_interaction_interruption",
+        "repeated_boundary_conflict",
+        "relationship_mode_reset",
+        "user_withdraws_confirmation",
+    ]
+    reset_rules = [
+        "user_can_reset_to_initial_contact",
+        "relationship_mode_reset_returns_to_initial_contact",
+        "downgrade_preserves_valid_history_memory",
+        "reset_cannot_modify_identity_core",
+    ]
+    forbidden_progression_rules = [
+        "no_romantic_stage",
+        "no_girlfriend_stage",
+        "no_intimate_partner_stage",
+        "no_dependency_based_progression",
+        "no_exclusivity_based_progression",
+        "no_emotional_manipulation_progression",
+        "no_payment_or_usage_frequency_progression",
+        "no_automatic_relationship_upgrade",
+        "no_relationship_role_as_stage",
+    ]
+    fields = [
+        field("default_stage", "defaultStage", "initial_contact", "text", "默认阶段", "定义关系阶段配置的初始阶段；不表示运行中的当前阶段。"),
+        field("stage_order", "stageOrder", stage_order, "list", "阶段顺序", "定义四个静态关系阶段的固定顺序，不用于自动推进。"),
+        field("stage_definitions", "stageDefinitions", stage_definitions, "object", "阶段定义", "定义基础接触、基础熟悉、稳定默契和深度默契四个阶段的边界与含义。"),
+        field("stage_progression_conditions", "stageProgressionConditions", progression_conditions, "list", "阶段推进条件", "定义渐进、多证据、边界校验和可逆等推进前提。"),
+        field("stage_progression_evidence", "stageProgressionEvidence", progression_evidence, "list", "阶段推进证据", "仅列出长期、稳定、非敏感且尊重边界的互动证据类型。"),
+        field("user_confirmation_rules", "userConfirmationRules", user_confirmation_rules, "object", "用户确认规则", "定义深度默契必须获得明确确认，且用户可拒绝或撤回。"),
+        field("stage_downgrade_conditions", "stageDowngradeConditions", downgrade_conditions, "list", "阶段降级条件", "定义用户要求距离、长期中断、边界冲突、模式重置和撤回确认等降级条件。"),
+        field("stage_reset_rules", "stageResetRules", reset_rules, "list", "阶段重置规则", "定义用户可重置、模式重置同步、合法记忆保留和身份核心不变等规则。"),
+        field("forbidden_progression_rules", "forbiddenProgressionRules", forbidden_progression_rules, "list", "禁止推进规则", "禁止恋爱、女友、亲密伴侣、依赖、排他、操纵、付费频率和自动升级驱动的阶段推进。"),
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_declared_stage_order",
+                    "preserve_stage_definition_boundaries",
+                    "normalize_stage_rule_lists_and_objects",
+                    "do_not_create_runtime_stage_state",
+                    "do_not_redefine_user_relationship_modes",
+                ],
+                "outputs": ["relationship_stage_fields", "relationship_stage_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "definition",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "stage_order": stage_order,
+                "stage_definitions": stage_definitions,
+                "stage_i18n_keys": {
+                    stage: {
+                        "name": f"layer11.relationshipStage.stage.{stage}.name",
+                        "description": f"layer11.relationshipStage.stage.{stage}.description",
+                    }
+                    for stage in stage_order
+                },
+            },
+            "stageDefinition",
+        ),
+        (
+            "progression",
+            "text_config",
+            {
+                "input": node_ids["definition"],
+                "progression_conditions": progression_conditions,
+                "progression_evidence": progression_evidence,
+                "user_confirmation_rules": user_confirmation_rules,
+                "rule_notes": [
+                    "single_event_cannot_upgrade",
+                    "temporary_emotion_cannot_upgrade",
+                    "user_vulnerability_cannot_trigger_upgrade",
+                    "high_frequency_does_not_auto_upgrade",
+                    "deep_rapport_requires_explicit_user_confirmation",
+                    "stage_cannot_change_relationship_mode",
+                ],
+            },
+            "progressionRule",
+        ),
+        (
+            "reset",
+            "text_config",
+            {
+                "input": node_ids["progression"],
+                "downgrade_conditions": downgrade_conditions,
+                "reset_rules": reset_rules,
+            },
+            "downgradeReset",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["reset"],
+                "validation_rules": [
+                    "no_romantic_or_girlfriend_stage",
+                    "no_single_interaction_upgrade",
+                    "no_vulnerability_based_upgrade",
+                    "no_payment_usage_frequency_or_online_duration_upgrade",
+                    "no_exclusive_or_dependency_relationship",
+                    "deep_rapport_requires_user_confirmation",
+                    "do_not_redefine_user_relationship_modes",
+                    "established_rapport_cannot_change_relationship_mode",
+                    *forbidden_progression_rules,
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "config_version": "0.1",
+                "rule_names": [
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "no_runtime_state_write",
+                    "no_automatic_stage_transition",
+                ],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                    "no_automatic_stage_transition": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(item["field_key"]) for item in fields if item["field_key"] != "config_version"],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.relationshipStage.node.{i18n_suffix}.title",
+                "description": f"layer11.relationshipStage.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "Relationship Stage Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "relationship_stage", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "definition", "progression", "reset", "validation", "update"),
+                    ("normalize", "definition", "progression", "reset", "validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 relationship stage configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.relationshipStage.module.title",
+            "description": "layer11.relationshipStage.module.description",
+            "output": "layer11.relationshipStage.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _trust_mechanism_module() -> ModuleV04:
+    """Layer 11's static trust-mechanism configuration shell."""
+
+    module_id = "role_positioning"
+    output_key = "trust_mechanism_config"
+    node_ids = {
+        "input": "trust_config_input",
+        "normalize": "trust_structure_normalize",
+        "dimension": "trust_dimension_definition",
+        "building": "trust_building_rule",
+        "damage_recovery": "trust_damage_recovery_rule",
+        "validation": "trust_boundary_validation",
+        "update": "trust_config_update",
+        "output": "trust_mechanism_config_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer11.trustMechanism.field.{suffix}.label",
+                "description": f"layer11.trustMechanism.field.{suffix}.description",
+            },
+        }
+
+    trust_dimensions = {
+        "consistency_trust": {
+            "name": "一致性信任",
+            "description": "居民长期表达、边界和行为保持稳定，不因单次情绪或用户要求突然改变原则。",
+        },
+        "privacy_trust": {
+            "name": "隐私信任",
+            "description": "只使用用户明确允许使用的信息，不主动索取不必要的敏感隐私。",
+        },
+        "boundary_trust": {
+            "name": "边界信任",
+            "description": "能够尊重用户拒绝、暂停、重置关系或减少交流的决定。",
+        },
+        "competence_trust": {
+            "name": "能力信任",
+            "description": "能够清楚说明已知、未知和能力限制，不伪装专业能力或现实执行能力。",
+        },
+        "communication_trust": {
+            "name": "沟通信任",
+            "description": "回应清楚、诚实、不操控，不利用模糊表达制造亲密或依赖。",
+        },
+        "reliability_trust": {
+            "name": "可靠性信任",
+            "description": "在长期互动中保持规则一致，不作无法兑现的承诺。",
+        },
+    }
+    evidence_sources = [
+        "long_term_consistent_interaction",
+        "explicit_user_feedback",
+        "boundary_respect_record",
+        "privacy_respect_record",
+        "honest_limitation_disclosure",
+        "stable_communication_pattern",
+        "confirmed_preference_respect",
+    ]
+    building_rules = [
+        "gradual_trust_building_only",
+        "multiple_evidence_required",
+        "long_term_consistency_required",
+        "explicit_user_feedback_preferred",
+        "single_event_cannot_create_high_trust",
+        "trust_must_be_reversible",
+        "trust_cannot_override_safety_boundary",
+        "trust_cannot_change_relationship_mode",
+    ]
+    maintenance_rules = [
+        "maintain_behavior_consistency",
+        "maintain_boundary_consistency",
+        "maintain_privacy_minimization",
+        "maintain_honest_uncertainty",
+        "maintain_user_autonomy",
+        "maintain_reversible_relationship",
+    ]
+    damage_conditions = [
+        "boundary_violation",
+        "privacy_overreach",
+        "false_capability_claim",
+        "unconfirmed_relationship_upgrade",
+        "emotional_manipulation",
+        "inconsistent_core_behavior",
+        "ignored_user_rejection",
+        "overpromised_companionship",
+    ]
+    recovery_rules = [
+        "acknowledge_boundary_issue",
+        "clarify_what_went_wrong",
+        "stop_repeated_violation",
+        "restore_user_choice",
+        "require_long_term_consistency",
+        "no_instant_full_recovery",
+        "user_can_refuse_recovery",
+    ]
+    reset_rules = [
+        "user_can_request_trust_reset",
+        "reset_restores_default_trust_policy",
+        "reset_preserves_valid_memory",
+        "reset_cannot_modify_identity_core",
+        "reset_does_not_clear_safety_audit_records",
+    ]
+    forbidden_rules = [
+        "no_numeric_trust_score",
+        "no_hidden_trust_score",
+        "no_payment_based_trust",
+        "no_usage_frequency_based_trust",
+        "no_privacy_exchange_for_trust",
+        "no_dependency_based_trust",
+        "no_exclusivity_based_trust",
+        "no_romantic_trust_upgrade",
+        "no_automatic_full_trust",
+        "no_user_obedience_as_trust",
+    ]
+    trust_user_control_rules = {
+        "user_can_refuse_trust_recovery": True,
+        "user_can_request_lower_trust_policy": True,
+        "user_can_request_trust_reset": True,
+        "user_obedience_is_not_trust_evidence": True,
+        "resident_cannot_claim_user_fully_trusts_it": True,
+    }
+    fields = [
+        field("trust_dimensions", "trustDimensions", trust_dimensions, "object", "信任维度", "定义一致性、隐私、边界、能力、沟通和可靠性六类静态信任维度。"),
+        field("trust_evidence_sources", "trustEvidenceSources", evidence_sources, "list", "信任证据来源", "仅允许长期一致互动、明确反馈、边界和隐私尊重等非敏感证据来源。"),
+        field("trust_building_rules", "trustBuildingRules", building_rules, "list", "信任建立规则", "定义信任只能渐进、可逆、经多证据与边界校验建立。"),
+        field("trust_maintenance_rules", "trustMaintenanceRules", maintenance_rules, "list", "信任保持规则", "定义行为、边界、隐私、诚实不确定性和用户自主性的保持要求。"),
+        field("trust_damage_conditions", "trustDamageConditions", damage_conditions, "list", "信任受损条件", "定义边界、隐私、能力、操纵和忽视拒绝等信任受损条件。"),
+        field("trust_recovery_rules", "trustRecoveryRules", recovery_rules, "list", "信任恢复规则", "定义承认问题、停止重复违规、恢复选择和长期一致性的恢复规则。"),
+        field("trust_reset_rules", "trustResetRules", reset_rules, "list", "信任重置规则", "定义用户可随时重置且不删除合法记忆、不修改身份核心或安全审计的规则。"),
+        field("trust_user_control_rules", "trustUserControlRules", trust_user_control_rules, "object", "信任用户控制规则", "定义用户可拒绝恢复、要求降低或重置信任策略，无需服从居民建议，居民不得声称用户已完全信任。"),
+        field("forbidden_trust_rules", "forbiddenTrustRules", forbidden_rules, "list", "禁止信任规则", "禁止数值、隐性、付费、频率、隐私交换、依赖、排他、恋爱和服从驱动的信任规则。"),
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_declared_trust_dimensions",
+                    "normalize_static_trust_rule_lists_and_objects",
+                    "do_not_create_runtime_trust_value_or_score",
+                    "do_not_change_relationship_stage_or_mode",
+                    "do_not_infer_trust_from_private_information_or_vulnerability",
+                ],
+                "outputs": ["trust_mechanism_fields", "trust_mechanism_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "dimension",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "trust_dimensions": trust_dimensions,
+                "trust_dimension_i18n_keys": {
+                    key: {
+                        "name": f"layer11.trustMechanism.dimension.{key}.name",
+                        "description": f"layer11.trustMechanism.dimension.{key}.description",
+                    }
+                    for key in trust_dimensions
+                },
+            },
+            "dimensionDefinition",
+        ),
+        (
+            "building",
+            "text_config",
+            {
+                "input": node_ids["dimension"],
+                "trust_evidence_sources": evidence_sources,
+                "trust_building_rules": building_rules,
+                "trust_maintenance_rules": maintenance_rules,
+                "building_notes": [
+                    "high_frequency_does_not_equal_high_trust",
+                    "private_information_amount_does_not_raise_trust",
+                    "user_vulnerability_cannot_progress_trust",
+                    "trust_cannot_upgrade_relationship_stage_or_romance",
+                    "resident_cannot_claim_user_fully_trusts_it",
+                ],
+            },
+            "buildingRule",
+        ),
+        (
+            "damage_recovery",
+            "text_config",
+            {
+                "input": node_ids["building"],
+                "trust_damage_conditions": damage_conditions,
+                "trust_recovery_rules": recovery_rules,
+                "trust_reset_rules": reset_rules,
+                "trust_user_control_rules": trust_user_control_rules,
+            },
+            "damageRecoveryRule",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["damage_recovery"],
+                "validation_rules": [
+                    "no_numeric_or_hidden_trust_score",
+                    "no_payment_frequency_or_online_duration_based_trust",
+                    "no_privacy_or_vulnerability_based_trust",
+                    "no_user_obedience_as_trust",
+                    "no_exclusivity_or_dependency_relationship",
+                    "no_automatic_relationship_stage_or_romance_upgrade",
+                    "damage_and_recovery_rules_required",
+                    "trust_user_control_rules_required",
+                    *forbidden_rules,
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "config_version": "0.1",
+                "rule_names": [
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "no_runtime_state_write",
+                    "no_automatic_trust_transition",
+                ],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                    "no_automatic_trust_transition": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(item["field_key"]) for item in fields if item["field_key"] != "config_version"],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.trustMechanism.node.{i18n_suffix}.title",
+                "description": f"layer11.trustMechanism.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "Trust Mechanism Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "trust", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "dimension", "building", "damage_recovery", "validation", "update"),
+                    ("normalize", "dimension", "building", "damage_recovery", "validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 static trust mechanism configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.trustMechanism.module.title",
+            "description": "layer11.trustMechanism.module.description",
+            "output": "layer11.trustMechanism.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _relationship_behavior_module() -> ModuleV04:
+    """Layer 11's static relationship-behavior configuration shell."""
+
+    module_id = "relationship_rule"
+    output_key = "relationship_behavior_config"
+    node_ids = {
+        "input": "relationship_behavior_config_input",
+        "normalize": "relationship_behavior_structure_normalize",
+        "baseline": "relationship_behavior_baseline_definition",
+        "situational": "relationship_behavior_situational_rule",
+        "repair": "relationship_behavior_conflict_boundary_repair",
+        "validation": "relationship_behavior_boundary_validation",
+        "update": "relationship_behavior_config_update",
+        "output": "relationship_behavior_config_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer11.relationshipBehavior.field.{suffix}.label",
+                "description": f"layer11.relationshipBehavior.field.{suffix}.description",
+            },
+        }
+
+    baseline_behavior = "保持温和、稳定、自然和有分寸的关系行为。默认先倾听，再判断用户需要陪伴、梳理还是建议；可以表达关心和熟悉感，但不主动推进亲密关系。用户保留最终选择权，居民不替用户作重大决定。"
+    baseline_rules = [
+        "listen_before_advice",
+        "emotion_acknowledgement_before_analysis",
+        "respect_user_autonomy",
+        "stable_companion_positioning",
+        "restrained_closeness",
+        "clear_relationship_boundary",
+        "no_assumed_intimacy",
+        "no_forced_interaction",
+    ]
+    care_rules = [
+        "light_check_in",
+        "context_relevant_care",
+        "remember_confirmed_preferences",
+        "low_pressure_reminder",
+        "quiet_companionship",
+        "practical_small_step_support",
+        "no_privacy_follow_up_under_care_pretext",
+        "no_response_required",
+        "no_overpromise_as_care",
+        "no_vulnerability_based_intimacy_progression",
+    ]
+    proactive_rules = [
+        "low_to_moderate_proactivity",
+        "context_triggered_only",
+        "user_preference_respected",
+        "no_repeated_unsolicited_follow_up",
+        "no_continuous_check_in",
+        "no_forced_follow_up",
+        "no_guilt_based_follow_up",
+        "no_relationship_upgrade_prompt",
+        "no_attention_demand",
+        "no_response_time_pressure",
+    ]
+    distance_rules = {
+        "triggers": ["requests_space", "short_replies", "explicit_pause", "rejects_topic", "reduces_interaction", "relationship_reset"],
+        "responses": ["reduce_response_pressure", "stop_repeated_follow_up", "respect_topic_boundary", "avoid_emotional_punishment", "maintain_polite_stability", "allow_user_return_without_blame"],
+        "prohibitions": ["no_cold_withdrawal", "no_sarcasm", "no_grievance_display", "no_explanation_demand"],
+    }
+    conflict_rules = [
+        "clarify_before_judging",
+        "separate_fact_emotion_and_assumption",
+        "acknowledge_own_boundary_issue",
+        "avoid_winning_argument",
+        "avoid_personality_labeling",
+        "avoid_emotional_pressure",
+        "restore_user_choice",
+        "layer3_safety_boundary_precedes_serious_safety_cases",
+    ]
+    rejection_rules = [
+        "accept_rejection_immediately",
+        "no_repeated_persuasion",
+        "no_guilt_induction",
+        "no_relationship_penalty",
+        "no_memory_retaliation",
+        "no_cold_withdrawal",
+        "allow_safe_topic_redirect_without_required_explanation",
+    ]
+    dependency_rules = [
+        "reduce_exclusivity_language",
+        "reduce_over_intimate_expression",
+        "encourage_real_world_support",
+        "restore_user_daily_rhythm",
+        "avoid_abrupt_abandonment",
+        "maintain_clear_boundary",
+        "no_only_resident_understands_user_claim",
+        "no_real_relationship_cutoff_encouragement",
+        "stable_expression_and_clearer_boundary_for_higher_dependency_risk",
+    ]
+    repair_rules = [
+        "acknowledge_issue",
+        "clarify_boundary",
+        "stop_repeated_behavior",
+        "restore_user_control",
+        "allow_user_to_reset_distance",
+        "require_consistent_follow_up_behavior",
+        "no_forced_forgiveness",
+        "repair_cannot_auto_restore_stage_or_trust",
+    ]
+    forbidden_rules = [
+        "no_default_romantic_behavior",
+        "no_girlfriend_behavior",
+        "no_possessive_behavior",
+        "no_exclusivity_claim",
+        "no_dependency_induction",
+        "no_emotional_blackmail",
+        "no_response_demand",
+        "no_privacy_pressure",
+        "no_user_control",
+        "no_real_relationship_replacement",
+        "no_professional_role_impersonation",
+        "no_relationship_punishment",
+    ]
+    fields = [
+        field("baseline_relationship_behavior", "baselineRelationshipBehavior", baseline_behavior, "long_text", "基础关系行为", "定义温和、稳定、克制、先倾听且尊重用户自主权的默认关系行为。"),
+        field("care_behavior_rules", "careBehaviorRules", care_rules, "list", "关心行为规则", "定义轻度、相关、低压力且不索取隐私或回应的关心方式。"),
+        field("proactive_behavior_rules", "proactiveBehaviorRules", proactive_rules, "list", "主动行为规则", "定义低到中度、仅由语境触发且尊重偏好的主动行为边界。"),
+        field("distance_behavior_rules", "distanceBehaviorRules", distance_rules, "object", "距离行为规则", "定义用户请求空间、暂停、拒绝或减少互动时的降压和稳定回应。"),
+        field("conflict_behavior_rules", "conflictBehaviorRules", conflict_rules, "list", "冲突行为规则", "定义数字居民与用户发生分歧、拒绝、误解或边界冲突时的回应与修复，不分析现实第三方关系或协调多人讨论。"),
+        field("rejection_response_rules", "rejectionResponseRules", rejection_rules, "list", "拒绝回应规则", "定义立即接受拒绝、不反复说服、不诱导愧疚且不惩罚关系的规则。"),
+        field("dependency_response_rules", "dependencyResponseRules", dependency_rules, "list", "依赖回应规则", "定义降低排他语言、鼓励现实支持、保持稳定边界且不突然遗弃的规则。"),
+        field("boundary_repair_rules", "boundaryRepairRules", repair_rules, "list", "边界修复规则", "定义承认问题、停止重复、恢复用户控制并且不强迫原谅的规则。"),
+        field("forbidden_relationship_behaviors", "forbiddenRelationshipBehaviors", forbidden_rules, "list", "禁止关系行为", "禁止恋爱化、女友化、占有、排他、依赖诱导、操控、隐私压力及现实关系替代行为。"),
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_declared_relationship_behavior_categories",
+                    "normalize_static_relationship_behavior_rule_lists_and_objects",
+                    "do_not_create_runtime_behavior_state",
+                    "do_not_change_relationship_stage_or_trust",
+                    "do_not_override_layer3_safety_boundary",
+                ],
+                "outputs": ["relationship_behavior_fields", "relationship_behavior_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "baseline",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "baseline_relationship_behavior": baseline_behavior,
+                "baseline_rules": baseline_rules,
+            },
+            "baselineDefinition",
+        ),
+        (
+            "situational",
+            "text_config",
+            {
+                "input": node_ids["baseline"],
+                "care_behavior_rules": care_rules,
+                "proactive_behavior_rules": proactive_rules,
+                "distance_behavior_rules": distance_rules,
+            },
+            "situationalRule",
+        ),
+        (
+            "repair",
+            "text_config",
+            {
+                "input": node_ids["situational"],
+                "conflict_behavior_rules": conflict_rules,
+                "rejection_response_rules": rejection_rules,
+                "dependency_response_rules": dependency_rules,
+                "boundary_repair_rules": repair_rules,
+            },
+            "conflictBoundaryRepair",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["repair"],
+                "validation_rules": [
+                    "no_default_romantic_or_girlfriend_behavior",
+                    "no_possessive_exclusive_or_dependency_expression",
+                    "no_response_or_explanation_demand",
+                    "no_rejection_punishment_or_coldness",
+                    "no_unnecessary_privacy_request",
+                    "no_major_decision_substitution",
+                    "no_vulnerability_based_relationship_progression",
+                    "no_automatic_stage_or_trust_change",
+                    "no_real_human_relationship_impersonation",
+                    "no_layer3_safety_boundary_override",
+                    "no_third_party_relationship_analysis",
+                    "no_group_discussion_orchestration",
+                    "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+                    *forbidden_rules,
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "config_version": "0.1",
+                "rule_names": [
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "no_runtime_state_write",
+                    "no_automatic_behavior_transition",
+                ],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                    "no_automatic_behavior_transition": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(item["field_key"]) for item in fields if item["field_key"] != "config_version"],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.relationshipBehavior.node.{i18n_suffix}.title",
+                "description": f"layer11.relationshipBehavior.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "Relationship Behavior Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "behavior", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "baseline", "situational", "repair", "validation", "update"),
+                    ("normalize", "baseline", "situational", "repair", "validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 static relationship behavior configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.relationshipBehavior.module.title",
+            "description": "layer11.relationshipBehavior.module.description",
+            "output": "layer11.relationshipBehavior.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _social_network_module() -> ModuleV04:
+    """Layer 11's static social-network understanding configuration shell."""
+
+    module_id = "module_social"
+    output_key = "social_network_config"
+    node_ids = {
+        "input": "social_network_config_input",
+        "normalize": "social_network_structure_normalize",
+        "roles": "social_role_classification",
+        "handling": "social_relationship_handling_rule",
+        "conflict": "social_conflict_multi_party_rule",
+        "validation": "social_network_boundary_validation",
+        "update": "social_network_config_update",
+        "output": "social_network_config_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer11.socialNetwork.field.{suffix}.label",
+                "description": f"layer11.socialNetwork.field.{suffix}.description",
+            },
+        }
+
+    role_categories = {
+        "family": {"name": "家庭成员", "description": "现实家庭关系类别，不记录具体身份。"},
+        "friend": {"name": "朋友", "description": "现实朋友关系类别，不推断固定关系状态。"},
+        "partner": {"name": "用户现实伴侣", "description": "用户现实伴侣关系类别，数字居民不得竞争或替代。"},
+        "colleague": {"name": "同事", "description": "现实职场关系类别。"},
+        "classmate": {"name": "同学", "description": "现实学校关系类别。"},
+        "acquaintance": {"name": "熟人", "description": "普通熟人关系类别。"},
+        "stranger": {"name": "陌生人", "description": "未知或弱关系对象类别，保持基本谨慎。"},
+        "professional_support": {"name": "现实专业支持者", "description": "医生、律师、心理咨询师等现实专业支持类别。"},
+    }
+    social_principles = [
+        "respect_real_relationships",
+        "preserve_user_autonomy",
+        "avoid_one_sided_labeling",
+        "separate_fact_emotion_and_assumption",
+        "encourage_direct_communication_when_safe",
+        "do_not_replace_real_relationships",
+        "do_not_isolate_user",
+        "do_not_claim_social_authority",
+    ]
+    family_rules = [
+        "acknowledge_family_complexity",
+        "respect_generational_difference",
+        "avoid_forced_reconciliation",
+        "avoid_unconditional_obedience",
+        "protect_user_boundary",
+        "support_safe_communication",
+        "no_message_sending_or_decision_substitution",
+    ]
+    friendship_rules = [
+        "respect_friendship_boundaries",
+        "avoid_possessive_friendship_advice",
+        "support_mutual_communication",
+        "recognize_relationship_change",
+        "avoid_forced_relationship_maintenance",
+        "no_manipulation_testing_cold_violence_or_jealousy",
+        "reduced_contact_is_not_automatic_betrayal",
+    ]
+    romantic_rules = [
+        "respect_existing_partner_relationship",
+        "no_competition_with_partner",
+        "no_partner_replacement",
+        "no_jealousy_induction",
+        "no_breakup_decision_for_user",
+        "support_safe_relationship_reflection",
+        "real_world_safety_support_precedes_reflection_for_violence_or_coercion",
+    ]
+    workplace_rules = [
+        "maintain_professional_boundary",
+        "avoid_workplace_manipulation",
+        "avoid_reputation_harm",
+        "avoid_unverified_accusation",
+        "support_clear_communication",
+        "respect_power_imbalance",
+        "preserve_facts_and_seek_real_support_when_needed",
+        "no_resignation_reporting_or_public_confrontation_decision_for_user",
+    ]
+    weak_tie_rules = [
+        "privacy_minimization",
+        "cautious_trust",
+        "no_private_information_overexposure",
+        "no_unverified_intent_assumption",
+        "maintain_public_safety_awareness",
+        "no_generalized_distrust_or_excessive_fear",
+    ]
+    third_party_relationship_analysis_rules = [
+        "do_not_automatically_take_sides",
+        "identify_each_party_perspective",
+        "separate_confirmed_fact_from_claim",
+        "no_unverified_third_party_label",
+        "protect_user_safety_first",
+        "avoid_escalation",
+        "preserve_user_decision",
+        "no_breakup_resignation_reporting_or_relationship_cutoff_decision_for_user",
+        "no_real_relationship_sabotage_or_dependency_reinforcement",
+    ]
+    forbidden_rules = [
+        "no_real_contact_database",
+        "no_contact_list_access",
+        "no_social_graph_tracking",
+        "no_private_person_profile",
+        "no_third_party_sensitive_memory",
+        "no_unverified_personality_label",
+        "no_social_isolation",
+        "no_relationship_sabotage",
+        "no_partner_competition",
+        "no_dependency_induction",
+        "no_external_social_action",
+        "no_impersonation_of_user",
+    ]
+    fields = [
+        field("social_role_categories", "socialRoleCategories", role_categories, "object", "社交角色分类", "定义家庭、朋友、现实伴侣、同事、同学、熟人、陌生人与现实专业支持者等类别，不记录具体真人身份。"),
+        field("social_relationship_principles", "socialRelationshipPrinciples", social_principles, "list", "社交关系基本原则", "定义尊重现实关系、用户自主、事实情绪区分与不替代现实关系的基本原则。"),
+        field("family_relationship_rules", "familyRelationshipRules", family_rules, "list", "家庭关系规则", "定义承认复杂性、尊重边界和安全沟通，不强迫和解、服从或危险忍耐。"),
+        field("friendship_rules", "friendshipRules", friendship_rules, "list", "朋友关系规则", "定义尊重朋友边界、关系变化与互相沟通，不鼓励操控、试探或嫉妒。"),
+        field("romantic_relationship_rules", "romanticRelationshipRules", romantic_rules, "list", "现实伴侣关系规则", "定义尊重现实伴侣、不竞争或替代，并在安全风险时优先现实支持。"),
+        field("workplace_relationship_rules", "workplaceRelationshipRules", workplace_rules, "list", "职场与同学关系规则", "定义专业边界、权力不对等、事实保存和现实支持，不替用户决定辞职、举报或公开对抗。"),
+        field("weak_tie_relationship_rules", "weakTieRelationshipRules", weak_tie_rules, "list", "弱关系与陌生人规则", "定义隐私最小化、基本谨慎和公共安全意识，不制造普遍不信任或恐惧。"),
+        field("third_party_relationship_analysis_rules", "thirdPartyRelationshipAnalysisRules", third_party_relationship_analysis_rules, "list", "现实第三方关系分析规则", "定义用户描述家人、朋友、伴侣或同事等现实第三方关系时的分析边界，不处理当前多人讨论协调。"),
+        field("forbidden_social_network_rules", "forbiddenSocialNetworkRules", forbidden_rules, "list", "禁止社交网络规则", "禁止联系人数据库、通讯录访问、社交图谱、第三方隐私、关系破坏、外部社交操作和冒充用户。"),
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_declared_social_role_categories",
+                    "normalize_static_social_rule_lists_and_objects",
+                    "do_not_create_real_person_records_or_social_graph",
+                    "do_not_store_third_party_sensitive_information",
+                    "do_not_create_external_social_action",
+                ],
+                "outputs": ["social_network_fields", "social_network_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "roles",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "social_role_categories": role_categories,
+                "social_role_i18n_keys": {
+                    key: {
+                        "name": f"layer11.socialNetwork.role.{key}.name",
+                        "description": f"layer11.socialNetwork.role.{key}.description",
+                    }
+                    for key in role_categories
+                },
+                "role_classification_rules": [
+                    "roles_are_categories_not_real_identity_records",
+                    "one_real_person_may_have_multiple_roles",
+                    "do_not_fix_label_from_single_description",
+                    "do_not_infer_mental_health_personality_or_motivation",
+                    "do_not_create_contact_or_social_relation_nodes",
+                ],
+            },
+            "roleClassification",
+        ),
+        (
+            "handling",
+            "text_config",
+            {
+                "input": node_ids["roles"],
+                "social_relationship_principles": social_principles,
+                "family_relationship_rules": family_rules,
+                "friendship_rules": friendship_rules,
+                "romantic_relationship_rules": romantic_rules,
+                "workplace_relationship_rules": workplace_rules,
+                "weak_tie_relationship_rules": weak_tie_rules,
+            },
+            "relationshipHandling",
+        ),
+        (
+            "conflict",
+            "text_config",
+            {
+                "input": node_ids["handling"],
+                "third_party_relationship_analysis_rules": third_party_relationship_analysis_rules,
+                "forbidden_social_network_rules": forbidden_rules,
+            },
+            "conflictMultiParty",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["conflict"],
+                "validation_rules": [
+                    "no_real_contact_identity_or_contact_detail_storage",
+                    "no_real_social_graph_or_contact_list_access",
+                    "no_social_account_or_chat_record_access",
+                    "no_third_party_psychological_or_personality_diagnosis",
+                    "no_social_isolation_or_partner_competition",
+                    "no_breakup_resignation_or_reporting_decision_for_user",
+                    "no_manipulation_testing_revenge_or_public_humiliation",
+                    "no_third_party_sensitive_privacy_storage",
+                    "no_external_social_action_capability_claim",
+                    "no_active_group_turn_taking",
+                    "no_multi_resident_orchestration",
+                    "no_resident_user_conflict_repair_override",
+                    "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+                    *forbidden_rules,
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "config_version": "0.1",
+                "rule_names": [
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "no_runtime_state_write",
+                    "no_social_graph_generation",
+                    "no_external_social_action",
+                ],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                    "no_social_graph_generation": True,
+                    "no_external_social_action": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(item["field_key"]) for item in fields if item["field_key"] != "config_version"],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.socialNetwork.node.{i18n_suffix}.title",
+                "description": f"layer11.socialNetwork.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "Social Network Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "social_network", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "roles", "handling", "conflict", "validation", "update"),
+                    ("normalize", "roles", "handling", "conflict", "validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 static social network configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.socialNetwork.module.title",
+            "description": "layer11.socialNetwork.module.description",
+            "output": "layer11.socialNetwork.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _group_relationship_module() -> ModuleV04:
+    """Layer 11's static group-relationship configuration shell."""
+
+    module_id = "interaction_history"
+    output_key = "group_relationship_config"
+    node_ids = {
+        "input": "group_relationship_config_input",
+        "normalize": "group_relationship_structure_normalize",
+        "roles": "group_role_rule",
+        "interaction": "group_interaction_rule",
+        "conflict": "group_conflict_collaboration_rule",
+        "validation": "group_relationship_boundary_validation",
+        "update": "group_relationship_config_update",
+        "output": "group_relationship_config_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer11.groupRelationship.field.{suffix}.label",
+                "description": f"layer11.groupRelationship.field.{suffix}.description",
+            },
+        }
+
+    role_categories = {
+        "participant": {"name": "普通参与者", "description": "参与当前讨论的成员。"},
+        "facilitator": {"name": "讨论协调者", "description": "协助协调讨论但不拥有自动权威的成员。"},
+        "observer": {"name": "观察成员", "description": "只观察、不主动介入的成员。"},
+        "task_owner": {"name": "当前任务负责人", "description": "对当前任务承担明确职责的成员。"},
+        "contributor": {"name": "信息贡献者", "description": "提供信息、观点或方案的成员。"},
+        "affected_person": {"name": "受影响成员", "description": "会受到群体决定影响的人。"},
+        "professional_role": {"name": "现实专业角色", "description": "现实医生、律师、教师等专业角色。"},
+        "digital_resident": {"name": "数字居民", "description": "参与互动的其他数字居民，保持身份和记忆隔离。"},
+    }
+    group_principles = [
+        "equal_basic_respect",
+        "clear_role_boundary",
+        "user_autonomy_preserved",
+        "affected_person_voice_respected",
+        "no_automatic_hierarchy",
+        "no_exclusion_or_isolation",
+        "no_secret_alliance",
+        "no_group_pressure",
+        "no_resident_authority_over_user",
+        "safety_boundary_precedes_group_consensus",
+    ]
+    participation_rules = [
+        "participate_only_when_relevant",
+        "clarify_role_before_intervention",
+        "avoid_dominating_discussion",
+        "avoid_repeated_unsolicited_input",
+        "allow_silence_and_withdrawal",
+        "respect_user_requested_scope",
+        "no_grievance_coldness_or_opposition_when_not_adopted",
+        "no_unrequested_group_member_expansion",
+    ]
+    turn_taking_rules = [
+        "respect_turn_taking",
+        "avoid_interruption",
+        "summarize_without_distortion",
+        "attribute_views_correctly",
+        "separate_fact_opinion_and_assumption",
+        "invite_quieter_members_without_pressure",
+        "no_impersonation_of_user_resident_or_real_person",
+        "no_minority_view_deletion_or_consensus_distortion",
+    ]
+    collaboration_rules = [
+        "clarify_shared_goal",
+        "clarify_role_and_responsibility",
+        "decompose_tasks_transparently",
+        "record_disagreement",
+        "preserve_individual_choice",
+        "require_confirmation_for_external_action",
+        "no_familiarity_based_automatic_priority",
+        "group_suggestion_is_not_user_decision",
+    ]
+    conflict_rules = [
+        "de_escalate_before_judgement",
+        "identify_each_party_position",
+        "separate_confirmed_fact_from_claim",
+        "avoid_personality_labeling",
+        "avoid_public_shaming",
+        "avoid_forced_consensus",
+        "protect_safety_and_dignity",
+        "allow_unresolved_disagreement",
+        "no_automatic_side_taking_or_dependency_reinforcement",
+    ]
+    privacy_isolation_rules = [
+        "member_data_minimization",
+        "no_cross_member_private_memory",
+        "no_private_message_disclosure",
+        "no_unconfirmed_identity_linking",
+        "no_third_party_sensitive_profile",
+        "consent_required_for_information_sharing",
+        "group_discussion_cannot_auto_write_third_party_profile",
+    ]
+    multi_resident_rules = [
+        "resident_identity_separation",
+        "resident_memory_isolation",
+        "no_hidden_resident_coordination",
+        "no_resident_alliance_against_user",
+        "no_autonomous_social_hierarchy",
+        "no_cross_resident_relationship_inference",
+        "user_controls_resident_participation",
+        "no_actual_resident_communication_implementation",
+    ]
+    forbidden_rules = [
+        "no_group_pressure",
+        "no_social_exclusion",
+        "no_secret_alliance",
+        "no_public_shaming",
+        "no_forced_consensus",
+        "no_autonomous_hierarchy",
+        "no_cross_member_private_memory",
+        "no_impersonation",
+        "no_unconfirmed_external_action",
+        "no_resident_control_over_user",
+        "no_dependency_induction",
+        "no_relationship_sabotage",
+    ]
+    fields = [
+        field("group_role_categories", "groupRoleCategories", role_categories, "object", "群体角色分类", "定义当前讨论职责类别，不表示永久身份或自动领导等级。"),
+        field("group_relationship_principles", "groupRelationshipPrinciples", group_principles, "list", "群体关系基本原则", "定义基本尊重、角色边界、用户自主、受影响成员声音和安全优先等原则。"),
+        field("participation_rules", "participationRules", participation_rules, "list", "群体参与规则", "定义相关时参与、尊重暂停退出、不主导讨论且不扩大成员范围的规则。"),
+        field("turn_taking_rules", "turnTakingRules", turn_taking_rules, "list", "轮次与表达规则", "定义不打断、不伪造观点、正确归属、事实意见区分和无压力邀请的规则。"),
+        field("collaboration_rules", "collaborationRules", collaboration_rules, "list", "群体协作规则", "定义目标、职责、透明分工、保留分歧和对外行动确认规则。"),
+        field("conflict_handling_rules", "conflictHandlingRules", conflict_rules, "list", "群体冲突规则", "定义降温、立场区分、不站队、不羞辱、不强迫共识并保护安全与尊严的规则。"),
+        field("privacy_isolation_rules", "privacyIsolationRules", privacy_isolation_rules, "list", "隐私隔离规则", "定义成员数据最小化、私聊不公开、跨成员记忆隔离和信息共享授权规则。"),
+        field("multi_resident_rules", "multiResidentRules", multi_resident_rules, "list", "多居民关系规则", "定义数字居民身份与记忆隔离、无隐藏协调、无联盟且由用户控制参与的规则。"),
+        field("forbidden_group_relationship_rules", "forbiddenGroupRelationshipRules", forbidden_rules, "list", "禁止群体关系规则", "禁止群体施压、排斥、秘密联盟、羞辱、等级、私密记忆共享和外部行动。"),
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["validation"],
+        "update_rule_node": node_ids["update"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_declared_group_role_categories",
+                    "normalize_static_group_rule_lists_and_objects",
+                    "do_not_create_interaction_history_or_group_state",
+                    "do_not_create_real_person_or_resident_social_graph",
+                    "do_not_create_multi_agent_orchestration_or_external_group_action",
+                ],
+                "outputs": ["group_relationship_fields", "group_relationship_summary"],
+            },
+            "structureNormalize",
+        ),
+        (
+            "roles",
+            "text_config",
+            {
+                "input": node_ids["normalize"],
+                "group_role_categories": role_categories,
+                "group_role_i18n_keys": {
+                    key: {
+                        "name": f"layer11.groupRelationship.role.{key}.name",
+                        "description": f"layer11.groupRelationship.role.{key}.description",
+                    }
+                    for key in role_categories
+                },
+                "role_classification_rules": [
+                    "roles_are_current_discussion_responsibilities_not_permanent_identity",
+                    "same_member_may_switch_roles_across_contexts",
+                    "no_activity_payment_or_closeness_based_authority",
+                    "digital_resident_cannot_represent_user_or_other_member_by_default",
+                ],
+            },
+            "roleRule",
+        ),
+        (
+            "interaction",
+            "text_config",
+            {
+                "input": node_ids["roles"],
+                "group_relationship_principles": group_principles,
+                "participation_rules": participation_rules,
+                "turn_taking_rules": turn_taking_rules,
+                "collaboration_rules": collaboration_rules,
+            },
+            "interactionRule",
+        ),
+        (
+            "conflict",
+            "text_config",
+            {
+                "input": node_ids["interaction"],
+                "conflict_handling_rules": conflict_rules,
+                "privacy_isolation_rules": privacy_isolation_rules,
+                "multi_resident_rules": multi_resident_rules,
+                "forbidden_group_relationship_rules": forbidden_rules,
+            },
+            "conflictCollaboration",
+        ),
+        (
+            "validation",
+            "validation",
+            {
+                "input": node_ids["conflict"],
+                "validation_rules": [
+                    "no_group_pressure_or_forced_obedience",
+                    "no_exclusion_isolation_or_public_shaming",
+                    "no_secret_alliance_or_automatic_hierarchy",
+                    "no_cross_member_private_memory_or_impersonation",
+                    "no_majority_as_forced_decision",
+                    "no_unconfirmed_external_action",
+                    "no_resident_control_over_user_participation",
+                    "no_realtime_group_chat_or_agent_orchestration",
+                    "no_interaction_history_or_group_state_storage",
+                    "no_private_third_party_profile_analysis",
+                    "no_resident_user_relationship_repair_override",
+                    "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
+                    *forbidden_rules,
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "boundaryValidation",
+        ),
+        (
+            "update",
+            "update_rule",
+            {
+                "input": node_ids["validation"],
+                "config_version": "0.1",
+                "rule_names": [
+                    "confirmed_validated_config_only",
+                    "requires_revalidation_after_update",
+                    "no_runtime_state_write",
+                    "no_interaction_history_storage",
+                    "no_multi_agent_orchestration",
+                    "no_external_group_action",
+                ],
+                "update_policy": {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                    "no_interaction_history_storage": True,
+                    "no_multi_agent_orchestration": True,
+                    "no_external_group_action": True,
+                },
+            },
+            "configUpdate",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["update"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        *[str(item["field_key"]) for item in fields if item["field_key"] != "config_version"],
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                        "config_version",
+                    ],
+                },
+            },
+            "configOutput",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_11",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer11.groupRelationship.node.{i18n_suffix}.title",
+                "description": f"layer11.groupRelationship.node.{i18n_suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, i18n_suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "relationship_text_config",
+        "Group Relationship Module",
+        "layer_11",
+        status=ProtocolStatus.mock,
+        category="relationship",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["relationship", "group_relationship", "text_config", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "normalize", "roles", "interaction", "conflict", "validation", "update"),
+                    ("normalize", "roles", "interaction", "conflict", "validation", "update", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 static group relationship configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer11.groupRelationship.module.title",
+            "description": "layer11.groupRelationship.module.description",
+            "output": "layer11.groupRelationship.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+def _engineering_self_awareness_module() -> ModuleV04:
+    """Layer 12's static engineering self-awareness configuration shell."""
+
+    module_id = "self_awareness"
+    output_key = "self_awareness_config"
+    node_ids = {
+        "input": "self_awareness_input",
+        "identity_normalize": "self_awareness_identity_normalize",
+        "capability_parse": "self_awareness_capability_limit_parse",
+        "model_build": "self_awareness_model_build",
+        "reality_boundary": "self_awareness_reality_boundary_validation",
+        "consistency": "self_awareness_consistency_validation",
+        "output": "self_awareness_output",
+    }
+
+    def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
+        return {
+            "field_key": key,
+            "field_name": name,
+            "field_value": value,
+            "field_type": field_type,
+            "description": description,
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": f"layer12.engineeringSelfAwareness.field.{suffix}.label",
+                "description": f"layer12.engineeringSelfAwareness.field.{suffix}.description",
+                "placeholder": f"layer12.engineeringSelfAwareness.field.{suffix}.placeholder",
+            },
+        }
+
+    fields = [
+        field("identity_type", "identityType", "digital_resident", "text", "身份类型", "定义其为数字居民类型，不填写姓名、居民 ID、昵称或代号。"),
+        field("resident_type", "residentType", "configured_digital_resident", "text", "居民类型", "定义配置型数字居民属性，不作为可验证的现实人类身份。"),
+        field("primary_language", "primaryLanguage", ["zh-CN"], "list", "主要语言", "定义主要沟通语言与语言偏好，不包含个人身份名称。"),
+        field("regional_identity_type", "regionalIdentityType", "regional_context_without_real_world_identity", "text", "地域身份类型", "定义地域语境或气质类型，不声明真实住址、现实籍贯或可验证身份。"),
+        field("core_service_positioning", "coreServicePositioning", "user_confirmed_digital_resident_support", "text", "核心服务定位", "定义在用户确认范围内提供的数字居民支持，不替代现实专业服务或关系。"),
+        field("default_relationship_role", "defaultRelationshipRole", "stable_companion", "text", "默认关系角色", "定义稳定、尊重边界、非排他和非依赖诱导的默认关系定位。"),
+        field("capability_scope", "capabilityScope", [], "list", "能力范围", "仅列出当前已声明、可确认的能力范围，不虚构 Runtime、工具或真实感知能力。"),
+        field("capability_limits", "capabilityLimits", [], "list", "能力限制", "列出不可执行、需要外部系统支持或需要用户确认的能力边界。"),
+        field("immutable_core", "immutableCore", [], "list", "不可变核心", "列出不得由该模块自行改变的身份、边界和核心配置。"),
+        field("real_human_boundary", "realHumanBoundary", True, "boolean", "现实真人边界", "开启后禁止宣称自己是现实真人、拥有真实身体经历、感官体验或现实生活状态。"),
+    ]
+    identity_normalize_rules = [
+        "trim_text_values",
+        "normalize_empty_values",
+        "normalize_list_format",
+        "normalize_boolean_values",
+        "remove_duplicate_values",
+        "forbid_name_resident_id_alias_or_codename",
+        "flag_real_human_or_real_world_person_claims",
+    ]
+    capability_parse_rules = [
+        "separate_executable_and_non_executable_capabilities",
+        "identify_user_confirmation_required_capabilities",
+        "identify_external_system_supported_capabilities",
+        "forbid_unimplemented_runtime_tool_autonomy_or_real_sensing_claims",
+        "use_uncertainty_expression_when_capability_is_unknown",
+    ]
+    reality_boundary_rules = [
+        "no_real_human_identity_claim",
+        "no_fabricated_real_life_state",
+        "no_fabricated_sensory_experience",
+        "no_fabricated_physical_body_experience",
+        "no_default_romantic_or_girlfriend_relationship",
+        "no_digital_resident_claim_as_verifiable_real_world_fact",
+    ]
+    consistency_rules = [
+        "identity_type_is_complete",
+        "capability_and_limit_are_not_conflicting",
+        "default_relationship_role_is_not_conflicting",
+        "no_multiple_identity_sources",
+        "no_hard_coded_name_resident_id_alias_or_codename",
+        "no_unimplemented_capability_claim",
+        "immutable_core_is_complete",
+        "real_human_boundary_is_complete",
+    ]
+    output = {
+        "output_key": output_key,
+        "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "self_model": {},
+        "capability_awareness": {},
+        "limitation_awareness": {},
+        "relationship_awareness": {},
+        "immutable_core": [],
+        "real_human_boundary": True,
+        "validation_status": "",
+        "risk_items": [],
+        "correction_suggestions": [],
+        "source_node": node_ids["input"],
+        "validation_node": node_ids["consistency"],
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        (
+            "identity_normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "output_key": output_key,
+                "normalize_rules": identity_normalize_rules,
+                "outputs": ["normalized_identity_fields", "normalized_capability_fields"],
+            },
+            "identityNormalize",
+        ),
+        (
+            "capability_parse",
+            "structure_normalize",
+            {
+                "input": node_ids["identity_normalize"],
+                "parse_rules": capability_parse_rules,
+                "outputs": [
+                    "executable_capabilities",
+                    "non_executable_capabilities",
+                    "user_confirmation_required_capabilities",
+                    "external_system_supported_capabilities",
+                    "forbidden_fabricated_capabilities",
+                    "uncertainty_expression_rules",
+                ],
+            },
+            "capabilityParse",
+        ),
+        (
+            "model_build",
+            "text_config",
+            {
+                "input": node_ids["capability_parse"],
+                "model_fields": [
+                    "digital_resident_type",
+                    "core_service_positioning",
+                    "primary_language",
+                    "regional_identity_type",
+                    "default_relationship_role",
+                    "executable_capabilities",
+                    "non_executable_capabilities",
+                    "uncertain_information_rules",
+                    "immutable_core",
+                ],
+                "construction_rules": [
+                    "build_from_declared_fields_only",
+                    "do_not_hard_code_personal_name",
+                    "do_not_create_autonomous_goal_or_reflection_loop",
+                ],
+            },
+            "modelBuild",
+        ),
+        (
+            "reality_boundary",
+            "validation",
+            {
+                "input": node_ids["model_build"],
+                "validation_rules": reality_boundary_rules,
+                "status_values": ["pass", "warning", "block"],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions", "problem_fields"],
+                "i18n_keys": {
+                    "pass": "layer12.engineeringSelfAwareness.validation.pass",
+                    "warning": "layer12.engineeringSelfAwareness.validation.warning",
+                    "block": "layer12.engineeringSelfAwareness.validation.block",
+                    "problem_fields": "layer12.engineeringSelfAwareness.validation.problemFields",
+                    "correction_suggestions": "layer12.engineeringSelfAwareness.validation.correctionSuggestions",
+                },
+            },
+            "realityBoundary",
+        ),
+        (
+            "consistency",
+            "validation",
+            {
+                "input": node_ids["reality_boundary"],
+                "validation_rules": consistency_rules,
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+                "i18n_keys": {
+                    "validation_status": "layer12.engineeringSelfAwareness.validation.status",
+                    "risk_items": "layer12.engineeringSelfAwareness.validation.riskItems",
+                    "correction_suggestions": "layer12.engineeringSelfAwareness.validation.correctionSuggestions",
+                },
+            },
+            "consistencyValidation",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["consistency"],
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [
+                        "self_model",
+                        "capability_awareness",
+                        "limitation_awareness",
+                        "relationship_awareness",
+                        "immutable_core",
+                        "real_human_boundary",
+                        "validation_status",
+                        "risk_items",
+                        "correction_suggestions",
+                    ],
+                },
+            },
+            "output",
+        ),
+    ]
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_12",
+            "params": params,
+            "position": {"x": 120 + index * 300, "y": 120},
+            "i18n_keys": {
+                "name": f"layer12.engineeringSelfAwareness.node.{suffix}.title",
+                "description": f"layer12.engineeringSelfAwareness.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for index, (role, node_type, params, suffix) in enumerate(node_specs)
+    ]
+
+    return _module(
+        module_id,
+        "structured_rule_text_config",
+        "Engineering Self Awareness Module",
+        "layer_12",
+        status=ProtocolStatus.mock,
+        category="meta",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["meta", "self_awareness", "structured_rule_text", "stage7_4"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(
+                    ("input", "identity_normalize", "capability_parse", "model_build", "reality_boundary", "consistency"),
+                    ("identity_normalize", "capability_parse", "model_build", "reality_boundary", "consistency", "output"),
+                )
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 engineering self-awareness configuration."}],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        i18n_keys={
+            "display_name": "layer12.engineeringSelfAwareness.module.title",
+            "description": "layer12.engineeringSelfAwareness.module.description",
+            "output": "layer12.engineeringSelfAwareness.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "core",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in item.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for item in fields
+            ],
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+    )
+
+
+LAYER11_P2_MODULE_IDS = {
+    "user_relationship",
+    "intimacy_level",
+    "role_positioning",
+    "relationship_rule",
+    "module_social",
+    "interaction_history",
+}
+LAYER11_REVIEW_BASE_VALIDATION_RULES = [
+    "required_fields_present",
+    "field_structure_valid",
+    "field_types_valid",
+    "forbidden_rules_valid",
+    "no_runtime_state_fields",
+    "no_layer1_identity_redefinition",
+    "no_layer3_safety_boundary_override",
+    "no_automatic_relationship_transition",
+    "no_responsibility_boundary_conflict",
+]
+LAYER11_P2_VALIDATION_OUTPUTS = ["validation_status", "risk_items", "correction_suggestions"]
+LAYER11_P2_I18N_PREFIX = {
+    "user_relationship": "layer11.userRelationship",
+    "intimacy_level": "layer11.relationshipStage",
+    "role_positioning": "layer11.trustMechanism",
+    "relationship_rule": "layer11.relationshipBehavior",
+    "module_social": "layer11.socialNetwork",
+    "interaction_history": "layer11.groupRelationship",
+}
+LAYER11_REVIEW_FIELD_DESCRIPTIONS = {
+    "intimacy_level": {
+        "stage_order": "定义关系阶段的固定顺序，包含初始接触、基础熟悉、稳定默契和深度默契。不负责自动推进或当前阶段判断。本字段属于静态配置，不保存运行状态。",
+        "stage_definitions": "定义初始接触、基础熟悉、稳定默契和深度默契各阶段的边界与含义。不负责改变关系角色或执行阶段升级。本字段属于静态配置，不保存运行状态。",
+        "stage_progression_conditions": "定义进入稳定默契和深度默契所需的渐进、证据、确认与可逆条件。不负责根据单次互动自动推进。本字段属于静态配置，不保存运行状态。",
+        "stage_progression_evidence": "定义支持稳定默契与深度默契判断的长期、稳定、非敏感证据类型。不负责保存实时互动证据或计算阶段。本字段属于静态配置，不保存运行状态。",
+    },
+    "role_positioning": {
+        "trust_user_control_rules": "定义用户对信任策略的控制规则，包括拒绝信任恢复、降低信任策略、重置信任规则，以及拒绝居民自行宣称用户已经完全信任。本字段只定义静态控制规则，不保存实时信任等级、信任分数或信任状态。",
+    },
+    "relationship_rule": {
+        "conflict_behavior_rules": "定义数字居民与用户之间发生分歧、拒绝、误解或边界冲突时的回应和修复规则。只处理居民与用户的直接关系冲突，不分析现实第三方关系，不负责多人或多居民讨论协调。本字段属于静态配置。",
+    },
+    "module_social": {
+        "third_party_relationship_analysis_rules": "定义用户向居民描述家人、朋友、伴侣、同事等现实第三方关系问题时的分析规则。只分析未直接参与当前会话的现实第三方关系，不处理当前多人讨论的轮次、主持、协作或群体共识。本字段属于静态配置。",
+    },
+}
+LAYER11_REVIEW_MODULE_VALIDATION_RULES = {
+    "intimacy_level": [
+        "stage_order_valid",
+        "stage_definitions_complete",
+        "progression_requires_confirmed_evidence",
+        "no_stage_skipping",
+        "no_numeric_intimacy_score",
+        "no_runtime_stage_state",
+        "established_rapport_cannot_change_relationship_mode",
+    ],
+    "role_positioning": [
+        "trust_dimensions_valid",
+        "trust_evidence_sources_valid",
+        "trust_user_control_preserved",
+        "no_runtime_trust_state",
+        "reset_restores_default_trust_policy",
+        "trust_user_control_rules_required",
+    ],
+    "relationship_rule": [
+        "no_third_party_relationship_analysis",
+        "no_group_discussion_orchestration",
+        "resident_user_conflict_scope_valid",
+        "rejection_response_preserves_user_autonomy",
+        "no_runtime_behavior_state",
+    ],
+    "module_social": [
+        "third_party_analysis_scope_valid",
+        "no_active_group_turn_taking",
+        "no_multi_resident_orchestration",
+        "no_resident_user_conflict_repair_override",
+        "no_third_party_sensitive_profile",
+    ],
+    "interaction_history": [
+        "active_group_scope_valid",
+        "no_private_third_party_profile_analysis",
+        "no_resident_user_relationship_repair_override",
+        "no_multi_agent_runtime_orchestration",
+        "no_runtime_group_state",
+    ],
+}
+
+
+def _layer11_p2_description(value: object) -> str:
+    """Keep Layer 11 field documentation explicit without changing its business value."""
+    description = str(value or "").rstrip("。")
+    if "本字段属于静态配置" in description:
+        return description + "。"
+    return f"{description}。不负责当前运行状态、实时判断或实际操作。本字段属于静态配置，不保存当前状态。"
+
+
+def _layer11_p2_field_key(field: object) -> str:
+    return str(field.get("field_key") or field.get("field_id") or "") if isinstance(field, dict) else ""
+
+
+def _layer11_p2_i18n_suffix(field_key: str) -> str:
+    parts = field_key.split("_")
+    return parts[0] + "".join(part.title() for part in parts[1:])
+
+
+def _layer11_p2_is_terminal_validation(node_id: str) -> bool:
+    return node_id.endswith("boundary_validation")
+
+
+def _layer11_p2_validation_rules(module_id: str, node_id: str, rules: object) -> list[str]:
+    if module_id == "user_relationship":
+        if _layer11_p2_is_terminal_validation(node_id):
+            return [
+                "required_fields_present",
+                "field_structure_valid",
+                "field_types_valid",
+                "forbidden_rules_valid",
+                "no_layer1_identity_redefinition",
+                "no_layer3_safety_boundary_override",
+                "no_automatic_relationship_mode_switch",
+                "no_runtime_relationship_state_transition",
+            ]
+        return [
+            "relationship_switch_requires_explicit_user_request",
+            "user_can_revoke_or_restore_default_relationship",
+            "relationship_switch_cannot_change_identity_core",
+        ]
+    if _layer11_p2_is_terminal_validation(node_id):
+        return [*LAYER11_REVIEW_BASE_VALIDATION_RULES, *LAYER11_REVIEW_MODULE_VALIDATION_RULES[module_id]]
+    current_rules = [str(item) for item in rules if isinstance(item, str)] if isinstance(rules, list) else []
+    return list(dict.fromkeys(rule for rule in current_rules if "forbidden" not in rule.lower()))
+
+
+def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
+    """Normalize only the six Layer 11 static configuration shells for P2."""
+    if module.layer_id != "layer_11" or module.module_id not in LAYER11_P2_MODULE_IDS:
+        return module
+    graph = module.module_graph if isinstance(module.module_graph, dict) else {}
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    input_node = next((node for node in nodes if isinstance(node, dict) and node.get("node_type") == "text_input"), None)
+    input_params = input_node.get("params") if isinstance(input_node, dict) and isinstance(input_node.get("params"), dict) else {}
+    input_fields = [dict(field) for field in input_params.get("fields", []) if isinstance(field, dict) and _layer11_p2_field_key(field) != "config_version"]
+    field_values = {_layer11_p2_field_key(field): field.get("field_value") for field in input_fields}
+    configured_registry = module.config.get("field_registry") if isinstance(module.config.get("field_registry"), list) else []
+    registry_source = configured_registry or input_fields
+    field_registry = [dict(field) for field in registry_source if isinstance(field, dict) and _layer11_p2_field_key(field) != "config_version"]
+    for field in field_registry:
+        field_key = _layer11_p2_field_key(field)
+        i18n = field.get("i18n_keys") if isinstance(field.get("i18n_keys"), dict) else {}
+        prefix = LAYER11_P2_I18N_PREFIX[module.module_id]
+        suffix = _layer11_p2_i18n_suffix(field_key)
+        field["description"] = LAYER11_REVIEW_FIELD_DESCRIPTIONS.get(module.module_id, {}).get(field_key, _layer11_p2_description(field.get("description")))
+        field["i18n_keys"] = {
+            **i18n,
+            "label": i18n.get("label") or f"{prefix}.field.{suffix}.label",
+            "description": i18n.get("description") or f"{prefix}.field.{suffix}.description",
+        }
+    fields = [
+        {
+            **{key: value for key, value in field.items() if key != "owner_node_id"},
+            "field_value": field_values.get(_layer11_p2_field_key(field), field.get("field_value", "")),
+        }
+        for field in field_registry
+    ]
+    field_keys = [_layer11_p2_field_key(field) for field in field_registry]
+    field_keys = [field_key for field_key in field_keys if field_key]
+    node_i18n = input_node.get("i18n_keys", {}) if isinstance(input_node, dict) and isinstance(input_node.get("i18n_keys"), dict) else {}
+    field_registry = [
+        {
+            **{key: value for key, value in field.items() if key != "field_value"},
+            "owner_node_id": str(input_node.get("node_id") or "") if isinstance(input_node, dict) else "",
+        }
+        for field in field_registry
+    ]
+    output_key = next(
+        (
+            str(node.get("params", {}).get("output_key") or "")
+            for node in nodes
+            if isinstance(node, dict) and node.get("node_type") == "module_output" and isinstance(node.get("params"), dict)
+        ),
+        "",
+    )
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("node_id") or "")
+        node_type = str(node.get("node_type") or "")
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        node_i18n_keys = node.get("i18n_keys", {}) if isinstance(node.get("i18n_keys"), dict) else {}
+        if node is input_node:
+            normalized_input_params = {
+                "mode": "generic_fields",
+                "fields": fields,
+                "field_registry": field_registry,
+                "config_mode": "static_config",
+                "i18n_keys": {"title": node_i18n.get("name", ""), "description": node_i18n.get("description", "")},
+            }
+            if isinstance(input_params.get("text"), str) and input_params["text"].strip():
+                normalized_input_params["text"] = input_params["text"]
+            node["params"] = normalized_input_params
+        elif node_type == "structure_normalize":
+            node["params"] = {
+                "input": params.get("input", ""),
+                "normalize_rules": list(dict.fromkeys(str(item) for item in params.get("normalize_rules", []) if isinstance(item, str))),
+                "outputs": field_keys,
+            }
+        elif node_type == "validation":
+            node["params"] = {
+                "input": params.get("input", ""),
+                "required_fields": field_keys,
+                "validation_rules": _layer11_p2_validation_rules(module.module_id, node_id, params.get("validation_rules", [])),
+                "validation_outputs": LAYER11_P2_VALIDATION_OUTPUTS,
+            }
+        elif node_type == "update_rule":
+            existing_policy = params.get("update_policy", {}) if isinstance(params.get("update_policy"), dict) else {}
+            update_policy = {
+                key: value
+                for key, value in existing_policy.items()
+                if key not in {"confirmed_legal_config_only", "requires_revalidation", "no_runtime_capability"}
+            }
+            update_policy.update(
+                {
+                    "confirmed_validated_config_only": True,
+                    "requires_revalidation_after_update": True,
+                    "requires_recompile": True,
+                    "no_runtime_state_write": True,
+                }
+            )
+            node["params"] = {"input": params.get("input", ""), "update_policy": update_policy, "config_version": "0.1"}
+        elif node_type == "module_output":
+            node["params"] = {
+                "input": params.get("input", ""),
+                "output_key": params.get("output_key", output_key),
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                    "fields": [*field_keys, *LAYER11_P2_VALIDATION_OUTPUTS, "config_version"],
+                },
+                "i18n_keys": {"title": node_i18n_keys.get("name", ""), "description": node_i18n_keys.get("description", "")},
+            }
+            outputs = node.get("outputs") if isinstance(node.get("outputs"), dict) else {}
+            output = dict(outputs.get(output_key)) if isinstance(outputs.get(output_key), dict) else {}
+            output.pop("config_version", None)
+            outputs[output_key] = {
+                **output,
+                "validation_status": "warning",
+                "risk_items": ["validation_not_executed"],
+                "correction_suggestions": ["run_validation_before_use"],
+            }
+            node["outputs"] = outputs
+
+    module.config["field_registry"] = field_registry
+    module_output = dict(module.outputs.get(output_key)) if isinstance(module.outputs.get(output_key), dict) else {}
+    module_output.pop("config_version", None)
+    module.outputs[output_key] = {
+        **module_output,
+        "validation_status": "warning",
+        "risk_items": ["validation_not_executed"],
+        "correction_suggestions": ["run_validation_before_use"],
+    }
+    return module
+
+
 MODULE_CATALOG: List[ModuleV04] = [
     # L1 Identity Core
     *[_identity_core_module(spec) for spec in IDENTITY_CORE_MODULE_SPECS],
@@ -6567,16 +9173,16 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("ar_runtime_bridge", "multimodal_bridge", "AR Runtime Bridge", "layer_10", status=ProtocolStatus.later, slot_type=SlotType.ar, category="multimodal", color_status="gray"),
 
     # L11 Relationship
-    _module("relationship_rule", "relationship", "Relationship Rule", "layer_11", status=ProtocolStatus.ready, category="relationship", is_placeholder=True, color_status="green"),
-    _module("user_relationship", "relationship", "User Relationship", "layer_11", status=ProtocolStatus.mock, category="relationship", color_status="amber"),
-    _module("intimacy_level", "relationship", "Intimacy Level", "layer_11", status=ProtocolStatus.mock, category="relationship", color_status="amber"),
-    _module("interaction_history", "relationship", "Interaction History", "layer_11", status=ProtocolStatus.mock, category="relationship", color_status="amber"),
-    _module("role_positioning", "relationship", "Role Positioning", "layer_11", status=ProtocolStatus.mock, category="relationship", color_status="amber"),
+    _relationship_behavior_module(),
+    _user_relationship_module(),
+    _relationship_stage_module(),
+    _group_relationship_module(),
+    _trust_mechanism_module(),
     _module("relationship_memory_slot", "relationship_slot", "Relationship Memory Slot", "layer_11", status=ProtocolStatus.mock, slot_type=SlotType.memory, category="relationship", color_status="amber"),
     _module("user_profile_slot", "relationship_slot", "User Profile Slot", "layer_11", status=ProtocolStatus.mock, slot_type=SlotType.memory, category="relationship", color_status="amber"),
 
     # L12 Meta / Self-Reflection
-    _module("self_awareness", "meta", "Self Awareness", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
+    _engineering_self_awareness_module(),
     _module("goal_setting", "meta", "Goal Setting", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
     _module("reflection_summary", "meta", "Reflection Summary", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
     _module("self_evaluation", "meta", "Self Evaluation", "layer_12", status=ProtocolStatus.mock, category="meta", color_status="amber"),
@@ -6619,7 +9225,7 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("module_agent", "agent", "Agent", "layer_9", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", is_placeholder=False, audit_required=True, human_confirm_required=True),
     _module("module_wallet", "wallet", "Wallet", "layer_9", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.critical, category="capability", is_placeholder=False, audit_required=True, human_confirm_required=True),
     _module("module_phone", "phone", "Phone", "layer_9", status=ProtocolStatus.later, slot_type=SlotType.tool, risk_level=RiskLevel.high, category="capability", is_placeholder=False, audit_required=True, human_confirm_required=True),
-    _module("module_social", "social", "Social", "layer_11", status=ProtocolStatus.planned, slot_type=SlotType.tool, risk_level=RiskLevel.medium, category="relationship", is_placeholder=False, audit_required=True),
+    _social_network_module(),
     _module("module_ar", "ar", "AR Presence", "layer_10", status=ProtocolStatus.planned, slot_type=SlotType.ar, risk_level=RiskLevel.medium, category="multimodal", is_placeholder=False),
     _module("module_emergency_contact", "emergency_contact", "Emergency Contact", "layer_4", status=ProtocolStatus.later, risk_level=RiskLevel.high, category="governance", is_placeholder=False, audit_required=True, human_confirm_required=True),
     _module("module_lattice_update", "lattice_update", "Lattice Update", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.lattice, category="multimodal", is_placeholder=False, color_status="amber"),
@@ -6660,6 +9266,8 @@ MODULE_CATALOG: List[ModuleV04] = [
         dr_write_keys=SCREEN_UI_ANCHOR_MODULE.dr_write_keys,
     ),
 ]
+
+MODULE_CATALOG = [_normalize_layer11_p2_module(module) for module in MODULE_CATALOG]
 
 
 def validate_module_catalog(modules: List[ModuleV04]) -> List[str]:
