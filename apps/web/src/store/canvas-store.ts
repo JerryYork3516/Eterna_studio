@@ -121,16 +121,6 @@ function auditModuleEdges(module: Record<string, unknown>) {
     moduleNodesOf(module).map(nodeIdOf).filter(Boolean),
     moduleEdgesOf(module)
   );
-  if (integrity.pruned.length && process.env.NODE_ENV !== "production") {
-    for (const edge of integrity.pruned) {
-      console.warn("[MODULE_GRAPH_EDGE_PRUNED]", {
-        layer_id: moduleLayerIdOf(module),
-        module_id: moduleIdOf(module),
-        source: edge.source,
-        target: edge.target,
-      });
-    }
-  }
   return integrity.edges.filter(isRecord);
 }
 

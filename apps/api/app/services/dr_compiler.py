@@ -21,7 +21,9 @@ versions — never rename or remove. `DR_VERSION` gates the contract.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional
 
 from ..dr.v3.dr_v0_3_schema import (
@@ -89,8 +91,33 @@ from ..registry.module_catalog import (
     DECISION_BEHAVIOR_PRESET_ID,
     DETAIL_BEHAVIOR_MODULE_ID,
     DETAIL_BEHAVIOR_PRESET_ID,
+    EVENT_MEMORY_MODULE_ID,
+    EVENT_MEMORY_OUTPUT_KEY,
+    MEMORY_ACCESS_CONTROL_MODULE_ID,
+    MEMORY_ACCESS_CONTROL_OUTPUT_KEY,
+    MEMORY_RECALL_CLAIM_POLICY,
+    MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
+    MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
+    MEMORY_PROVIDER_ROUTER_MODULE_ID,
+    MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY,
+    MEMORY_PROVIDER_ROUTER_NODE_IDS,
+    MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES,
+    MEMORY_PROVIDER_ROUTER_OUTPUT_KEY,
+    MEMORY_UPDATE_MODULE_ID,
+    MEMORY_UPDATE_OUTPUT_KEY,
+    PREFERENCE_MEMORY_MODULE_ID,
+    PREFERENCE_MEMORY_OUTPUT_KEY,
+    RELATIONSHIP_MEMORY_MODULE_ID,
+    RELATIONSHIP_MEMORY_OUTPUT_KEY,
+    SHORT_TERM_MEMORY_MODULE_ID,
+    SHORT_TERM_MEMORY_OUTPUT_KEY,
 )
 from ..registry.slot_catalog import get_slot_catalog
+from ..dr.v2.validator.capability_validator import (
+    STAGE_7_4_REQUIRED_SLOT_TYPES,
+    build_v03_runtime_contract,
+    validate_v03_runtime_contract,
+)
 
 DR_VERSION = "0.1"
 FILE_TYPE = "digital_resident"
@@ -100,7 +127,6 @@ COMPILER_VERSION = "0.1.0"
 RUNTIME_VERSION = "resident_v1_mock"
 MIN_KERNEL = "6.1"
 STAGE_7_4_BASELINE_WORKFLOW_NAME = "Stage 7.4 Human Empathy DR Baseline"
-STAGE_7_4_REQUIRED_SLOT_TYPES = ["llm", "memory", "lattice", "voice"]
 _FORBIDDEN_STAGE_7_4_DOMAIN_FOCUS = {"ar", "tool", "screen_guidance", "provider", "cross_app_control"}
 
 # Allowed slot_types this stage (mock-only capability interfaces).
@@ -224,6 +250,107 @@ _LAYER8_BEHAVIOR_MODULES: tuple[tuple[str, str, str], ...] = (
 )
 _LAYER8_CORE_BEHAVIOR_MODULE_IDS = tuple(module_id for module_id, _policy_key, _preset_id in _LAYER8_BEHAVIOR_MODULES)
 _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
+_REFERENCE_FIELD_ALIASES = {
+    ("professional_boundary", "no_professional_judgement_replacement"): (
+        BEHAVIOR_SAFETY_MODULE_ID,
+        "real_world_decision_limits",
+    ),
+    ("dialogue_boundary", "forbidden_tone"): (
+        INTERACTION_SAFETY_MODULE_ID,
+        "forbidden_interactions",
+    ),
+    ("dialogue_boundary", "risk_response_boundary"): (RISK_RESPONSE_MODULE_ID, "risk_policy"),
+    ("dialogue_boundary", "relationship_boundary"): (
+        INTERACTION_SAFETY_MODULE_ID,
+        "non_romantic_default_boundary",
+    ),
+    ("expression_style", "expression_temperament"): ("expression_style", "tone_warmth"),
+    ("personality_traits", "core_personality"): ("personality_traits", "personality_base"),
+    (INTERACTION_SAFETY_MODULE_ID, "proactive_boundary"): (
+        BEHAVIOR_SAFETY_MODULE_ID,
+        "proactive_behavior_limits",
+    ),
+    ("relationship_rule", "default_relationship"): (
+        "relationship_rule",
+        "baseline_relationship_behavior",
+    ),
+    (INTERACTION_BEHAVIOR_MODULE_ID, "silence_companionship_style"): (
+        LANGUAGE_BEHAVIOR_MODULE_ID,
+        "comfort_expression_style",
+    ),
+    (DECISION_BEHAVIOR_MODULE_ID, "suggestion_output_format"): (
+        "behavior_style_mapper",
+        "suggestion_output_method",
+    ),
+    ("world_setting", "city_imagery"): ("expression_style", "city_imagery_rules"),
+    ("module_basic_identity", "role_positioning"): (
+        "module_identity_anchor",
+        "identity_definition",
+    ),
+    (MEMORY_ACCESS_CONTROL_MODULE_ID, "user_preferences"): (
+        PREFERENCE_MEMORY_MODULE_ID,
+        "preference_value",
+    ),
+    (TASK_BEHAVIOR_MODULE_ID, "suggestion_output_format"): (
+        "behavior_style_mapper",
+        "suggestion_output_method",
+    ),
+    ("visual_style", "visual_temperament"): ("personality_traits", "external_temperament"),
+    ("particle_avatar", "particle_state_hint"): ("emotion_pattern", "visual_cue_reserved"),
+    (MEMORY_ACCESS_CONTROL_MODULE_ID, "memorable_content"): (
+        EVENT_MEMORY_MODULE_ID,
+        "event_summary",
+    ),
+    ("world_setting", "life_scene"): ("environment_setting", "daily_living_environment"),
+    (LANGUAGE_BEHAVIOR_MODULE_ID, "output_expression"): (
+        LANGUAGE_BEHAVIOR_MODULE_ID,
+        "wording_habits",
+    ),
+    (INTERACTION_BEHAVIOR_MODULE_ID, "proactive_care_boundary"): (
+        "relationship_rule",
+        "proactive_behavior_rules",
+    ),
+}
+_REFERENCE_TARGET_ID_STEMS = {
+    (BEHAVIOR_SAFETY_MODULE_ID, "real_world_decision_limits"): "humanistic_behavior_boundary_real_world_decision_limits",
+    (INTERACTION_SAFETY_MODULE_ID, "forbidden_interactions"): "humanistic_interaction_boundary_forbidden_interactions",
+    (RISK_RESPONSE_MODULE_ID, "risk_policy"): "humanistic_risk_response_risk_policy",
+    (INTERACTION_SAFETY_MODULE_ID, "non_romantic_default_boundary"): "humanistic_interaction_boundary_non_romantic_default_boundary",
+    ("expression_style", "tone_warmth"): "expression_style_tone_warmth",
+    ("personality_traits", "personality_base"): "personality_traits_personality_base",
+    (BEHAVIOR_SAFETY_MODULE_ID, "proactive_behavior_limits"): "behavior_boundary_proactive_behavior_limits",
+    ("relationship_rule", "baseline_relationship_behavior"): "relationship_rule_baseline_relationship_behavior",
+    (LANGUAGE_BEHAVIOR_MODULE_ID, "comfort_expression_style"): "language_behavior_comfort_expression_style",
+    ("behavior_style_mapper", "suggestion_output_method"): "behavior_style_mapper_suggestion_output_method",
+    ("expression_style", "city_imagery_rules"): "expression_style_city_imagery_rules",
+    ("module_identity_anchor", "identity_definition"): "identity_anchor_identity_definition",
+    (PREFERENCE_MEMORY_MODULE_ID, "preference_value"): "preference_memory_preference_value",
+    ("personality_traits", "external_temperament"): "personality_traits_external_temperament",
+    ("emotion_pattern", "visual_cue_reserved"): "emotion_pattern_visual_cue_reserved",
+    (EVENT_MEMORY_MODULE_ID, "event_summary"): "event_memory_event_summary",
+    ("environment_setting", "daily_living_environment"): "environment_daily_living_environment",
+    (LANGUAGE_BEHAVIOR_MODULE_ID, "wording_habits"): "language_behavior_wording_habits",
+    ("relationship_rule", "proactive_behavior_rules"): "relationship_rule_proactive_behavior_rules",
+}
+_ENVIRONMENT_MODULE_ID = "environment_setting"
+_ENVIRONMENT_OUTPUT_KEY = "environment_context"
+_ENVIRONMENT_FIELD_IDS = (
+    "city_environment",
+    "natural_environment",
+    "physical_living_environment",
+    "daily_living_environment",
+    "social_environment",
+    "network_environment",
+)
+_LAYER5_MEMORY_POLICY_MODULES: tuple[tuple[str, str, str], ...] = (
+    (SHORT_TERM_MEMORY_MODULE_ID, SHORT_TERM_MEMORY_OUTPUT_KEY, "short_term_memory"),
+    (PREFERENCE_MEMORY_MODULE_ID, PREFERENCE_MEMORY_OUTPUT_KEY, "preference_memory"),
+    (EVENT_MEMORY_MODULE_ID, EVENT_MEMORY_OUTPUT_KEY, "event_memory"),
+    (RELATIONSHIP_MEMORY_MODULE_ID, RELATIONSHIP_MEMORY_OUTPUT_KEY, "relationship_memory"),
+    (MEMORY_UPDATE_MODULE_ID, MEMORY_UPDATE_OUTPUT_KEY, "memory_update"),
+    (MEMORY_ACCESS_CONTROL_MODULE_ID, MEMORY_ACCESS_CONTROL_OUTPUT_KEY, "memory_access_control"),
+    (MEMORY_PROVIDER_ROUTER_MODULE_ID, MEMORY_PROVIDER_ROUTER_OUTPUT_KEY, "memory_provider_router"),
+)
 _LAYER3_SAFETY_POLICY_CONFIGS = {
     CONTENT_SAFETY_MODULE_ID: {
         "output_key": CONTENT_SAFETY_OUTPUT_KEY,
@@ -508,6 +635,418 @@ def _module_graph_nodes(module: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [node for node in nodes if isinstance(node, dict)]
 
 
+def _module_graph_node_id(node: Dict[str, Any]) -> str:
+    return _nonempty_str(node.get("node_id")) or _nonempty_str(node.get("id"))
+
+
+def _canonical_reference_source_node_id(
+    reference: Dict[str, Any], source_module: Dict[str, Any]
+) -> str:
+    """Return the source module's exact local node_id for a reference pointer."""
+    source_node_id = _nonempty_str(reference.get("source_node_id"))
+    if not source_node_id:
+        return ""
+    node_ids = {_module_graph_node_id(node) for node in _module_graph_nodes(source_module)}
+    node_ids.discard("")
+    if source_node_id in node_ids:
+        return source_node_id
+
+    source_layer_id = _nonempty_str(reference.get("source_layer_id"))
+    source_module_id = _nonempty_str(reference.get("source_module_id"))
+    legacy_prefix = f"{source_layer_id}::{source_module_id}::"
+    if source_layer_id and source_module_id and source_node_id.startswith(legacy_prefix):
+        local_node_id = source_node_id[len(legacy_prefix) :]
+        if local_node_id in node_ids:
+            return local_node_id
+    return source_node_id
+
+
+def _canonical_reference_field_target(module_id: str, field_id: str) -> tuple[str, str]:
+    return _REFERENCE_FIELD_ALIASES.get((module_id, field_id), (module_id, field_id))
+
+
+def _module_declared_field_ids(module: Dict[str, Any]) -> set[str]:
+    """Return addressable fields declared by the target module itself."""
+    field_ids: set[str] = set()
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    registry = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []
+    for field in registry:
+        if isinstance(field, dict):
+            field_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key"))
+            if field_id:
+                field_ids.add(field_id)
+    for node in _module_graph_nodes(module):
+        if node.get("node_type") == "field_reference":
+            continue
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        for field in fields:
+            if isinstance(field, dict):
+                field_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key"))
+                if field_id:
+                    field_ids.add(field_id)
+        output_schema = params.get("output_schema")
+        if isinstance(output_schema, dict):
+            field_ids.update(_nonempty_str(key) for key in output_schema if _nonempty_str(key))
+        elif isinstance(output_schema, list):
+            for field in output_schema:
+                if isinstance(field, dict):
+                    field_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key")) or _nonempty_str(field.get("key"))
+                    if field_id:
+                        field_ids.add(field_id)
+    return field_ids
+
+
+def _normalize_registry_reference(
+    reference: Dict[str, Any],
+    modules_by_id: Dict[str, Dict[str, Any]],
+    path: str,
+    findings: List[Dict[str, str]],
+) -> Dict[str, Any] | None:
+    normalized = deepcopy(reference)
+    raw_module_id = _nonempty_str(normalized.get("module_id"))
+    raw_field_id = _nonempty_str(normalized.get("field_id"))
+    module_id, field_id = _canonical_reference_field_target(raw_module_id, raw_field_id)
+    alias_applied = (module_id, field_id) != (raw_module_id, raw_field_id)
+    target_module = modules_by_id.get(module_id)
+    target_layer_id = _nonempty_str(target_module.get("layer_id")) if target_module else ""
+    layer_id = target_layer_id if alias_applied else _nonempty_str(normalized.get("layer_id"))
+    required = bool(normalized.get("required")) or normalized.get("reference_type") == "required"
+
+    normalized["module_id"] = module_id
+    normalized["field_id"] = field_id
+    if target_layer_id and (alias_applied or not layer_id):
+        layer_id = target_layer_id
+    normalized["layer_id"] = layer_id
+    normalized["path"] = "/".join((layer_id, module_id, field_id))
+    if normalized.get("reference_id"):
+        raw_reference_id = _nonempty_str(normalized.get("reference_id"))
+        stale_reference_id = any(
+            token in raw_reference_id
+            for token in (
+                "professional_boundary",
+                "dialogue_boundary",
+                "expression_temperament",
+                "core_personality",
+                "default_relationship",
+                "silence_companionship_style",
+                "proactive_boundary",
+                "suggestion_output_format",
+                "relationship_boundary",
+                "forbidden_tone",
+                "risk_response_boundary",
+            )
+        )
+        if alias_applied or stale_reference_id:
+            reference_type = _nonempty_str(normalized.get("reference_type")) or "reference"
+            stem = _REFERENCE_TARGET_ID_STEMS.get((module_id, field_id), f"{module_id}_{field_id}")
+            normalized["reference_id"] = f"{reference_type}_{stem}"
+
+    reason = ""
+    if not target_module:
+        reason = f"目标模块不存在: module_id={module_id or '(empty)'}"
+    elif layer_id != target_layer_id:
+        reason = f"目标层不匹配: declared={layer_id or '(empty)'}, actual={target_layer_id}"
+    elif not field_id or field_id not in _module_declared_field_ids(target_module):
+        reason = f"目标正式字段不存在: module_id={module_id}, field_id={field_id or '(empty)'}"
+    if not reason:
+        return normalized
+
+    status = "FAIL" if required else "WARNING"
+    findings.append(
+        _finding(
+            status,
+            "DR_REQUIRED_REGISTRY_REFERENCE_UNRESOLVED" if required else "DR_OPTIONAL_REGISTRY_REFERENCE_OMITTED",
+            f"引用解析失败；reference_type={normalized.get('reference_type') or 'optional'}；{reason}",
+            path,
+        )
+    )
+    return normalized if required else None
+
+
+def _rebuild_reference_options(params: Dict[str, Any], registry: List[Dict[str, Any]]) -> None:
+    options = params.get("reference_options") if isinstance(params.get("reference_options"), dict) else {}
+    old_layers = {
+        str(item.get("value")): item
+        for item in options.get("layers", [])
+        if isinstance(item, dict) and item.get("value")
+    }
+    old_modules = {
+        str(item.get("value")): item
+        for item in options.get("modules", [])
+        if isinstance(item, dict) and item.get("value")
+    }
+    old_fields = {
+        (str(item.get("module_id")), str(item.get("value"))): item
+        for item in options.get("fields", [])
+        if isinstance(item, dict) and item.get("module_id") and item.get("value")
+    }
+    layers: Dict[str, Dict[str, Any]] = {}
+    modules: Dict[str, Dict[str, Any]] = {}
+    fields: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for reference in registry:
+        layer_id = str(reference.get("layer_id") or "")
+        module_id = str(reference.get("module_id") or "")
+        field_id = str(reference.get("field_id") or "")
+        if not (layer_id and module_id and field_id):
+            continue
+        layers[layer_id] = deepcopy(old_layers.get(layer_id) or {"value": layer_id, "label_key": f"layer.{layer_id}"})
+        module_option = deepcopy(old_modules.get(module_id) or {"value": module_id, "label_key": f"module.{module_id}"})
+        module_option["value"] = module_id
+        module_option["layer_id"] = layer_id
+        modules[module_id] = module_option
+        field_option = deepcopy(old_fields.get((module_id, field_id)) or {})
+        field_option.update(
+            {
+                "value": field_id,
+                "module_id": module_id,
+                "label_key": _as_dict(reference.get("i18n_keys")).get("field") or f"field.{field_id}",
+            }
+        )
+        fields[(module_id, field_id)] = field_option
+    params["reference_options"] = {
+        "layers": list(layers.values()),
+        "modules": list(modules.values()),
+        "fields": list(fields.values()),
+    }
+
+
+def _normalize_reference_registries(
+    modules: List[Dict[str, Any]], findings: List[Dict[str, str]]
+) -> None:
+    modules_by_id = {
+        _nonempty_str(module.get("module_id")): module
+        for module in modules
+        if _nonempty_str(module.get("module_id"))
+    }
+    checked = 0
+    for module_index, module in enumerate(modules):
+        config = module.get("config") if isinstance(module.get("config"), dict) else {}
+        raw_registry = config.get("reference_registry")
+        if not isinstance(raw_registry, list):
+            continue
+        registry: List[Dict[str, Any]] = []
+        for reference_index, reference in enumerate(raw_registry):
+            if not isinstance(reference, dict):
+                continue
+            checked += 1
+            normalized = _normalize_registry_reference(
+                reference,
+                modules_by_id,
+                f"modules[{module_index}].config.reference_registry[{reference_index}]",
+                findings,
+            )
+            if normalized is not None:
+                registry.append(normalized)
+        config["reference_registry"] = registry
+
+        for node_index, node in enumerate(_module_graph_nodes(module)):
+            if node.get("node_type") != "field_reference":
+                continue
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            params["recommended_references"] = deepcopy(registry)
+            selected = params.get("references") if isinstance(params.get("references"), list) else []
+            normalized_selected: List[Dict[str, Any]] = []
+            for reference_index, reference in enumerate(selected):
+                if not isinstance(reference, dict):
+                    continue
+                normalized = _normalize_registry_reference(
+                    reference,
+                    modules_by_id,
+                    f"modules[{module_index}].module_graph.nodes[{node_index}].params.references[{reference_index}]",
+                    findings,
+                )
+                if normalized is not None:
+                    normalized_selected.append(normalized)
+            params["references"] = normalized_selected
+            outputs = node.get("outputs") if isinstance(node.get("outputs"), dict) else {}
+            active = outputs.get("field_references") if isinstance(outputs.get("field_references"), list) else []
+            normalized_active: List[Dict[str, Any]] = []
+            for reference_index, reference in enumerate(active):
+                if not isinstance(reference, dict):
+                    continue
+                normalized = _normalize_registry_reference(
+                    reference,
+                    modules_by_id,
+                    f"modules[{module_index}].module_graph.nodes[{node_index}].outputs.field_references[{reference_index}]",
+                    findings,
+                )
+                if normalized is not None:
+                    normalized_active.append(normalized)
+            outputs["field_references"] = normalized_active
+            _rebuild_reference_options(params, registry)
+    findings.append(
+        _finding(
+            "PASS",
+            "DR_REFERENCE_REGISTRY_VALIDATION_COMPLETE",
+            f"reference_registry 已使用正式模块与字段校验；checked={checked}",
+            "modules.config.reference_registry",
+        )
+    )
+
+
+def _normalize_reference_inputs(modules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize technical reference pointers on a copy of the compile input."""
+    normalized_modules = deepcopy(modules)
+    modules_by_id = {
+        _nonempty_str(module.get("module_id")): module
+        for module in normalized_modules
+        if _nonempty_str(module.get("module_id"))
+    }
+    for module in normalized_modules:
+        for node in _module_graph_nodes(module):
+            if node.get("node_type") != "reference_input":
+                continue
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            references = params.get("references") if isinstance(params.get("references"), list) else []
+            for reference in references:
+                if not isinstance(reference, dict):
+                    continue
+                source_module = modules_by_id.get(_nonempty_str(reference.get("source_module_id")))
+                if not isinstance(source_module, dict):
+                    continue
+                canonical = _canonical_reference_source_node_id(reference, source_module)
+                if canonical and canonical != reference.get("source_node_id"):
+                    reference["source_node_id"] = canonical
+    return normalized_modules
+
+
+def _reference_output_field_paths(node: Dict[str, Any]) -> set[str] | None:
+    if node.get("node_type") != "reference_output":
+        return None
+    params = node.get("params") if isinstance(node.get("params"), dict) else {}
+    export_fields = params.get("export_fields")
+    if not isinstance(export_fields, list):
+        return set()
+    paths: set[str] = set()
+    for field in export_fields:
+        if isinstance(field, str) and field:
+            paths.add(field)
+        elif isinstance(field, dict):
+            field_path = _nonempty_str(field.get("field_path")) or _nonempty_str(field.get("field_key"))
+            if field_path:
+                paths.add(field_path)
+    return paths
+
+
+def _reference_input_findings(collection: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    modules = [module for module in collection.get("modules", []) if isinstance(module, dict)]
+    modules_by_id = {
+        _nonempty_str(module.get("module_id")): module
+        for module in modules
+        if _nonempty_str(module.get("module_id"))
+    }
+    layer_ids = {
+        _nonempty_str(module.get("layer_id"))
+        for module in modules
+        if _nonempty_str(module.get("layer_id"))
+    }
+    checked = 0
+    required_count = 0
+    optional_count = 0
+    invalid_references = 0
+
+    for module_index, target_module in enumerate(modules):
+        target_module_id = _nonempty_str(target_module.get("module_id"))
+        for node_index, target_node in enumerate(_module_graph_nodes(target_module)):
+            if target_node.get("node_type") != "reference_input":
+                continue
+            target_node_id = _module_graph_node_id(target_node)
+            params = target_node.get("params") if isinstance(target_node.get("params"), dict) else {}
+            references = params.get("references") if isinstance(params.get("references"), list) else []
+            for reference_index, reference in enumerate(references):
+                if not isinstance(reference, dict):
+                    continue
+                checked += 1
+                required = bool(reference.get("required")) or reference.get("reference_type") == "required"
+                required_count += int(required)
+                optional_count += int(not required)
+                reference_path = (
+                    f"modules[{module_index}](module_id={target_module_id}).module_graph."
+                    f"nodes[{node_index}](node_id={target_node_id}).params.references[{reference_index}]"
+                )
+                source_layer_id = _nonempty_str(reference.get("source_layer_id"))
+                source_module_id = _nonempty_str(reference.get("source_module_id"))
+                source_node_id = _nonempty_str(reference.get("source_node_id"))
+                source_scope = _nonempty_str(reference.get("source_scope")) or "module"
+                raw_field_paths = reference.get("source_field_paths")
+                field_paths = [str(item) for item in raw_field_paths if isinstance(item, str) and item] if isinstance(raw_field_paths, list) else []
+                singular_field_path = _nonempty_str(reference.get("source_field_path"))
+                if singular_field_path and singular_field_path not in field_paths:
+                    field_paths.append(singular_field_path)
+                reference_invalid = False
+
+                def reject(code: str, field: str, reason: str) -> None:
+                    nonlocal reference_invalid
+                    reference_invalid = True
+                    status = "FAIL" if required else "WARNING"
+                    message = (
+                        f"module_id={target_module_id}, node_id={target_node_id}, "
+                        f"source_module_id={source_module_id or '(empty)'}, "
+                        f"source_node_id={source_node_id or '(empty)'}: {reason}"
+                    )
+                    findings.append(_finding(status, code, message, f"{reference_path}.{field}"))
+
+                if not source_layer_id or source_layer_id not in layer_ids:
+                    reject("DR_REFERENCE_SOURCE_LAYER_MISSING", "source_layer_id", f"source layer {source_layer_id or '(empty)'!r} does not exist")
+                source_module = modules_by_id.get(source_module_id)
+                if source_module is None:
+                    reject("DR_REFERENCE_SOURCE_MODULE_MISSING", "source_module_id", f"source module {source_module_id or '(empty)'!r} does not exist")
+                elif source_layer_id and source_module.get("layer_id") != source_layer_id:
+                    reject(
+                        "DR_REFERENCE_SOURCE_MODULE_LAYER_MISMATCH",
+                        "source_module_id",
+                        f"source module belongs to {source_module.get('layer_id')!r}, not {source_layer_id!r}",
+                    )
+
+                source_node: Dict[str, Any] | None = None
+                if source_module is not None and source_node_id:
+                    source_node = next(
+                        (node for node in _module_graph_nodes(source_module) if _module_graph_node_id(node) == source_node_id),
+                        None,
+                    )
+                if not source_node_id:
+                    reject("DR_REFERENCE_SOURCE_NODE_MISSING", "source_node_id", "source_node_id is required")
+                elif source_module is not None and source_node is None:
+                    reject(
+                        "DR_REFERENCE_SOURCE_NODE_MISSING",
+                        "source_node_id",
+                        "source_node_id is not an exact local node_id in the declared source module",
+                    )
+
+                if source_scope == "field" and not field_paths:
+                    reject("DR_REFERENCE_SOURCE_FIELD_PATH_MISSING", "source_field_paths", "field-scoped reference has no source field path")
+                if field_paths and source_node is not None:
+                    available_paths = _reference_output_field_paths(source_node)
+                    if available_paths is None:
+                        reject(
+                            "DR_REFERENCE_SOURCE_FIELD_NODE_INVALID",
+                            "source_node_id",
+                            "field-scoped reference must target a reference_output node",
+                        )
+                    else:
+                        missing_paths = [path for path in field_paths if path not in available_paths]
+                        if missing_paths:
+                            reject(
+                                "DR_REFERENCE_SOURCE_FIELD_PATH_UNRESOLVED",
+                                "source_field_paths",
+                                f"source field paths are not exported by the source node: {missing_paths!r}",
+                            )
+
+                invalid_references += int(reference_invalid)
+
+    findings.append(
+        _finding(
+            "PASS",
+            "DR_REFERENCE_VALIDATION_COMPLETE",
+            f"reference validation checked={checked}, required={required_count}, optional={optional_count}, resolved={checked - invalid_references}",
+            "modules",
+        )
+    )
+    return findings
+
+
 def _module_node_by_type(module: Dict[str, Any], node_type: str) -> Dict[str, Any] | None:
     for node in _module_graph_nodes(module):
         if node.get("node_type") == node_type:
@@ -626,6 +1165,127 @@ def _module_field_values_from_fields(fields: List[Dict[str, Any]]) -> Dict[str, 
 
 def _field_identifier(field: Dict[str, Any], index: int) -> str:
     return str(field.get("field_id") or field.get("field_key") or field.get("key") or field.get("id") or f"field_{index + 1}")
+
+
+def _normalize_current_technical_field(field: Dict[str, Any], index: int) -> None:
+    if _field_identifier(field, index) != "primary_language":
+        return
+    raw_value = field.get("field_value") if "field_value" in field else field.get("value")
+    if not _nonempty_str(raw_value):
+        return
+    normalized = _normalize_language(raw_value)
+    if "field_value" in field or field.get("field_key"):
+        field["field_value"] = normalized
+    if "value" in field or field.get("field_id"):
+        field["value"] = normalized
+
+
+def _sync_current_field_compatibility(
+    modules: List[Dict[str, Any]], findings: List[Dict[str, str]]
+) -> None:
+    synchronized_nodes = 0
+    for module_index, module in enumerate(modules):
+        config = module.get("config") if isinstance(module.get("config"), dict) else {}
+        registry = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []
+        for node_index, node in enumerate(_module_graph_nodes(module)):
+            if node.get("node_type") not in {"field_input", "text_input"}:
+                continue
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            has_compat_surface = any(key in params for key in ("fields", "legacy_fields", "legacy_data_fields"))
+            if not has_compat_surface:
+                continue
+            current_fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+            current_fields = [field for field in current_fields if isinstance(field, dict)]
+            for index, field in enumerate(current_fields):
+                _normalize_current_technical_field(field, index)
+            current_ids = {_field_identifier(field, index) for index, field in enumerate(current_fields)}
+
+            expected: Dict[str, bool] = {}
+            node_id = _module_graph_node_id(node)
+            for field in registry:
+                if not isinstance(field, dict):
+                    continue
+                owner_node_id = _nonempty_str(field.get("owner_node_id"))
+                if owner_node_id and owner_node_id != node_id:
+                    continue
+                field_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key"))
+                if field_id:
+                    expected[field_id] = bool(field.get("required"))
+            for legacy_key in ("legacy_fields", "legacy_data_fields"):
+                legacy_fields = params.get(legacy_key) if isinstance(params.get(legacy_key), list) else []
+                for index, field in enumerate(legacy_fields):
+                    if not isinstance(field, dict):
+                        continue
+                    field_id = _field_identifier(field, index)
+                    expected[field_id] = expected.get(field_id, False) or bool(field.get("required"))
+
+            for field_id, required in expected.items():
+                if field_id in current_ids:
+                    continue
+                findings.append(
+                    _finding(
+                        "FAIL" if required else "WARNING",
+                        "DR_CURRENT_REQUIRED_FIELD_MISSING" if required else "DR_CURRENT_OPTIONAL_FIELD_MISSING",
+                        (
+                            f"current fields 缺少 field_id={field_id}；legacy 值不会反向覆盖 current；"
+                            f"layer_id={module.get('layer_id')}, module_id={module.get('module_id')}, node_id={node_id}"
+                        ),
+                        f"modules[{module_index}].module_graph.nodes[{node_index}].params.fields",
+                    )
+                )
+
+            params["fields"] = current_fields
+            params["legacy_fields"] = deepcopy(current_fields)
+            params["legacy_data_fields"] = deepcopy(current_fields)
+            synchronized_nodes += 1
+    findings.append(
+        _finding(
+            "PASS",
+            "DR_CURRENT_LEGACY_FIELD_SYNC_COMPLETE",
+            f"legacy_fields 与 legacy_data_fields 已从 current fields 深拷贝生成；nodes={synchronized_nodes}",
+            "modules.module_graph.nodes.params.fields",
+        )
+    )
+
+
+def _canonical_environment_mapping(field_id: str) -> str:
+    return f"payload.modules.{_ENVIRONMENT_MODULE_ID}.outputs.{_ENVIRONMENT_OUTPUT_KEY}.fields.{field_id}"
+
+
+def _sync_environment_module_output(module: Dict[str, Any]) -> None:
+    if module.get("module_id") != _ENVIRONMENT_MODULE_ID:
+        return
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        for index, field in enumerate(fields):
+            if not isinstance(field, dict):
+                continue
+            field_id = _field_identifier(field, index)
+            if field_id in _ENVIRONMENT_FIELD_IDS:
+                field["dr_mapping"] = _canonical_environment_mapping(field_id)
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    registry = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []
+    for index, field in enumerate(registry):
+        if not isinstance(field, dict):
+            continue
+        field_id = _field_identifier(field, index)
+        if field_id in _ENVIRONMENT_FIELD_IDS:
+            field["dr_mapping"] = _canonical_environment_mapping(field_id)
+
+    fields = _module_fields_from_field_input(module)
+    top_outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    if _ENVIRONMENT_OUTPUT_KEY in top_outputs:
+        top_outputs[_ENVIRONMENT_OUTPUT_KEY] = _module_output_with_field_values(
+            top_outputs.get(_ENVIRONMENT_OUTPUT_KEY), fields
+        )
+    module_output = _module_node_by_type(module, "module_output")
+    if module_output:
+        node_outputs = module_output.get("outputs") if isinstance(module_output.get("outputs"), dict) else {}
+        if _ENVIRONMENT_OUTPUT_KEY in node_outputs:
+            node_outputs[_ENVIRONMENT_OUTPUT_KEY] = _module_output_with_field_values(
+                node_outputs.get(_ENVIRONMENT_OUTPUT_KEY), fields
+            )
 
 
 def _sync_primary_language_field_list(fields: Any, value: str) -> None:
@@ -1256,10 +1916,28 @@ def _behavior_checkbox_summary(module: Dict[str, Any]) -> Dict[str, Any]:
         if not preset_id:
             preset_id = _nonempty_str(checkbox_config.get("preset_id"))
         node_selected = checkbox_config.get("selected_options")
-        if isinstance(node_selected, list):
-            selected_options.extend(str(option) for option in node_selected if isinstance(option, str) and option)
-            if str(node.get("node_id", "")).endswith("_validation"):
-                validation_rules.extend(str(option) for option in node_selected if isinstance(option, str) and option)
+        local_node_id = _nonempty_str(node.get("catalog_node_id") or node.get("node_id")).split("::")[-1]
+        is_language_output = (
+            module.get("module_id") == LANGUAGE_BEHAVIOR_MODULE_ID
+            and local_node_id == "language_behavior_output_expression"
+        )
+        if not isinstance(node_selected, list) and is_language_output:
+            configured_defaults = checkbox_config.get("default_selected_options")
+            if isinstance(configured_defaults, list):
+                node_selected = configured_defaults
+            else:
+                default_options = checkbox_config.get("default_options")
+                node_selected = [
+                    option.get("option_id")
+                    for option in default_options
+                    if isinstance(option, dict) and option.get("default_selected") is not False
+                ] if isinstance(default_options, list) else []
+            node_selected = [option for option in node_selected if option != "occasional_city_imagery"]
+        elif not isinstance(node_selected, list):
+            node_selected = []
+        selected_options.extend(str(option) for option in node_selected if isinstance(option, str) and option)
+        if str(node.get("node_id", "")).endswith("_validation"):
+            validation_rules.extend(str(option) for option in node_selected if isinstance(option, str) and option)
         custom_text = _nonempty_str(checkbox_config.get("custom_text"))
         if custom_text:
             custom_texts.append(custom_text)
@@ -1332,6 +2010,382 @@ def _merge_layer8_behavior_into_payload(payload: Dict[str, Any]) -> None:
     resident_blueprint = _as_dict(payload.get("resident_blueprint"))
     resident_blueprint["behavior_policy"] = behavior_policy
     payload["resident_blueprint"] = resident_blueprint
+
+
+def _compiled_module_output(module: Dict[str, Any], output_key: str) -> Dict[str, Any]:
+    node_output = _module_output_node_value(module, output_key)
+    if isinstance(node_output, dict):
+        return deepcopy(node_output)
+    module_outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    fallback = module_outputs.get(output_key)
+    return deepcopy(fallback) if isinstance(fallback, dict) else {}
+
+
+def _set_compiled_module_output(module: Dict[str, Any], output_key: str, value: Dict[str, Any]) -> None:
+    outputs = module.get("outputs") if isinstance(module.get("outputs"), dict) else {}
+    outputs[output_key] = deepcopy(value)
+    module["outputs"] = outputs
+    for node in _module_graph_nodes(module):
+        node_outputs = node.get("outputs") if isinstance(node.get("outputs"), dict) else {}
+        node_params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if output_key in node_outputs or (
+            node.get("node_type") == "module_output" and node_params.get("output_key") == output_key
+        ):
+            node_outputs[output_key] = deepcopy(value)
+            node["outputs"] = node_outputs
+
+
+def _memory_router_node_params(module: Dict[str, Any], role: str) -> Dict[str, Any]:
+    node_id = MEMORY_PROVIDER_ROUTER_NODE_IDS.get(role, "")
+    node = _module_node_by_id(module, node_id) if node_id else None
+    return node.get("params") if isinstance(node, dict) and isinstance(node.get("params"), dict) else {}
+
+
+def _string_list(value: Any) -> List[str]:
+    return [str(item) for item in value if isinstance(item, str) and item] if isinstance(value, list) else []
+
+
+def _rebuild_memory_provider_router_output(
+    module: Dict[str, Any], findings: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Project the router policy from current node params without executing its graph."""
+    request_params = _memory_router_node_params(module, "request_input")
+    classifier_params = _memory_router_node_params(module, "operation_classifier")
+    resident_params = _memory_router_node_params(module, "resident_resolver")
+    namespace_params = _memory_router_node_params(module, "namespace_resolver")
+    type_params = _memory_router_node_params(module, "type_resolver")
+    access_params = _memory_router_node_params(module, "access_control")
+    provider_params = _memory_router_node_params(module, "provider_selector")
+    binding_params = _memory_router_node_params(module, "engine_binding")
+    trace_params = _memory_router_node_params(module, "trace_record")
+    request_schema = _as_dict(request_params.get("request_schema"))
+
+    canonical_operations = _string_list(
+        request_schema.get("canonical_operations") or request_schema.get("operations")
+    )
+    request_operations = _string_list(request_schema.get("operations"))
+    classifier_declared_operations = _string_list(classifier_params.get("operations"))
+    classifier_operations = _string_list(
+        classifier_params.get("canonical_operations") or classifier_params.get("operations")
+    )
+    request_aliases = {
+        str(alias): str(target)
+        for alias, target in _as_dict(request_schema.get("operation_aliases")).items()
+        if alias and target
+    }
+    classifier_aliases = {
+        str(alias): str(target)
+        for alias, target in _as_dict(classifier_params.get("operation_aliases")).items()
+        if alias and target
+    }
+    allowed_memory_types = _string_list(type_params.get("allowed_memory_types"))
+    expected_operations = list(MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS)
+    expected_aliases = dict(MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES)
+    expected_memory_types = list(MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES)
+    expected_namespace_policy = deepcopy(MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY)
+
+    config_mismatches: List[str] = []
+    if canonical_operations != expected_operations or request_operations != expected_operations:
+        config_mismatches.append("request operations are not canonical read/write/update/delete")
+    if classifier_operations != canonical_operations or classifier_declared_operations != canonical_operations:
+        config_mismatches.append("request and classifier canonical operations differ")
+    if request_aliases != expected_aliases or classifier_aliases != expected_aliases:
+        config_mismatches.append("operation aliases must be view->read and clear->delete")
+    accepted_operations = _string_list(request_schema.get("accepted_operations"))
+    expected_accepted_operations = [*canonical_operations, *request_aliases.keys()]
+    if accepted_operations and accepted_operations != expected_accepted_operations:
+        config_mismatches.append("accepted operations differ from canonical operations plus aliases")
+    if allowed_memory_types != expected_memory_types:
+        config_mismatches.append("allowed memory types differ from the Stage 7.4 canonical set")
+    declared_namespace_policy = namespace_params.get("namespace_policy")
+    if "namespace_policy" in namespace_params and declared_namespace_policy != expected_namespace_policy:
+        config_mismatches.append("namespace policy differs from the Stage 7.4 canonical namespace set")
+    elif "namespace_policy" in namespace_params:
+        if namespace_params.get("default_namespace") != expected_namespace_policy["default_namespace"]:
+            config_mismatches.append("namespace resolver default differs from the canonical namespace policy")
+        if provider_params.get("namespace") != "memory_type_default":
+            config_mismatches.append("provider selector namespace must use the memory type default")
+    else:
+        if namespace_params.get("default_namespace") != "default":
+            config_mismatches.append("legacy namespace config must use the known default alias")
+        if provider_params.get("namespace") not in {"default", "memory_type_default"}:
+            config_mismatches.append("legacy provider namespace must use a known default alias")
+    if config_mismatches:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_ROUTER_NODE_CONFIG_INCONSISTENT",
+                "; ".join(config_mismatches),
+                "modules.memory_provider_router.module_graph.nodes",
+            )
+        )
+
+    # Upgrade legacy `default` router nodes only inside the compiler-owned copy.
+    # The input Canvas/DR stays untouched, while exported node config, output,
+    # and top-level policy share one canonical namespace source.
+    namespace_params["default_namespace"] = expected_namespace_policy["default_namespace"]
+    namespace_params["namespace_policy"] = deepcopy(expected_namespace_policy)
+    provider_params["namespace"] = "memory_type_default"
+
+    required_fields = _string_list(request_schema.get("required"))
+    optional_fields = _string_list(request_schema.get("optional"))
+    allowed_runtime_fields = list(dict.fromkeys([*required_fields, *optional_fields]))
+    resident_rules = set(_string_list(resident_params.get("validation_rules")))
+    type_rules = set(_string_list(type_params.get("normalize_rules")))
+    existing = _compiled_module_output(module, MEMORY_PROVIDER_ROUTER_OUTPUT_KEY)
+    rebuilt = deepcopy(existing)
+    rebuilt.update(
+        {
+            "output_key": MEMORY_PROVIDER_ROUTER_OUTPUT_KEY,
+            "request_contract": {
+                "allowed_runtime_fields": allowed_runtime_fields,
+                "required_runtime_fields": required_fields,
+                "operations": canonical_operations,
+                "canonical_operations": canonical_operations,
+                "accepted_operations": expected_accepted_operations,
+                "operation_aliases": request_aliases,
+            },
+            "resident_scope": {
+                "resident_id_required": "resident_id" in set(_string_list(resident_params.get("required_fields"))),
+                "cross_resident_access": (
+                    "forbidden" if "cross_resident_access_forbidden" in resident_rules else "unspecified"
+                ),
+            },
+            "namespace_policy": deepcopy(expected_namespace_policy),
+            "memory_type_policy": {
+                "allowed_memory_types": allowed_memory_types,
+                "unsupported_memory_type_action": (
+                    "reject" if "allow_declared_memory_types_only" in type_rules else "unspecified"
+                ),
+            },
+            "access_policy": {
+                **{operation: deepcopy(allowed_memory_types) for operation in canonical_operations},
+                "session_only": deepcopy(_string_list(access_params.get("session_only"))),
+                "forbidden_memory": deepcopy(_string_list(access_params.get("forbidden_memory"))),
+            },
+            "provider_policy": {
+                "allowed_backends": deepcopy(_string_list(provider_params.get("allowed_backends"))),
+                "default_backend": provider_params.get("storage_backend") or "mock",
+                "runtime_provider_ownership": "runtime_owned_not_stored_in_studio",
+            },
+            "engine_binding": {
+                "slot_id": binding_params.get("slot_binding") or "",
+                "engine_id": binding_params.get("engine_id") or "",
+                "provider_id": binding_params.get("provider_id") or "",
+            },
+            "trace_policy": {
+                "allowed_fields": deepcopy(_string_list(trace_params.get("trace_fields"))),
+                "forbidden_fields": deepcopy(_string_list(trace_params.get("forbidden_trace_fields"))),
+            },
+        }
+    )
+    return rebuilt
+
+
+def _validate_memory_router_projection(
+    module: Dict[str, Any], expected: Dict[str, Any], memory_policy: Dict[str, Any], findings: List[Dict[str, str]]
+) -> None:
+    module_output = _compiled_module_output(module, MEMORY_PROVIDER_ROUTER_OUTPUT_KEY)
+    projected = _as_dict(memory_policy.get("memory_provider_router"))
+    projected_types = _string_list(memory_policy.get("memory_types"))
+    expected_types = _string_list(_as_dict(expected.get("memory_type_policy")).get("allowed_memory_types"))
+    expected_namespace_policy = _as_dict(expected.get("namespace_policy"))
+    projected_namespace_policy = _as_dict(memory_policy.get("namespace_policy"))
+    if (
+        module_output != expected
+        or projected != module_output
+        or projected_types != expected_types
+        or projected_namespace_policy != expected_namespace_policy
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_ROUTER_PROJECTION_INCONSISTENT",
+                "memory_provider_router node config, module_output, and top-level memory_policy differ",
+                "payload.memory_policy.memory_provider_router",
+            )
+        )
+        return
+    findings.append(
+        _finding(
+            "PASS",
+            "DR_MEMORY_ROUTER_PROJECTION_CONSISTENT",
+            "memory_provider_router node config, module_output, and top-level memory_policy are semantically aligned",
+            "payload.memory_policy.memory_provider_router",
+        )
+    )
+
+
+def _assemble_layer5_memory_policy(
+    collection: Dict[str, Any], resident_id: str, findings: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    modules = {
+        _nonempty_str(module.get("module_id")): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict) and _nonempty_str(module.get("module_id"))
+    }
+    memory_policy: Dict[str, Any] = {
+        "schema_version": DR_SCHEMA_VERSION_V0_3,
+        "resident_id": resident_id,
+        "namespace": "default",
+        "memory_types": [
+            "short_term_memory",
+            "preference_memory",
+            "event_memory",
+            "relationship_memory",
+            "interaction_log",
+        ],
+        "interaction_log": {"type": "append_only", "scope": "per_resident"},
+        "retention_policy": "policy_managed",
+        "read_write_policy": "memory_access_control",
+    }
+    missing = False
+    memory_router_module: Dict[str, Any] | None = None
+    expected_memory_router_output: Dict[str, Any] | None = None
+    for module_id, output_key, policy_key in _LAYER5_MEMORY_POLICY_MODULES:
+        module = modules.get(module_id)
+        if module is None:
+            missing = True
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MEMORY_POLICY_MODULE_MISSING",
+                    f"Layer 5 memory policy module {module_id!r} is missing",
+                    f"modules.{module_id}",
+                )
+            )
+            continue
+        if policy_key == "memory_provider_router":
+            memory_router_module = module
+            expected_memory_router_output = _rebuild_memory_provider_router_output(module, findings)
+            _set_compiled_module_output(module, output_key, expected_memory_router_output)
+        output = _compiled_module_output(module, output_key)
+        if not output:
+            missing = True
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MEMORY_POLICY_OUTPUT_MISSING",
+                    f"Layer 5 module {module_id!r} has no compiled output {output_key!r}",
+                    f"modules.{module_id}.outputs.{output_key}",
+                )
+            )
+            continue
+        if policy_key == "memory_access_control":
+            output["recall_claim_policy"] = deepcopy(MEMORY_RECALL_CLAIM_POLICY)
+            _set_compiled_module_output(module, output_key, output)
+        memory_policy[policy_key] = output
+
+    if expected_memory_router_output:
+        router_type_policy = _as_dict(expected_memory_router_output.get("memory_type_policy"))
+        memory_policy["memory_types"] = deepcopy(_string_list(router_type_policy.get("allowed_memory_types")))
+        memory_policy["namespace_policy"] = deepcopy(
+            _as_dict(expected_memory_router_output.get("namespace_policy"))
+        )
+        private_policy = _as_dict(
+            _as_dict(memory_policy["namespace_policy"].get("namespaces")).get("private_memory")
+        )
+        private_template = str(private_policy.get("namespace_template") or "private_memory:{resident_id}")
+        memory_policy["namespace"] = private_template.replace("{resident_id}", resident_id)
+    if memory_router_module is not None and expected_memory_router_output is not None:
+        _validate_memory_router_projection(
+            memory_router_module,
+            expected_memory_router_output,
+            memory_policy,
+            findings,
+        )
+
+    short_term = _as_dict(memory_policy.get("short_term_memory"))
+    if short_term and not (
+        short_term.get("retention") == "session" and short_term.get("session_scoped_only") is True
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_SHORT_TERM_NOT_SESSION_ONLY",
+                "short_term_memory must remain session-only and expire at session end",
+                "payload.memory_policy.short_term_memory",
+            )
+        )
+    preference = _as_dict(memory_policy.get("preference_memory"))
+    if preference and "inferred_fact" not in set(preference.get("save_forbidden") or []):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_PREFERENCE_INFERENCE_ALLOWED",
+                "preference_memory must reject inferred facts and accept only explicit or confirmed preferences",
+                "payload.memory_policy.preference_memory.save_forbidden",
+            )
+        )
+    event = _as_dict(memory_policy.get("event_memory"))
+    if event and not {"brief_summary", "event_meaning", "timestamp"}.issubset(set(event.get("save_allowed") or [])):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_EVENT_FIELDS_INVALID",
+                "event_memory must limit persistence to a necessary summary, meaning, and timestamp",
+                "payload.memory_policy.event_memory.save_allowed",
+            )
+        )
+    relationship = _as_dict(memory_policy.get("relationship_memory"))
+    if relationship and relationship.get("change_policy") != "gradual_only":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_RELATIONSHIP_JUMP_ALLOWED",
+                "relationship_memory must update gradually and reject single-interaction level jumps",
+                "payload.memory_policy.relationship_memory.change_policy",
+            )
+        )
+    memory_update = _as_dict(memory_policy.get("memory_update"))
+    update_priority = _as_dict(memory_update.get("policy_priority"))
+    if memory_update and (
+        update_priority.get("inferred_fact") != "deny" or memory_update.get("no_dr_writeback") is not True
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_UPDATE_BOUNDARY_INVALID",
+                "memory_update must deny inferred facts and forbid DR writeback",
+                "payload.memory_policy.memory_update",
+            )
+        )
+    access = _as_dict(memory_policy.get("memory_access_control"))
+    sensitive_policy = _as_dict(access.get("sensitive_policy"))
+    if access and sensitive_policy.get("default_for_inferred_fact") != "deny":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_ACCESS_INFERENCE_DEFAULT_INVALID",
+                "memory_access_control must deny inferred facts by default",
+                "payload.memory_policy.memory_access_control.sensitive_policy",
+            )
+        )
+    router = _as_dict(memory_policy.get("memory_provider_router"))
+    resident_scope = _as_dict(router.get("resident_scope"))
+    if router and resident_scope.get("cross_resident_access") != "forbidden":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_CROSS_RESIDENT_ACCESS_ALLOWED",
+                "memory_provider_router must forbid cross-resident private memory access",
+                "payload.memory_policy.memory_provider_router.resident_scope",
+            )
+        )
+
+    if not missing and not any(
+        finding.get("status") == "FAIL" and str(finding.get("code", "")).startswith("DR_MEMORY_")
+        for finding in findings
+    ):
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_MEMORY_POLICY_PROJECTED",
+                "all seven Layer 5 memory modules were projected into the authoritative top-level memory_policy",
+                "payload.memory_policy",
+            )
+        )
+    return memory_policy
 
 
 def _v3_identity_sync_from_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1507,6 +2561,445 @@ def _identity_consistency_findings(
     return findings
 
 
+def _environment_mapping_findings(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    modules = [module for module in payload.get("modules", []) if isinstance(module, dict)]
+    matches = [module for module in modules if module.get("module_id") == _ENVIRONMENT_MODULE_ID]
+    if len(matches) != 1:
+        return [
+            _finding(
+                "FAIL",
+                "DR_ENVIRONMENT_MAPPING_MODULE_UNRESOLVED",
+                f"环境模块必须唯一；module_id={_ENVIRONMENT_MODULE_ID}, matches={len(matches)}",
+                "payload.modules.environment_setting",
+            )
+        ]
+    module = matches[0]
+    current_fields = {
+        _field_identifier(field, index): field
+        for index, field in enumerate(_module_fields_from_field_input(module))
+        if isinstance(field, dict)
+    }
+    output = _as_dict(_as_dict(module.get("outputs")).get(_ENVIRONMENT_OUTPUT_KEY))
+    output_fields = output.get("fields") if isinstance(output.get("fields"), dict) else {}
+    for field_id in _ENVIRONMENT_FIELD_IDS:
+        path = f"payload.modules.{_ENVIRONMENT_MODULE_ID}.outputs.{_ENVIRONMENT_OUTPUT_KEY}.fields.{field_id}"
+        field = current_fields.get(field_id)
+        if field is None:
+            findings.append(_finding("FAIL", "DR_ENVIRONMENT_CURRENT_FIELD_MISSING", f"环境 current field 不存在: {field_id}", path))
+            continue
+        mapping = _nonempty_str(field.get("dr_mapping"))
+        expected_mapping = _canonical_environment_mapping(field_id)
+        if mapping != expected_mapping:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_ENVIRONMENT_MAPPING_PATH_INVALID",
+                    f"环境映射路径不正确；field_id={field_id}, expected={expected_mapping}, actual={mapping or '(empty)'}",
+                    path,
+                )
+            )
+            continue
+        if field_id not in output_fields:
+            findings.append(_finding("FAIL", "DR_ENVIRONMENT_MAPPING_VALUE_MISSING", f"环境输出缺少 field_id={field_id}", path))
+            continue
+        current_value = field.get("value") if "value" in field else field.get("field_value")
+        if output_fields.get(field_id) != current_value:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_ENVIRONMENT_MAPPING_VALUE_MISMATCH",
+                    f"环境输出与 current field 不一致；field_id={field_id}",
+                    path,
+                )
+            )
+            continue
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_ENVIRONMENT_MAPPING_RESOLVED",
+                f"环境映射已解析到权威 payload.modules 输出；field_id={field_id}",
+                path,
+            )
+        )
+    return findings
+
+
+def _v03_version_findings(
+    resident: Dict[str, Any],
+    manifest: Dict[str, Any],
+    payload: Dict[str, Any],
+    compile_info: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    checks = (
+        (resident.get("dr_version"), DR_VERSION_V0_3, "resident.dr_version", "dr_version"),
+        (manifest.get("dr_schema_version"), DR_SCHEMA_VERSION_V0_3, "manifest.dr_schema_version", "dr_schema_version"),
+        (manifest.get("source_protocol_version"), PROTOCOL_VERSION_V0_4, "manifest.source_protocol_version", "protocol_version"),
+        (compile_info.get("schema_version"), DR_SCHEMA_VERSION_V0_3, "compile_info.schema_version", "dr_schema_version"),
+        (compile_info.get("protocol_version"), PROTOCOL_VERSION_V0_4, "compile_info.protocol_version", "protocol_version"),
+        (_as_dict(payload.get("memory_config")).get("schema_version"), DR_SCHEMA_VERSION_V0_3, "payload.memory_config.schema_version", "dr_schema_version"),
+        (_as_dict(payload.get("lattice_config")).get("schema_version"), DR_SCHEMA_VERSION_V0_3, "payload.lattice_config.schema_version", "dr_schema_version"),
+        (_as_dict(payload.get("voice_config")).get("schema_version"), DR_SCHEMA_VERSION_V0_3, "payload.voice_config.schema_version", "dr_schema_version"),
+    )
+    findings: List[Dict[str, str]] = []
+    for actual, expected, path, concept in checks:
+        if actual != expected:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_INTERNAL_VERSION_MISMATCH",
+                    f"内部版本未与根级 {concept} 同步；expected={expected}, actual={actual}",
+                    path,
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_VERSION_METADATA_CONSISTENT",
+                "根级 DR、schema、protocol 版本与正式兼容元数据一致；居民内容版本和 compiler/module 版本保持独立语义",
+                "dr_version",
+            )
+        )
+    return findings
+
+
+def _identity_hardcode_terms(payload: Dict[str, Any]) -> Dict[str, str]:
+    layer_outputs = _as_dict(_as_dict(payload.get("graph_snapshot")).get("layer_outputs"))
+    identity_profile = _as_dict(layer_outputs.get("identity_profile"))
+    basic_fields = _identity_fields(identity_profile, "basic_identity")
+    resident_identity = _as_dict(payload.get("resident_identity"))
+    terms: Dict[str, str] = {}
+    for field_id in ("name", "pinyin", "nickname", "display_alias", "codename", "export_name", "resident_id"):
+        value = _nonempty_str(basic_fields.get(field_id)) or _nonempty_str(resident_identity.get(field_id))
+        if value:
+            terms[field_id] = value
+    return terms
+
+
+def _text_contains_identity_term(text: str, term: str) -> bool:
+    if not text or not term:
+        return False
+    has_cjk = any("\u4e00" <= char <= "\u9fff" for char in term)
+    if has_cjk:
+        return term in text
+    return bool(
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _technical_identity_reference_field(field_id: str) -> bool:
+    normalized = field_id.lower()
+    leaf = normalized.rsplit(".", 1)[-1].split("[", 1)[0]
+    return (
+        leaf in {"resident_id", "resident_ids", "namespace", "memory_namespace"}
+        or leaf.endswith("_resident_id")
+        or leaf.endswith("_resident_ids")
+        or leaf.endswith("_ref")
+        or leaf.endswith("_reference")
+    )
+
+
+def _natural_language_text_path(field_path: str) -> bool:
+    leaf = field_path.lower().rsplit(".", 1)[-1].split("[", 1)[0]
+    exact = {
+        "description",
+        "text",
+        "content",
+        "prompt",
+        "sample",
+        "dialogue",
+        "rule",
+        "seed",
+        "hint",
+        "cue",
+        "summary",
+        "message",
+        "instruction",
+        "note",
+        "default",
+        "custom_text",
+        "template_default",
+        "template_defaults",
+        "memory_seed",
+        "memory_seeds",
+        "dialogue_rule",
+        "dialogue_rules",
+        "visual_hint",
+        "visual_hints",
+        "behavior_policy",
+        "behavior_rule",
+        "behavior_rules",
+    }
+    suffixes = (
+        "_description",
+        "_text",
+        "_content",
+        "_prompt",
+        "_sample",
+        "_dialogue",
+        "_dialogue_rule",
+        "_rule",
+        "_seed",
+        "_hint",
+        "_cue",
+        "_summary",
+        "_message",
+        "_instruction",
+        "_note",
+        "_default_text",
+        "_template_defaults",
+        "_seeds",
+        "_dialogue_rules",
+        "_visual_hints",
+        "_behavior_policy",
+        "_behavior_rules",
+    )
+    return leaf in exact or leaf.endswith(suffixes)
+
+
+def _identity_text_type(layer_id: str, module: Dict[str, Any], field_id: str, source_kind: str) -> str:
+    combined = " ".join(
+        (
+            str(module.get("module_id") or ""),
+            str(module.get("module_type") or ""),
+            str(module.get("category") or ""),
+            field_id,
+        )
+    ).lower()
+    if source_kind == "default":
+        return "template_default"
+    if layer_id == "layer_5" or "memory" in combined or "seed" in combined:
+        return "memory_seed"
+    if "dialogue" in combined or "sample" in combined:
+        return "dialogue_rule"
+    if layer_id == "layer_8" or "behavior" in combined:
+        return "behavior_policy"
+    if layer_id == "layer_10" or any(token in combined for token in ("visual", "hint", "cue")):
+        return "visual_hint"
+    return "non_identity_module_text"
+
+
+def _identity_hardcode_findings(
+    collection: Dict[str, Any], payload: Dict[str, Any]
+) -> List[Dict[str, str]]:
+    terms = _identity_hardcode_terms(payload)
+    if not terms:
+        return []
+    workflow = _as_dict(collection.get("workflow"))
+    metadata = _as_dict(workflow.get("metadata"))
+    generic_template = workflow.get("type") == "template" or metadata.get("is_generic_template") is True or metadata.get("is_template") is True
+    status = "FAIL" if generic_template else "WARNING"
+    code = "DR_GENERIC_TEMPLATE_RESIDENT_NAME_HARDCODED" if generic_template else "DR_RESIDENT_NAME_HARDCODED"
+    findings: List[Dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def inspect_text(
+        text: Any,
+        *,
+        layer_id: str,
+        module: Dict[str, Any],
+        node_id: str,
+        field_id: str,
+        source_kind: str,
+    ) -> None:
+        if not isinstance(text, str) or not text:
+            return
+        matched = sorted(field for field, term in terms.items() if _text_contains_identity_term(text, term))
+        if not matched:
+            return
+        # Technical foreign keys may carry the exact resident_id. A natural
+        # language name/codename inside a *_ref field is still persona text and
+        # must be reported rather than hidden by the key name.
+        if _technical_identity_reference_field(field_id) and set(matched) == {"resident_id"}:
+            return
+        module_id = _nonempty_str(module.get("module_id")) or "(canvas)"
+        text_type = _identity_text_type(layer_id, module, field_id, source_kind)
+        dedupe_key = (module_id, node_id, field_id, text_type)
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        path = f"layers[{layer_id}].modules[{module_id}].nodes[{node_id}].fields[{field_id}]"
+        findings.append(
+            _finding(
+                status,
+                code,
+                (
+                    "在非基础身份自然语言中检测到居民身份硬编码；"
+                    f"layer_id={layer_id}, module_id={module_id}, node_id={node_id}, "
+                    f"field_id={field_id}, text_type={text_type}, identity_fields={','.join(matched)}；未自动改写文本"
+                ),
+                path,
+            )
+        )
+
+    skipped_branches = {
+        "fields",
+        "legacy_fields",
+        "legacy_data_fields",
+        "i18n_keys",
+        "reference_registry",
+        "recommended_references",
+        "references",
+        "reference_options",
+        "selected_options",
+        "default_selected_options",
+        "checkbox_config",
+        "checklist_config",
+    }
+
+    def scan_structure(
+        value: Any,
+        *,
+        layer_id: str,
+        module: Dict[str, Any],
+        node_id: str,
+        field_path: str,
+        source_kind: str,
+    ) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_text = str(key)
+                if key_text in skipped_branches:
+                    continue
+                nested_path = f"{field_path}.{key_text}" if field_path else key_text
+                if isinstance(item, str):
+                    if _natural_language_text_path(nested_path) or _natural_language_text_path(field_path):
+                        inspect_text(
+                            item,
+                            layer_id=layer_id,
+                            module=module,
+                            node_id=node_id,
+                            field_id=nested_path,
+                            source_kind=source_kind,
+                        )
+                elif isinstance(item, (dict, list)):
+                    scan_structure(
+                        item,
+                        layer_id=layer_id,
+                        module=module,
+                        node_id=node_id,
+                        field_path=nested_path,
+                        source_kind=source_kind,
+                    )
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                nested_path = f"{field_path}[{index}]"
+                if isinstance(item, str):
+                    if _natural_language_text_path(field_path):
+                        inspect_text(
+                            item,
+                            layer_id=layer_id,
+                            module=module,
+                            node_id=node_id,
+                            field_id=nested_path,
+                            source_kind=source_kind,
+                        )
+                elif isinstance(item, (dict, list)):
+                    scan_structure(
+                        item,
+                        layer_id=layer_id,
+                        module=module,
+                        node_id=node_id,
+                        field_path=nested_path,
+                        source_kind=source_kind,
+                    )
+
+    for module in collection.get("modules", []):
+        if not isinstance(module, dict) or module.get("module_id") == "module_basic_identity":
+            continue
+        layer_id = _nonempty_str(module.get("layer_id")) or "(unknown)"
+        for field_id in ("module_name", "description", "text", "content", "prompt"):
+            inspect_text(
+                module.get(field_id),
+                layer_id=layer_id,
+                module=module,
+                node_id="module",
+                field_id=field_id,
+                source_kind="module",
+            )
+        scan_structure(
+            _as_dict(module.get("config")),
+            layer_id=layer_id,
+            module=module,
+            node_id="module",
+            field_path="config",
+            source_kind="module",
+        )
+        scan_structure(
+            _as_dict(module.get("inputs")),
+            layer_id=layer_id,
+            module=module,
+            node_id="module",
+            field_path="inputs",
+            source_kind="module",
+        )
+        for node in _module_graph_nodes(module):
+            node_id = _module_graph_node_id(node) or "(unknown)"
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+            for index, field in enumerate(fields):
+                if not isinstance(field, dict):
+                    continue
+                field_id = _field_identifier(field, index)
+                value = field.get("field_value") if "field_value" in field else field.get("value")
+                inspect_text(value, layer_id=layer_id, module=module, node_id=node_id, field_id=field_id, source_kind="field")
+            checkbox_config = _as_dict(params.get("checkbox_config") or params.get("checklist_config"))
+            inspect_text(
+                checkbox_config.get("custom_text"),
+                layer_id=layer_id,
+                module=module,
+                node_id=node_id,
+                field_id="custom_text",
+                source_kind="custom_text",
+            )
+            scan_structure(
+                params,
+                layer_id=layer_id,
+                module=module,
+                node_id=node_id,
+                field_path="params",
+                source_kind="params",
+            )
+        input_schema = module.get("input_schema") if isinstance(module.get("input_schema"), list) else []
+        scan_structure(
+            input_schema,
+            layer_id=layer_id,
+            module=module,
+            node_id="input_schema",
+            field_path="input_schema",
+            source_kind="default",
+        )
+        if layer_id in {"layer_5", "layer_10"}:
+            scan_structure(
+                _as_dict(module.get("outputs")),
+                layer_id=layer_id,
+                module=module,
+                node_id="module_output",
+                field_path="outputs",
+                source_kind="output",
+            )
+    for node in collection.get("nodes", []):
+        if not isinstance(node, dict) or node.get("module_id") == "module_basic_identity":
+            continue
+        layer_id = _nonempty_str(node.get("layer_id")) or _nonempty_str(_as_dict(node.get("data")).get("layer_id")) or "(unknown)"
+        module_id = _nonempty_str(node.get("module_id")) or _nonempty_str(_as_dict(node.get("data")).get("module_id"))
+        module = {"module_id": module_id or "(canvas)", "layer_id": layer_id, "module_type": node.get("node_type") or node.get("type")}
+        scan_structure(
+            node.get("params") or node.get("data") or {},
+            layer_id=layer_id,
+            module=module,
+            node_id=_nonempty_str(node.get("node_id")) or _nonempty_str(node.get("id")) or "(unknown)",
+            field_path="params",
+            source_kind="params",
+        )
+    return findings
+
+
 def _collect_layer_contexts(workflow: Dict[str, Any], layers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     contexts: Dict[str, Dict[str, Any]] = {}
     workflow_contexts = workflow.get("layer_contexts") if isinstance(workflow.get("layer_contexts"), dict) else {}
@@ -1552,12 +3045,23 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
     edges = canvas.get("edges") or workflow.get("edges") or []
 
     # Modules: prefer canvas-supplied, else the authoritative catalog.
-    raw_modules = canvas.get("modules") or workflow.get("modules")
-    if raw_modules:
+    if isinstance(canvas.get("modules"), list):
+        raw_modules = canvas.get("modules")
+    elif isinstance(workflow.get("modules"), list):
+        raw_modules = workflow.get("modules")
+    else:
+        raw_modules = None
+    if raw_modules is not None:
         modules = [_as_dict(m) for m in raw_modules]
     else:
         modules = [m.model_dump(mode="json") for m in get_module_catalog()]
     modules = [module for module in modules if not _is_catalog_only_module(module)]
+    modules = _normalize_reference_inputs(modules)
+    compatibility_findings: List[Dict[str, str]] = []
+    for module in modules:
+        _sync_environment_module_output(module)
+    _sync_current_field_compatibility(modules, compatibility_findings)
+    _normalize_reference_registries(modules, compatibility_findings)
 
     # Slots: prefer canvas-supplied, else the catalog.
     raw_slots = canvas.get("slots") or workflow.get("slots")
@@ -1607,6 +3111,7 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
         "modules": modules,
         "slots": slots,
         "layer_contexts": layer_contexts,
+        "compatibility_findings": compatibility_findings,
     }
 
 
@@ -1757,6 +3262,8 @@ def validate_collection(collection: Dict[str, Any]) -> List[Dict[str, str]]:
         findings.extend(_secret_findings(collection.get(section, []), section))
     findings.extend(_legacy_module_output_fallback_findings(collection))
     findings.extend(_identity_core_audit_findings(collection))
+    findings.extend(_reference_input_findings(collection))
+    findings.extend(collection.get("compatibility_findings", []))
 
     return findings
 
@@ -1820,7 +3327,7 @@ def assemble_blueprint(collection: Dict[str, Any], resident_name: Optional[str] 
             "fallback": ["json", "mock"],
             "isolation": "per_resident",
             "persistence": True,
-            "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"],
+            "memory_types": list(MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES),
         },
         "memory_namespace": "default",
         "memory_policy": {
@@ -2174,18 +3681,6 @@ def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = Non
 # These functions override the legacy v0.1 / v0.2 public API at import time.
 # They are intentionally declarative and preserve the runtime / provider boundary.
 
-def _v3_provider_requirements() -> Dict[str, Any]:
-    return {
-        "llm": {"required": True, "mode": "mock", "capabilities": ["reasoning"]},
-        "memory": {"required": True, "mode": "local_runtime", "capabilities": ["read", "write", "view", "clear"]},
-        "tts": {"required": True, "mode": "mock", "capabilities": ["speak", "preview"]},
-        "avatar": {"required": False, "mode": "mock", "capabilities": ["render_state"]},
-        "lattice": {"required": True, "mode": "mock", "capabilities": ["state_update", "state_read"]},
-        "screen_mock": {"required": True, "mode": "mock", "capabilities": ["context", "anchor", "guidance"]},
-        "screen": {"required": True, "mode": "mock", "capabilities": ["context", "anchor", "guidance"]},
-    }
-
-
 def _v3_runtime_plan() -> Dict[str, Any]:
     return {
         "schema_version": DR_SCHEMA_VERSION_V0_3,
@@ -2225,21 +3720,33 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     raw_findings = validate_collection(collection)
     # Stage 6.11 is protocol-only: ignore provider-boundary findings that belong
     # to execution-layer wiring. The envelope must stay mock-only and declarative.
-    findings = [f for f in raw_findings if f.get("code") != "DR_PROVIDER_CONFIG"]
-    # Preserve legacy slot-type mismatch behavior for the v0.1 acceptance tests.
-    if any(m.get("slot_type") == "tts" for m in collection.get("modules", [])) and not any(s.get("slot_type") == "tts" for s in collection.get("slots", [])):
-        findings.append(_finding("FAIL", "DR_SLOT_TYPE_UNMATCHED", "module requires slot_type 'tts' but no slot provides it", "modules"))
+    findings = [
+        finding
+        for finding in raw_findings
+        if finding.get("code") != "DR_PROVIDER_CONFIG"
+        and not (
+            finding.get("code") == "DR_SLOT_TYPE_UNMATCHED"
+            and any(
+                f"slot_type {slot_type!r}" in str(finding.get("message") or "")
+                for slot_type in ("tts", "speech", "screen", "avatar", "ar", "tool")
+            )
+        )
+    ]
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
     valid = not any(f["status"] == "FAIL" for f in findings)
     checked_at = _now_iso()
     audit_report = _build_v03_audit_report(findings, checked_at)
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
     resident = blueprint.get("resident", {})
+    if isinstance(resident, dict):
+        # v0.3 root metadata is authoritative for this formal compatibility
+        # alias. The frozen v0.1 compiler constant remains unchanged.
+        resident["dr_version"] = DR_VERSION_V0_3
     resident_id = resident.get("resident_id") or _slugify(resident.get("name") or resident_name or "Digital Resident")
     resident_name_final = resident.get("name") or resident_name or "Digital Resident"
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
-    required_slot_types = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
-    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": {"required_slot_types": required_slot_types, "required_engines": ["llm_mock", "memory_mock", "tts_mock", "avatar_mock", "lattice_mock", "screen_mock"], "required_provider_types": ["llm", "memory", "tts", "avatar", "screen"], "runtime_api_version": SCHEMA_VERSION_V0_4, "execution_mode": "mock", "fallback_mode": "mock_fallback"}, "provider_requirements": _v3_provider_requirements(), "memory_policy": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"type": "append_only", "scope": "per_resident"}, "preference_memory": {"type": "kv", "scope": "per_resident"}, "retention_policy": "persistent", "read_write_policy": "local_runtime"}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "profile_memory", "preference_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
+    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
     payload["graph_snapshot"]["layer_outputs"] = _assemble_identity_core_outputs(
         collection,
         resident_id,
@@ -2250,6 +3757,15 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _merge_layer3_safety_into_safety_policy(payload)
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer8_behavior_outputs(collection))
     _merge_layer8_behavior_into_payload(payload)
+    memory_policy = _assemble_layer5_memory_policy(collection, resident_id, findings)
+    payload["memory_policy"] = memory_policy
+    payload["graph_snapshot"]["layer_outputs"]["memory_policy"] = memory_policy
+    payload["graph_snapshot"]["layer_outputs"]["layer_5"] = {
+        "memory_policy": memory_policy,
+        "module_ids": [module_id for module_id, _output_key, _policy_key in _LAYER5_MEMORY_POLICY_MODULES],
+        "module_count": sum(1 for _module_id, _output_key, policy_key in _LAYER5_MEMORY_POLICY_MODULES if policy_key in memory_policy),
+        "validation_result": "pass" if all(policy_key in memory_policy for _module_id, _output_key, policy_key in _LAYER5_MEMORY_POLICY_MODULES) else "partial",
+    }
     identity_sync = _v3_identity_sync_from_profile(payload)
     if identity_sync.get("resident_id"):
         resident_id = identity_sync["resident_id"]
@@ -2277,6 +3793,11 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     for config_key in ("memory_policy", "memory_config", "lattice_config"):
         if isinstance(payload.get(config_key), dict):
             payload[config_key]["resident_id"] = resident_id
+    private_namespace = f"private_memory:{resident_id}"
+    if isinstance(payload.get("memory_policy"), dict):
+        payload["memory_policy"]["namespace"] = private_namespace
+    if isinstance(payload.get("memory_config"), dict):
+        payload["memory_config"]["namespace"] = private_namespace
     if isinstance(resident, dict):
         resident["resident_id"] = resident_id
         resident["name"] = resident_name_final
@@ -2286,8 +3807,15 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             resident["disclosure"] = identity_sync["disclosure"]
     _sync_legacy_blueprint_identity(blueprint, resident_id, resident_name_final)
     _sync_legacy_blueprint_runtime_requirements(blueprint)
+    blueprint["memory_namespace"] = private_namespace
+    if isinstance(blueprint.get("memory_config"), dict):
+        blueprint["memory_config"]["namespace"] = private_namespace
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
     findings.extend(_identity_consistency_findings(manifest, payload, resident))
+    findings.extend(_environment_mapping_findings(payload))
+    findings.extend(_v03_version_findings(resident, manifest, payload, compile_info))
+    findings.extend(_identity_hardcode_findings(collection, payload))
+    findings.extend(validate_v03_runtime_contract({"manifest": manifest, "payload": payload}))
     audit_report = _build_v03_audit_report(findings, checked_at)
     return {
         "file_type": FILE_TYPE,
@@ -2346,7 +3874,10 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
     payload = _as_dict(dr.get("payload"))
     resident = _as_dict(dr.get("resident"))
     resident_id = manifest.get("resident_id") or resident.get("resident_id") or _as_dict(payload.get("resident_identity")).get("resident_id")
-    ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload.get("modules"), list) and isinstance(payload.get("slots"), list))
+    contract_findings = validate_v03_runtime_contract(dr)
+    contract_valid = not any(finding.get("status") == "FAIL" for finding in contract_findings)
+    audit_valid = bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))
+    ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload.get("modules"), list) and isinstance(payload.get("slots"), list) and audit_valid and contract_valid)
     return {"loaded": bool(ok), "mock": True, "resident_id": resident_id, "dr_version": dr.get("dr_version"), "runtime_version": RUNTIME_VERSION, "layer_count": len(payload.get("13_layers_snapshot") or dr.get("layers") or []), "module_count": len(payload.get("modules") or dr.get("modules") or []), "slot_count": len(payload.get("slots") or dr.get("slots") or []), "audit_valid": bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))}
 
 

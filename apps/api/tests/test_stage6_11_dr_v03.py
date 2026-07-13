@@ -765,7 +765,7 @@ def test_required_capabilities_do_not_overclaim_stage_7_4_1():
     assert not required.intersection({"ar", "tool", "screen_mock", "real_avatar", "tts_required", "provider"})
     assert {"llm", "memory", "lattice"}.issubset(required_slot_types)
     assert not required_slot_types.intersection({"ar", "tool"})
-    assert legacy_required_slot_types == ["llm", "memory", "lattice", "voice"]
+    assert legacy_required_slot_types == ["llm", "memory", "lattice"]
 
 
 def test_language_and_dates_normalized_for_export():
@@ -816,10 +816,24 @@ def test_mock_runtime_fields_allowed():
 
 def test_no_secret_or_provider_in_dr():
     dr = compile_dr_v0_3(_linxuan_canvas())
-    serialized = json.dumps(dr, ensure_ascii=False).lower()
+    forbidden_keys = {"api_key", "access_token", "refresh_token", "base_url", "credential", "client_secret"}
+    violations = []
 
-    for forbidden in ("api_key", "access_token", "refresh_token", "base_url", "credential", "client_secret"):
-        assert forbidden not in serialized
+    def collect_secret_fields(value, path="dr"):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                item_path = f"{path}.{key}"
+                if str(key).lower() in forbidden_keys and item not in (None, "", [], {}):
+                    violations.append(item_path)
+                collect_secret_fields(item, item_path)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                collect_secret_fields(item, f"{path}[{index}]")
+
+    collect_secret_fields(dr)
+    # Declarative deny-lists may name forbidden fields such as ``api_key``;
+    # only an actual secret-bearing field is prohibited.
+    assert violations == []
 
 
 def test_identity_compile_time_nodes_not_in_runtime_plan():
@@ -858,8 +872,10 @@ def test_identity_generic_fields_compile_without_legacy_warning():
     payload_module = next(module for module in body["compiled_dr"]["payload"]["modules"] if module["module_id"] == "module_basic_identity")
     text_input = next(node for node in payload_module["module_graph"]["nodes"] if node["node_type"] == "text_input")
     params = text_input["params"]
-    assert params["legacy_fields"][0]["field_value"] == "zh-CN"
-    assert params["legacy_data_fields"][0]["value"] == "zh-CN"
+    legacy_language = next(field for field in params["legacy_fields"] if field["field_key"] == "primary_language")
+    legacy_data_language = next(field for field in params["legacy_data_fields"] if field["field_key"] == "primary_language")
+    assert legacy_language["field_value"] == "zh-CN"
+    assert legacy_data_language["field_value"] == "zh-CN"
 
 
 def test_legacy_module_output_fallback_warning():

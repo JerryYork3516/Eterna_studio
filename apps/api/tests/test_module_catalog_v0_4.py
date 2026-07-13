@@ -587,12 +587,12 @@ def test_layer7_environment_module_has_generic_field_backbone_without_references
     assert all(field["field_value"] == "" for field in fields)
     assert all(field["reference_enabled"] is True for field in fields)
     assert [field["dr_mapping"] for field in fields] == [
-        "payload.layers.layer_7.modules.environment_setting.fields.city_environment",
-        "payload.layers.layer_7.modules.environment_setting.fields.natural_environment",
-        "payload.layers.layer_7.modules.environment_setting.fields.physical_living_environment",
-        "payload.layers.layer_7.modules.environment_setting.fields.daily_living_environment",
-        "payload.layers.layer_7.modules.environment_setting.fields.social_environment",
-        "payload.layers.layer_7.modules.environment_setting.fields.network_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.city_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.natural_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.physical_living_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.daily_living_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.social_environment",
+        "payload.modules.environment_setting.outputs.environment_context.fields.network_environment",
     ]
     assert all(field["dr_mapping_auto"] is True for field in fields)
 
@@ -1264,6 +1264,8 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
         "self_awareness_reality_boundary_validation",
         "self_awareness_consistency_validation",
         "self_awareness_output",
+        "self_awareness_reference_input",
+        "self_awareness_reference_output",
     ]
     assert [node["node_type"] for node in nodes] == [
         "text_input",
@@ -1273,6 +1275,8 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
         "validation",
         "validation",
         "module_output",
+        "reference_input",
+        "reference_output",
     ]
     assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
         ("self_awareness_input", "self_awareness_identity_normalize"),
@@ -1281,8 +1285,26 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
         ("self_awareness_model_build", "self_awareness_reality_boundary_validation"),
         ("self_awareness_reality_boundary_validation", "self_awareness_consistency_validation"),
         ("self_awareness_consistency_validation", "self_awareness_output"),
+        ("self_awareness_reference_input", "self_awareness_capability_limit_parse"),
+        ("self_awareness_reference_input", "self_awareness_model_build"),
+        ("self_awareness_reference_input", "self_awareness_reality_boundary_validation"),
+        ("self_awareness_reference_input", "self_awareness_consistency_validation"),
+        ("self_awareness_output", "self_awareness_reference_output"),
     ]
-    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+    assert len({node["node_id"] for node in nodes}) == 9
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 11
+
+    reference_input = next(node for node in nodes if node["node_id"] == "self_awareness_reference_input")
+    assert reference_input["params"]["references"] == []
+    assert reference_input["i18n_keys"]["name"] == "layer12.engineeringSelfAwareness.node.referenceInput.title"
+
+    reference_output = next(node for node in nodes if node["node_id"] == "self_awareness_reference_output")
+    assert reference_output["params"]["export_scopes"] == ["module", "node", "field"]
+    assert reference_output["params"]["allow_module_level_reference"] is True
+    assert reference_output["params"]["authority_source_type"] == "authoritative_constraint"
+    assert reference_output["params"]["is_core_source"] is False
+    assert reference_output["params"]["override_allowed"] is False
+    assert reference_output["i18n_keys"]["name"] == "layer12.engineeringSelfAwareness.node.referenceOutput.title"
 
     input_node = nodes[0]
     assert input_node["params"]["mode"] == "generic_fields"
@@ -1305,7 +1327,7 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
     assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
     assert all("i18n_keys" in field for field in fields.values())
 
-    output_node = nodes[-1]
+    output_node = next(node for node in nodes if node["node_id"] == "self_awareness_output")
     output = output_node["outputs"]["self_awareness_config"]
     assert output["compile_time_only"] is True
     assert output["no_runtime_capability"] is True
@@ -1322,7 +1344,7 @@ def test_layer12_engineering_self_awareness_module_reuses_self_awareness_without
     ]
 
 
-def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_node_shell():
+def test_layer12_self_state_metacognition_reuses_goal_setting_with_reference_context():
     catalog = get_module_catalog()
     modules = [module for module in catalog if module.module_id == "goal_setting"]
     assert len(modules) == 1
@@ -1349,6 +1371,8 @@ def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_no
         "self_state_confidence_uncertainty_assessment",
         "self_state_consistency_validation",
         "self_state_output",
+        "self_state_reference_input",
+        "self_state_reference_output",
     ]
     assert [node["node_id"] for node in nodes] == expected_node_ids
     assert len(set(expected_node_ids)) == len(expected_node_ids)
@@ -1360,12 +1384,34 @@ def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_no
         "validation",
         "validation",
         "module_output",
+        "reference_input",
+        "reference_output",
     ]
-    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
-        zip(expected_node_ids, expected_node_ids[1:])
-    )
-    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
-    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
+        ("self_state_input", "self_state_field_normalize"),
+        ("self_state_field_normalize", "self_state_task_focus_parse"),
+        ("self_state_task_focus_parse", "self_state_emotion_cognition_parse"),
+        ("self_state_emotion_cognition_parse", "self_state_confidence_uncertainty_assessment"),
+        ("self_state_confidence_uncertainty_assessment", "self_state_consistency_validation"),
+        ("self_state_consistency_validation", "self_state_output"),
+        ("self_state_reference_input", "self_state_task_focus_parse"),
+        ("self_state_reference_input", "self_state_emotion_cognition_parse"),
+        ("self_state_reference_input", "self_state_confidence_uncertainty_assessment"),
+        ("self_state_reference_input", "self_state_consistency_validation"),
+        ("self_state_output", "self_state_reference_output"),
+    ]
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 11
+
+    reference_input = next(node for node in nodes if node["node_id"] == "self_state_reference_input")
+    assert reference_input["params"]["references"] == []
+    assert reference_input["i18n_keys"]["name"] == "layer12.selfStateMetacognition.node.referenceInput.title"
+
+    reference_output = next(node for node in nodes if node["node_id"] == "self_state_reference_output")
+    assert reference_output["params"]["export_scopes"] == ["module", "node", "field"]
+    assert reference_output["params"]["authority_source_type"] == "authoritative_constraint"
+    assert reference_output["params"]["is_core_source"] is False
+    assert reference_output["params"]["override_allowed"] is False
+    assert reference_output["i18n_keys"]["name"] == "layer12.selfStateMetacognition.node.referenceOutput.title"
 
     fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
     assert list(fields) == [
@@ -1402,7 +1448,7 @@ def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_no
     assert all("i18n_keys" in field for field in fields.values())
     assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
 
-    output_node = nodes[-1]
+    output_node = next(node for node in nodes if node["node_id"] == "self_state_output")
     expected_output_fields = [
         "current_task_summary",
         "current_task_stage",
@@ -1428,7 +1474,7 @@ def test_layer12_self_state_metacognition_reuses_goal_setting_as_static_seven_no
     assert output["no_runtime_capability"] is True
 
 
-def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_node_shell():
+def test_layer12_controlled_self_will_reuses_reflection_summary_with_reference_context():
     catalog = get_module_catalog()
     modules = [module for module in catalog if module.module_id == "reflection_summary"]
     assert len(modules) == 1
@@ -1456,6 +1502,8 @@ def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_
         "controlled_will_candidate_action_priority",
         "controlled_will_permission_boundary_decision",
         "controlled_will_output",
+        "controlled_will_reference_input",
+        "controlled_will_reference_output",
     ]
     assert [node["node_id"] for node in nodes] == expected_node_ids
     assert len(set(expected_node_ids)) == len(expected_node_ids)
@@ -1467,12 +1515,34 @@ def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_
         "structure_normalize",
         "validation",
         "module_output",
+        "reference_input",
+        "reference_output",
     ]
-    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
-        zip(expected_node_ids, expected_node_ids[1:])
-    )
-    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
-    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
+        ("controlled_will_goal_input", "controlled_will_goal_normalize"),
+        ("controlled_will_goal_normalize", "controlled_will_goal_source_legality"),
+        ("controlled_will_goal_source_legality", "controlled_will_intent_generation"),
+        ("controlled_will_intent_generation", "controlled_will_candidate_action_priority"),
+        ("controlled_will_candidate_action_priority", "controlled_will_permission_boundary_decision"),
+        ("controlled_will_permission_boundary_decision", "controlled_will_output"),
+        ("controlled_will_reference_input", "controlled_will_goal_source_legality"),
+        ("controlled_will_reference_input", "controlled_will_intent_generation"),
+        ("controlled_will_reference_input", "controlled_will_candidate_action_priority"),
+        ("controlled_will_reference_input", "controlled_will_permission_boundary_decision"),
+        ("controlled_will_output", "controlled_will_reference_output"),
+    ]
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 11
+
+    reference_input = next(node for node in nodes if node["node_id"] == "controlled_will_reference_input")
+    assert reference_input["params"]["references"] == []
+    assert reference_input["i18n_keys"]["name"] == "layer12.controlledSelfWill.node.referenceInput.title"
+
+    reference_output = next(node for node in nodes if node["node_id"] == "controlled_will_reference_output")
+    assert reference_output["params"]["export_scopes"] == ["module", "node", "field"]
+    assert reference_output["params"]["authority_source_type"] == "authoritative_constraint"
+    assert reference_output["params"]["is_core_source"] is False
+    assert reference_output["params"]["override_allowed"] is False
+    assert reference_output["i18n_keys"]["name"] == "layer12.controlledSelfWill.node.referenceOutput.title"
 
     fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
     assert list(fields) == [
@@ -1517,7 +1587,11 @@ def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_
     assert all("i18n_keys" in field for field in fields.values())
     assert not {"name", "resident_id", "display_alias", "codename"} & set(fields)
 
-    decision = nodes[-2]["params"]
+    decision = next(
+        node["params"]
+        for node in nodes
+        if node["node_id"] == "controlled_will_permission_boundary_decision"
+    )
     assert decision["decision_statuses"] == [
         "allowed", "confirmation_required", "clarification_required", "paused", "rejected", "terminated",
     ]
@@ -1549,7 +1623,7 @@ def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_
         "risk_items",
         "rejection_or_pause_reason",
     ]
-    output_node = nodes[-1]
+    output_node = next(node for node in nodes if node["node_id"] == "controlled_will_output")
     assert output_node["params"]["output_key"] == "controlled_self_will_config"
     assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
     output = output_node["outputs"]["controlled_self_will_config"]
@@ -1558,7 +1632,7 @@ def test_layer12_controlled_self_will_reuses_reflection_summary_as_static_seven_
     assert output["no_action_execution"] is True
 
 
-def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_node_shell():
+def test_layer12_consistency_correction_reuses_self_evaluation_with_reference_context():
     catalog = get_module_catalog()
     modules = [module for module in catalog if module.module_id == "self_evaluation"]
     assert len(modules) == 1
@@ -1587,6 +1661,8 @@ def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_n
         "consistency_drift_risk_classification",
         "consistency_self_correction_strategy",
         "consistency_correction_output",
+        "consistency_correction_reference_input",
+        "consistency_correction_reference_output",
     ]
     assert [node["node_id"] for node in nodes] == expected_node_ids
     assert len(set(expected_node_ids)) == len(expected_node_ids)
@@ -1598,12 +1674,34 @@ def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_n
         "validation",
         "structure_normalize",
         "module_output",
+        "reference_input",
+        "reference_output",
     ]
-    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
-        zip(expected_node_ids, expected_node_ids[1:])
-    )
-    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
-    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
+        ("consistency_check_input", "consistency_check_field_normalize"),
+        ("consistency_check_field_normalize", "consistency_identity_personality_relationship_detection"),
+        ("consistency_identity_personality_relationship_detection", "consistency_fact_memory_capability_detection"),
+        ("consistency_fact_memory_capability_detection", "consistency_drift_risk_classification"),
+        ("consistency_drift_risk_classification", "consistency_self_correction_strategy"),
+        ("consistency_self_correction_strategy", "consistency_correction_output"),
+        ("consistency_correction_reference_input", "consistency_identity_personality_relationship_detection"),
+        ("consistency_correction_reference_input", "consistency_fact_memory_capability_detection"),
+        ("consistency_correction_reference_input", "consistency_drift_risk_classification"),
+        ("consistency_correction_reference_input", "consistency_self_correction_strategy"),
+        ("consistency_correction_output", "consistency_correction_reference_output"),
+    ]
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 11
+
+    reference_input = next(node for node in nodes if node["node_id"] == "consistency_correction_reference_input")
+    assert reference_input["params"]["references"] == []
+    assert reference_input["i18n_keys"]["name"] == "layer12.consistencyCorrection.node.referenceInput.title"
+
+    reference_output = next(node for node in nodes if node["node_id"] == "consistency_correction_reference_output")
+    assert reference_output["params"]["export_scopes"] == ["module", "node", "field"]
+    assert reference_output["params"]["authority_source_type"] == "authoritative_constraint"
+    assert reference_output["params"]["is_core_source"] is False
+    assert reference_output["params"]["override_allowed"] is False
+    assert reference_output["i18n_keys"]["name"] == "layer12.consistencyCorrection.node.referenceOutput.title"
 
     fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
     assert list(fields) == [
@@ -1683,7 +1781,7 @@ def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_n
         "memory_correction_request_required",
         "post_correction_recheck_required",
     ]
-    output_node = nodes[-1]
+    output_node = next(node for node in nodes if node["node_id"] == "consistency_correction_output")
     assert output_node["params"]["output_key"] == "consistency_correction_config"
     assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
     output = output_node["outputs"]["consistency_correction_config"]
@@ -1693,7 +1791,7 @@ def test_layer12_consistency_correction_reuses_self_evaluation_as_static_seven_n
     assert output["post_correction_recheck_required"] is True
 
 
-def test_layer12_growth_continuity_reuses_growth_plan_as_static_seven_node_shell():
+def test_layer12_growth_continuity_reuses_growth_plan_with_reference_context():
     catalog = get_module_catalog()
     modules = [module for module in catalog if module.module_id == "growth_plan"]
     assert len(modules) == 1
@@ -1721,6 +1819,8 @@ def test_layer12_growth_continuity_reuses_growth_plan_as_static_seven_node_shell
         "growth_identity_continuity_version_inheritance",
         "growth_change_permission_rollback_strategy",
         "growth_governance_output",
+        "growth_governance_reference_input",
+        "growth_governance_reference_output",
     ]
     assert [node["node_id"] for node in nodes] == expected_node_ids
     assert len(set(expected_node_ids)) == len(expected_node_ids)
@@ -1732,12 +1832,34 @@ def test_layer12_growth_continuity_reuses_growth_plan_as_static_seven_node_shell
         "validation",
         "structure_normalize",
         "module_output",
+        "reference_input",
+        "reference_output",
     ]
-    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == list(
-        zip(expected_node_ids, expected_node_ids[1:])
-    )
-    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 6
-    assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in nodes)
+    assert [(edge["source"], edge["target"]) for edge in module.module_graph["edges"]] == [
+        ("growth_governance_input", "growth_change_field_normalize"),
+        ("growth_change_field_normalize", "growth_change_source_authorization"),
+        ("growth_change_source_authorization", "growth_mutable_immutable_scope"),
+        ("growth_mutable_immutable_scope", "growth_identity_continuity_version_inheritance"),
+        ("growth_identity_continuity_version_inheritance", "growth_change_permission_rollback_strategy"),
+        ("growth_change_permission_rollback_strategy", "growth_governance_output"),
+        ("growth_governance_reference_input", "growth_change_source_authorization"),
+        ("growth_governance_reference_input", "growth_mutable_immutable_scope"),
+        ("growth_governance_reference_input", "growth_identity_continuity_version_inheritance"),
+        ("growth_governance_reference_input", "growth_change_permission_rollback_strategy"),
+        ("growth_governance_output", "growth_governance_reference_output"),
+    ]
+    assert len({edge["edge_id"] for edge in module.module_graph["edges"]}) == 11
+
+    reference_input = next(node for node in nodes if node["node_id"] == "growth_governance_reference_input")
+    assert reference_input["params"]["references"] == []
+    assert reference_input["i18n_keys"]["name"] == "layer12.growthContinuity.node.referenceInput.title"
+
+    reference_output = next(node for node in nodes if node["node_id"] == "growth_governance_reference_output")
+    assert reference_output["params"]["export_scopes"] == ["module", "node", "field"]
+    assert reference_output["params"]["authority_source_type"] == "authoritative_constraint"
+    assert reference_output["params"]["is_core_source"] is False
+    assert reference_output["params"]["override_allowed"] is False
+    assert reference_output["i18n_keys"]["name"] == "layer12.growthContinuity.node.referenceOutput.title"
 
     fields = {field["field_key"]: field for field in nodes[0]["params"]["fields"]}
     assert list(fields) == [
@@ -1830,7 +1952,7 @@ def test_layer12_growth_continuity_reuses_growth_plan_as_static_seven_node_shell
         "forbidden_change_reason",
         "suggested_alternative",
     ]
-    output_node = nodes[-1]
+    output_node = next(node for node in nodes if node["node_id"] == "growth_governance_output")
     assert output_node["params"]["output_key"] == "growth_identity_continuity_governance_config"
     assert output_node["params"]["output_schema"]["fields"] == expected_output_fields
     output = output_node["outputs"]["growth_identity_continuity_governance_config"]
@@ -1857,7 +1979,12 @@ def test_layer12_five_modules_have_complete_default_configuration_content():
     assert len(awareness["capability_scope"]) == 8
     assert len(awareness["capability_limits"]) == 7
     assert awareness["immutable_core"][-1] == "第一层身份唯一事实源"
-    awareness_output = modules["self_awareness"].module_graph["nodes"][-1]["outputs"]["self_awareness_config"]
+    awareness_output_node = next(
+        node
+        for node in modules["self_awareness"].module_graph["nodes"]
+        if node["node_id"] == "self_awareness_output"
+    )
+    awareness_output = awareness_output_node["outputs"]["self_awareness_config"]
     assert "不默认恋爱关系" in awareness_output["self_model"]["summary"]
     assert awareness_output["real_human_boundary"] is True
 
@@ -1894,7 +2021,12 @@ def test_layer12_five_modules_have_complete_default_configuration_content():
         "error_correction_need",
     ]
     assert "infinite_background_loop_goal" in legality["forbidden_goal_sources"]
-    controlled_output = modules["reflection_summary"].module_graph["nodes"][-1]["outputs"]["controlled_self_will_config"]
+    controlled_output_node = next(
+        node
+        for node in modules["reflection_summary"].module_graph["nodes"]
+        if node["node_id"] == "controlled_will_output"
+    )
+    controlled_output = controlled_output_node["outputs"]["controlled_self_will_config"]
     assert controlled_output["autonomy_level"] == "limited_choice"
     assert len(controlled_output["continuation_conditions"]) == 6
     assert len(controlled_output["pause_conditions"]) == 5
@@ -1912,7 +2044,12 @@ def test_layer12_five_modules_have_complete_default_configuration_content():
     correction = modules["self_evaluation"].module_graph["nodes"][5]["params"]
     assert len(correction["correction_action_types"]) == 15
     assert correction["correction_priority"][0] == "safety_boundary"
-    consistency_output = modules["self_evaluation"].module_graph["nodes"][-1]["outputs"]["consistency_correction_config"]
+    consistency_output_node = next(
+        node
+        for node in modules["self_evaluation"].module_graph["nodes"]
+        if node["node_id"] == "consistency_correction_output"
+    )
+    consistency_output = consistency_output_node["outputs"]["consistency_correction_config"]
     assert consistency_output["post_correction_recheck_required"] is True
 
     growth = input_fields("growth_plan")
@@ -1944,7 +2081,12 @@ def test_layer12_five_modules_have_complete_default_configuration_content():
         assert module.runtime_enabled is False
         assert module.no_execution is True
         assert module.slot_bindings == []
-        assert not any(node["node_type"] in {"reference_input", "reference_output"} for node in module.module_graph["nodes"])
+        reference_node_types = [
+            node["node_type"]
+            for node in module.module_graph["nodes"]
+            if node["node_type"] in {"reference_input", "reference_output"}
+        ]
+        assert reference_node_types == ["reference_input", "reference_output"]
         values = input_fields(module_id)
         serialized_values = json.dumps(values, ensure_ascii=False).lower()
         assert "resident_id" not in serialized_values

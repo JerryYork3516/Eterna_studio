@@ -49,6 +49,155 @@ const EXPORT_FILE_PREFIX = "eterna_canvas_";
 const MODULE_GRAPH_KEY_PREFIX = "module_graph_";
 const MODULE_GRAPH_BACKUP_KEY_PREFIX = "module_graph_backup_";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function clonePersistenceValue<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Canvas/DR state is JSON data; use the JSON fallback for older browsers.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function attachedModuleIdsFromLayerModules(layerModules: Record<string, string[]>): string[] {
+  return [...new Set(Object.values(layerModules).flatMap((moduleIds) => moduleIds.filter((moduleId) => typeof moduleId === "string" && moduleId.length > 0)))];
+}
+
+function recoveredNodeId(instanceId: string, nodeId: string): string {
+  return nodeId.includes("::") ? nodeId : `${instanceId}::${nodeId}`;
+}
+
+function readableNodeName(nodeId: string): string {
+  return nodeId
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/**
+ * Rebuild the editor-owned attachment/index state from an exported DR.
+ *
+ * A compiled DR does not carry tabs, viewport, selection, or the original
+ * attachment subset. Older compilers also copied graphless catalog modules
+ * into every DR, so only a non-empty compiled module_graph is evidence that an
+ * editor instance existed. Recovery attaches those graph-backed modules and
+ * preserves their compiled order within each layer.
+ */
+export function recoverCanvasStateFromDigitalResident(data: unknown): CanvasState | null {
+  if (!isRecord(data) || data.file_type !== "digital_resident") {
+    return null;
+  }
+  const payload = isRecord(data.payload) ? data.payload : data;
+  const modules = Array.isArray(payload.modules) ? payload.modules.filter(isRecord) : [];
+  if (modules.length === 0) {
+    return null;
+  }
+
+  const state = createEmptyCanvasState();
+  for (const module of modules) {
+    const moduleId = typeof module.module_id === "string" ? module.module_id : "";
+    const layerId = typeof module.layer_id === "string" ? module.layer_id : "";
+    if (!moduleId || !layerId) {
+      continue;
+    }
+
+    const moduleGraph = isRecord(module.module_graph) ? module.module_graph : {};
+    const compiledNodes = Array.isArray(moduleGraph.nodes) ? moduleGraph.nodes.filter(isRecord) : [];
+    const compiledEdges = Array.isArray(moduleGraph.edges) ? moduleGraph.edges.filter(isRecord) : [];
+    if (compiledNodes.length === 0 && compiledEdges.length === 0) {
+      continue;
+    }
+
+    const instanceId = `${layerId}::${moduleId}`;
+    const attached = state.layerModules[layerId] ?? [];
+    if (!attached.includes(moduleId)) {
+      state.layerModules[layerId] = [...attached, moduleId];
+    }
+    state.moduleInstanceRegistry[instanceId] = { instanceId, moduleId, layerId };
+
+    const editorNodeIdByCompiledId = new Map<string, string>();
+    const nodes = compiledNodes.map((node, index) => {
+      const compiledNodeId = String(node.node_id || node.id || `node_${index + 1}`);
+      const nodeId = recoveredNodeId(instanceId, compiledNodeId);
+      const nodeType = String(node.node_type || node.type || "transform");
+      editorNodeIdByCompiledId.set(compiledNodeId, nodeId);
+      const params = isRecord(node.params) ? clonePersistenceValue(node.params) : {};
+      const outputs = isRecord(node.outputs) ? clonePersistenceValue(node.outputs) : {};
+      const metadata = isRecord(node.metadata) ? clonePersistenceValue(node.metadata) : {};
+      const i18nKeys = isRecord(node.i18n_keys) ? clonePersistenceValue(node.i18n_keys) : {};
+      const position = isRecord(node.position)
+        ? { x: Number(node.position.x) || 0, y: Number(node.position.y) || 0 }
+        : { x: 120 + index * 360, y: 100 };
+      return {
+        node_id: nodeId,
+        type: nodeType,
+        category: "compile_time",
+        title_key: String(i18nKeys.name || `node.type.${nodeType}`),
+        title_fallback: readableNodeName(compiledNodeId),
+        position,
+        lock_level: "editable",
+        locale: null,
+        data: {
+          parent_module: instanceId,
+          catalog_preconfigured: true,
+          module_instance_id: instanceId,
+          catalog_module_id: moduleId,
+          catalog_node_id: compiledNodeId,
+          node_type: nodeType,
+          params,
+          fields: Array.isArray(params.fields) ? clonePersistenceValue(params.fields) : [],
+          outputs,
+          metadata,
+          i18n_keys: i18nKeys,
+        },
+        input_schema: [],
+        output_schema: [],
+        ports: {
+          inputs: [{ port_id: "p_in", name: "in", direction: "in" }],
+          outputs: [{ port_id: "p_out", name: "out", direction: "out" }],
+        },
+        validation: null,
+        layer_id: layerId,
+        module_id: moduleId,
+        i18n_keys: Object.fromEntries(Object.entries(i18nKeys).map(([key, value]) => [key, String(value)])),
+        collapsed_sections:
+          nodeType === "reference_input" || nodeType === "reference_output"
+            ? ["core", "advanced", "runtime"]
+            : ["advanced", "runtime"],
+      };
+    });
+    const edges = compiledEdges.map((edge, index) => {
+      const compiledSource = String(edge.source || edge.source_node_id || "");
+      const compiledTarget = String(edge.target || edge.target_node_id || "");
+      const source = editorNodeIdByCompiledId.get(compiledSource) || recoveredNodeId(instanceId, compiledSource);
+      const target = editorNodeIdByCompiledId.get(compiledTarget) || recoveredNodeId(instanceId, compiledTarget);
+      const edgeId = String(edge.edge_id || edge.id || `${source}_to_${target}_${index + 1}`);
+      const sourcePort = String(edge.source_port || edge.source_output || "p_out");
+      const targetPort = String(edge.target_port || edge.target_input || "p_in");
+      return {
+        edge_id: edgeId,
+        id: edgeId,
+        source,
+        source_port: sourcePort,
+        sourceHandle: sourcePort,
+        target,
+        target_port: targetPort,
+        targetHandle: targetPort,
+        type: "smoothstep",
+      };
+    });
+    state.moduleGraphs[instanceId] = { moduleId: instanceId, nodes, edges };
+  }
+
+  return attachedModuleIdsFromLayerModules(state.layerModules).length > 0 ? state : null;
+}
+
 function isQuotaExceededError(error: unknown): boolean {
   return (
     error instanceof DOMException &&
@@ -330,17 +479,22 @@ export function downloadCanvasState(state: CanvasState): void {
 export function importCanvasState(fileContent: string): { success: boolean; state?: CanvasState; error?: string } {
   try {
     const parsed = JSON.parse(fileContent);
-    
-    if (!validateCanvasState(parsed)) {
+
+    const recovered = recoverCanvasStateFromDigitalResident(parsed);
+    if (recovered) {
+      return { success: true, state: recovered };
+    }
+
+    if (validateCanvasState(parsed)) {
       return {
-        success: false,
-        error: "Canvas 状态格式无效",
+        success: true,
+        state: serializeCanvasState(parsed),
       };
     }
 
     return {
-      success: true,
-      state: parsed,
+      success: false,
+      error: "Canvas 状态或 DR 格式无效",
     };
   } catch (error) {
     return {

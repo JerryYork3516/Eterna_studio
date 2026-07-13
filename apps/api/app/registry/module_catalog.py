@@ -7,6 +7,7 @@ planned placeholders are registered here only — no real logic this stage.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Dict, List
 
 from ..models.v0_4 import (
@@ -180,6 +181,36 @@ MEMORY_PROVIDER_ROUTER_ACCEPTED_OPERATIONS = [
     *MEMORY_PROVIDER_ROUTER_CANONICAL_OPERATIONS,
     *MEMORY_PROVIDER_ROUTER_OPERATION_ALIASES.keys(),
 ]
+MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY: Dict[str, object] = {
+    "default_namespace": "private_memory:{resident_id}",
+    "empty_namespace_fallback": "memory_type_default",
+    "namespaces": {
+        "private_memory": {
+            "namespace_template": "private_memory:{resident_id}",
+            "default_memory_types": [
+                "preference_memory",
+                "event_memory",
+                "relationship_memory",
+            ],
+            "cross_resident_read": "forbidden",
+        },
+        "shared_session_context": {
+            "namespace_template": "shared_session_context:{session_id}",
+            "default_memory_types": ["short_term_memory"],
+            "retention": "session_only",
+            "session_end_action": "clear",
+            "cross_session_read": "forbidden",
+        },
+        "public_transcript": {
+            "namespace_template": "public_transcript:{session_id}",
+            "default_memory_types": ["interaction_log"],
+            "retention": "allowed_session_records_only",
+            "cross_session_read": "forbidden",
+        },
+    },
+    "legacy_aliases": {"default": "memory_type_default"},
+    "all_operations_require": "memory_access_control",
+}
 MEMORY_PROVIDER_ROUTER_NODE_ORDER = (
     "request_input",
     "operation_classifier",
@@ -2398,21 +2429,21 @@ def _language_behavior_module() -> ModuleV04:
             field_key="field.identity.primary_language.label",
         ),
         _language_behavior_reference(
-            "required_expression_style_expression_temperament",
+            "required_expression_style_tone_warmth",
             "required",
             "layer_2",
             "expression_style",
-            "expression_temperament",
+            "tone_warmth",
             "expressionTemperament",
             module_key="layer2.expressionMode.module.title",
             field_key="layer8.languageBehavior.refField.expressionTemperament",
         ),
         _language_behavior_reference(
-            "required_dialogue_boundary_forbidden_tone",
+            "required_humanistic_interaction_boundary_forbidden_interactions",
             "required",
             "layer_3",
-            "dialogue_boundary",
-            "forbidden_tone",
+            INTERACTION_SAFETY_MODULE_ID,
+            "forbidden_interactions",
             "forbiddenTone",
             module_key="layer8.languageBehavior.refModule.dialogueBoundary",
             field_key="layer8.languageBehavior.refField.forbiddenTone",
@@ -2508,7 +2539,7 @@ def _language_behavior_module() -> ModuleV04:
             {"value": "module_identity_anchor", "layer_id": "layer_1", "label_key": "module.module_identity_anchor"},
             {"value": "expression_style", "layer_id": "layer_2", "label_key": "layer2.expressionMode.module.title"},
             {"value": "personality_traits", "layer_id": "layer_2", "label_key": "layer2.personalityTraits.module.title"},
-            {"value": "dialogue_boundary", "layer_id": "layer_3", "label_key": "layer8.languageBehavior.refModule.dialogueBoundary"},
+            {"value": INTERACTION_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer8.languageBehavior.refModule.dialogueBoundary"},
             {"value": "world_setting", "layer_id": "layer_7", "label_key": "module.world_setting"},
             {"value": "relationship_rule", "layer_id": "layer_11", "label_key": "module.relationship_rule"},
         ],
@@ -2756,21 +2787,21 @@ def _decision_behavior_module() -> ModuleV04:
             field_key="layer8.decisionBehavior.refField.judgementPrinciples",
         ),
         _decision_behavior_reference(
-            "required_professional_boundary_no_professional_judgement_replacement",
+            "required_humanistic_behavior_boundary_real_world_decision_limits",
             "required",
             "layer_3",
-            "professional_boundary",
-            "no_professional_judgement_replacement",
+            BEHAVIOR_SAFETY_MODULE_ID,
+            "real_world_decision_limits",
             "noProfessionalJudgementReplacement",
             module_key="layer8.decisionBehavior.refModule.professionalBoundary",
             field_key="layer8.decisionBehavior.refField.noProfessionalJudgementReplacement",
         ),
         _decision_behavior_reference(
-            "required_dialogue_boundary_risk_response_boundary",
+            "required_humanistic_risk_response_risk_policy",
             "required",
             "layer_3",
-            "dialogue_boundary",
-            "risk_response_boundary",
+            RISK_RESPONSE_MODULE_ID,
+            "risk_policy",
             "riskResponseBoundary",
             module_key="layer8.decisionBehavior.refModule.dialogueBoundary",
             field_key="layer8.decisionBehavior.refField.riskResponseBoundary",
@@ -2864,8 +2895,8 @@ def _decision_behavior_module() -> ModuleV04:
         "modules": [
             {"value": "module_basic_identity", "layer_id": "layer_1", "label_key": "module.module_basic_identity"},
             {"value": "behavior_style_mapper", "layer_id": "layer_2", "label_key": "layer2.judgementStyle.module.title"},
-            {"value": "professional_boundary", "layer_id": "layer_3", "label_key": "layer8.decisionBehavior.refModule.professionalBoundary"},
-            {"value": "dialogue_boundary", "layer_id": "layer_3", "label_key": "layer8.decisionBehavior.refModule.dialogueBoundary"},
+            {"value": BEHAVIOR_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer8.decisionBehavior.refModule.professionalBoundary"},
+            {"value": RISK_RESPONSE_MODULE_ID, "layer_id": "layer_3", "label_key": "layer8.decisionBehavior.refModule.dialogueBoundary"},
             {"value": "memory_access_control", "layer_id": "layer_5", "label_key": "layer8.decisionBehavior.refModule.memoryPolicy"},
             {"value": TASK_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.taskBehavior.module.title"},
             {"value": "relationship_rule", "layer_id": "layer_11", "label_key": "module.relationship_rule"},
@@ -3090,11 +3121,11 @@ def _detail_behavior_module() -> ModuleV04:
     )
     recommended_references = [
         _detail_behavior_reference(
-            "required_expression_style_expression_temperament",
+            "required_expression_style_tone_warmth",
             "required",
             "layer_2",
             "expression_style",
-            "expression_temperament",
+            "tone_warmth",
             "expressionTemperament",
             module_key="layer2.expressionMode.module.title",
             field_key="layer8.detailBehavior.refField.expressionTemperament",
@@ -3110,11 +3141,11 @@ def _detail_behavior_module() -> ModuleV04:
             field_key="layer8.detailBehavior.refField.speechPace",
         ),
         _detail_behavior_reference(
-            "required_interaction_behavior_silence_companionship_style",
+            "required_language_behavior_comfort_expression_style",
             "required",
             "layer_8",
-            INTERACTION_BEHAVIOR_MODULE_ID,
-            "silence_companionship_style",
+            LANGUAGE_BEHAVIOR_MODULE_ID,
+            "comfort_expression_style",
             "silenceCompanionshipStyle",
             module_key="layer8.interactionBehavior.module.title",
             field_key="layer8.detailBehavior.refField.silenceCompanionshipStyle",
@@ -3444,31 +3475,31 @@ def _interaction_behavior_module() -> ModuleV04:
     )
     recommended_references = [
         _interaction_behavior_reference(
-            "required_personality_traits_core_personality",
+            "required_personality_traits_personality_base",
             "required",
             "layer_2",
             "personality_traits",
-            "core_personality",
+            "personality_base",
             "corePersonality",
             module_key="layer2.personalityTraits.module.title",
             field_key="layer8.interactionBehavior.refField.corePersonality",
         ),
         _interaction_behavior_reference(
-            "required_interaction_boundary_proactive_boundary",
+            "required_behavior_boundary_proactive_behavior_limits",
             "required",
             "layer_3",
-            INTERACTION_SAFETY_MODULE_ID,
-            "proactive_boundary",
+            BEHAVIOR_SAFETY_MODULE_ID,
+            "proactive_behavior_limits",
             "proactiveBoundary",
-            module_key="layer3.interactionBoundary.module.title",
+            module_key="layer3.behaviorBoundary.module.title",
             field_key="layer8.interactionBehavior.refField.proactiveBoundary",
         ),
         _interaction_behavior_reference(
-            "required_relationship_rule_default_relationship",
+            "required_relationship_rule_baseline_relationship_behavior",
             "required",
             "layer_11",
             "relationship_rule",
-            "default_relationship",
+            "baseline_relationship_behavior",
             "defaultRelationship",
             module_key="module.relationship_rule",
             field_key="layer8.interactionBehavior.refField.defaultRelationship",
@@ -3562,7 +3593,7 @@ def _interaction_behavior_module() -> ModuleV04:
         "modules": [
             {"value": "module_basic_identity", "layer_id": "layer_1", "label_key": "module.module_basic_identity"},
             {"value": "personality_traits", "layer_id": "layer_2", "label_key": "layer2.personalityTraits.module.title"},
-            {"value": INTERACTION_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer3.interactionBoundary.module.title"},
+            {"value": BEHAVIOR_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer3.behaviorBoundary.module.title"},
             {"value": "memory_access_control", "layer_id": "layer_5", "label_key": "layer8.interactionBehavior.refModule.memoryPolicy"},
             {"value": "world_setting", "layer_id": "layer_7", "label_key": "module.world_setting"},
             {"value": LANGUAGE_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.languageBehavior.module.title"},
@@ -3798,21 +3829,21 @@ def _task_behavior_module() -> ModuleV04:
             field_key="layer8.taskBehavior.refField.judgementPrinciples",
         ),
         _task_behavior_reference(
-            "required_professional_boundary_no_professional_judgement_replacement",
+            "required_humanistic_behavior_boundary_real_world_decision_limits",
             "required",
             "layer_3",
-            "professional_boundary",
-            "no_professional_judgement_replacement",
+            BEHAVIOR_SAFETY_MODULE_ID,
+            "real_world_decision_limits",
             "noProfessionalJudgementReplacement",
             module_key="layer8.taskBehavior.refModule.professionalBoundary",
             field_key="layer8.taskBehavior.refField.noProfessionalJudgementReplacement",
         ),
         _task_behavior_reference(
-            "required_decision_behavior_suggestion_output_format",
+            "required_behavior_style_mapper_suggestion_output_method",
             "required",
-            "layer_8",
-            "decision_pattern",
-            "suggestion_output_format",
+            "layer_2",
+            "behavior_style_mapper",
+            "suggestion_output_method",
             "suggestionOutputFormat",
             module_key="layer8.taskBehavior.refModule.decisionBehavior",
             field_key="layer8.taskBehavior.refField.suggestionOutputFormat",
@@ -3906,7 +3937,7 @@ def _task_behavior_module() -> ModuleV04:
         "modules": [
             {"value": "module_basic_identity", "layer_id": "layer_1", "label_key": "module.module_basic_identity"},
             {"value": "behavior_style_mapper", "layer_id": "layer_2", "label_key": "layer2.judgementStyle.module.title"},
-            {"value": "professional_boundary", "layer_id": "layer_3", "label_key": "layer8.taskBehavior.refModule.professionalBoundary"},
+            {"value": BEHAVIOR_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer8.taskBehavior.refModule.professionalBoundary"},
             {"value": "memory_access_control", "layer_id": "layer_5", "label_key": "layer8.taskBehavior.refModule.memoryPolicy"},
             {"value": "world_setting", "layer_id": "layer_7", "label_key": "module.world_setting"},
             {"value": "decision_pattern", "layer_id": "layer_8", "label_key": "layer8.taskBehavior.refModule.decisionBehavior"},
@@ -4132,31 +4163,31 @@ def _social_behavior_module() -> ModuleV04:
     )
     recommended_references = [
         _social_behavior_reference(
-            "required_dialogue_boundary_relationship_boundary",
+            "required_humanistic_interaction_boundary_non_romantic_default_boundary",
             "required",
             "layer_3",
-            "dialogue_boundary",
-            "relationship_boundary",
+            INTERACTION_SAFETY_MODULE_ID,
+            "non_romantic_default_boundary",
             "relationshipBoundary",
             module_key="layer8.socialBehavior.refModule.dialogueBoundary",
             field_key="layer8.socialBehavior.refField.relationshipBoundary",
         ),
         _social_behavior_reference(
-            "required_relationship_rule_default_relationship",
+            "required_relationship_rule_baseline_relationship_behavior",
             "required",
             "layer_11",
             "relationship_rule",
-            "default_relationship",
+            "baseline_relationship_behavior",
             "defaultRelationship",
             module_key="module.relationship_rule",
             field_key="layer8.socialBehavior.refField.defaultRelationship",
         ),
         _social_behavior_reference(
-            "required_personality_traits_core_personality",
+            "required_personality_traits_personality_base",
             "required",
             "layer_2",
             "personality_traits",
-            "core_personality",
+            "personality_base",
             "corePersonality",
             module_key="layer2.personalityTraits.module.title",
             field_key="layer8.socialBehavior.refField.corePersonality",
@@ -4250,7 +4281,7 @@ def _social_behavior_module() -> ModuleV04:
         "modules": [
             {"value": "module_basic_identity", "layer_id": "layer_1", "label_key": "module.module_basic_identity"},
             {"value": "personality_traits", "layer_id": "layer_2", "label_key": "layer2.personalityTraits.module.title"},
-            {"value": "dialogue_boundary", "layer_id": "layer_3", "label_key": "layer8.socialBehavior.refModule.dialogueBoundary"},
+            {"value": INTERACTION_SAFETY_MODULE_ID, "layer_id": "layer_3", "label_key": "layer8.socialBehavior.refModule.dialogueBoundary"},
             {"value": "memory_access_control", "layer_id": "layer_5", "label_key": "layer8.socialBehavior.refModule.memoryPolicy"},
             {"value": LANGUAGE_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.languageBehavior.module.title"},
             {"value": INTERACTION_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.interactionBehavior.module.title"},
@@ -4471,10 +4502,7 @@ def _memory_provider_router_module() -> ModuleV04:
             "resident_id_required": True,
             "cross_resident_access": "forbidden",
         },
-        "namespace_policy": {
-            "default_namespace": "default",
-            "empty_namespace_fallback": "default",
-        },
+        "namespace_policy": deepcopy(MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY),
         "memory_type_policy": {
             "allowed_memory_types": MEMORY_PROVIDER_ROUTER_ALLOWED_MEMORY_TYPES,
             "unsupported_memory_type_action": "reject",
@@ -4533,8 +4561,14 @@ def _memory_provider_router_module() -> ModuleV04:
         "namespace_resolver": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["resident_resolver"],
-            "normalize_rules": ["trim_namespace", "default_empty_namespace_to_default"],
-            "default_namespace": "default",
+            "normalize_rules": [
+                "trim_namespace",
+                "resolve_memory_type_default_namespace",
+                "render_scope_template",
+                "reject_cross_scope_namespace",
+            ],
+            "default_namespace": "private_memory:{resident_id}",
+            "namespace_policy": deepcopy(MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY),
         },
         "type_resolver": {
             "i18n_keys": param_i18n_keys,
@@ -4555,7 +4589,7 @@ def _memory_provider_router_module() -> ModuleV04:
         "provider_selector": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["access_control"],
-            "namespace": "default",
+            "namespace": "memory_type_default",
             "storage_backend": "mock",
             "allowed_backends": ["sqlite", "json", "mock"],
             "enabled": True,
@@ -4681,6 +4715,27 @@ def _memory_provider_router_module() -> ModuleV04:
     )
 
 
+MEMORY_RECALL_CLAIM_POLICY: Dict[str, object] = {
+    "claim_rule": "verified_read_only",
+    "required_evidence": [
+        "successful_read",
+        "nonempty_record",
+        "current_resident_namespace",
+        "current_user_scope",
+        "current_runtime_session",
+    ],
+    "rejected_record_states": ["uncertain", "inferred", "expired", "invalid", "revoked"],
+    "no_record_action": "do_not_claim_remember",
+    "uncertain_record_action": "ask_user_to_confirm_memory_accuracy",
+    "uncertain_response": "我不确定自己记得是否准确，需要你再确认一下。",
+    "memory_unavailable_action": "state_currently_unable_to_confirm",
+    "memory_unavailable_response": "我现在无法确认过去的记录。",
+    "inferred_fact_action": "forbid_remembered_claim_until_user_confirmation",
+    "model_inference_action": "never_generate_remembered_fact",
+    "response_style": "natural_brief_no_internal_fields",
+}
+
+
 def _memory_access_control_module() -> ModuleV04:
     module_id = MEMORY_ACCESS_CONTROL_MODULE_ID
     output_key = MEMORY_ACCESS_CONTROL_OUTPUT_KEY
@@ -4763,6 +4818,7 @@ def _memory_access_control_module() -> ModuleV04:
             "deny": "deny",
             "default_for_inferred_fact": "deny",
         },
+        "recall_claim_policy": deepcopy(MEMORY_RECALL_CLAIM_POLICY),
         "policy_actions": ["remember", "session_only", "ask_confirmation", "deny"],
         "audit_policy": {
             "record_fields": ["operation", "memory_type", "decision", "reason", "timestamp"],
@@ -5933,7 +5989,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义该居民长期熟悉的城市、地域氛围、城市节奏、公共空间和生活气息。用于提供城市语境，不写成旅游攻略，不堆砌景点，不重新定义居民身份。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.city_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.city_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -5943,7 +5999,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义该居民熟悉的季节、气候感受、地形、自然景观和自然光线等长期背景。只描述环境语境，不表示实时天气获取或现实环境感知能力。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.natural_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.natural_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -5953,7 +6009,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义该居民熟悉的房间、住宅、社区、街道、校园、工作空间和通勤空间等日常物理场景。不填写真实住址，不声明摄像头、定位、空间扫描或 AR 感知能力。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.physical_living_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.physical_living_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -5963,7 +6019,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义饮食、作息、声音、光线、气味、生活物件和日常活动形成的生活氛围。用于增强生活感，不代替 Layer 5 的具体记忆内容。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.daily_living_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.daily_living_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -5973,7 +6029,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义家庭、学校、职场、社区、熟人社会、城市压力和现实人际环境。只提供社会背景，不重新定义人格、关系模式或安全边界。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.social_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.social_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -5983,7 +6039,7 @@ def _environment_module() -> ModuleV04:
             "field_value": "",
             "field_type": "long_text",
             "description": "定义线上沟通、社交媒体、信息密度、虚拟空间和数字陪伴所处的网络语境。不声明自主联网、浏览网页、控制社交媒体或网络行动能力。",
-            "dr_mapping": "payload.layers.layer_7.modules.environment_setting.fields.network_environment",
+            "dr_mapping": "payload.modules.environment_setting.outputs.environment_context.fields.network_environment",
             "dr_mapping_auto": True,
             "reference_enabled": True,
         },
@@ -8470,6 +8526,8 @@ def _engineering_self_awareness_module() -> ModuleV04:
         "reality_boundary": "self_awareness_reality_boundary_validation",
         "consistency": "self_awareness_consistency_validation",
         "output": "self_awareness_output",
+        "reference_input": "self_awareness_reference_input",
+        "reference_output": "self_awareness_reference_output",
     }
 
     def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
@@ -8662,6 +8720,33 @@ def _engineering_self_awareness_module() -> ModuleV04:
             },
             "output",
         ),
+        (
+            "reference_input",
+            "reference_input",
+            {
+                "references": [],
+            },
+            "referenceInput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "authoritative_constraint",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
     nodes = [
@@ -8671,7 +8756,13 @@ def _engineering_self_awareness_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_12",
             "params": params,
-            "position": {"x": 120 + index * 300, "y": 120},
+            "position": (
+                {"x": 870, "y": 520}
+                if role == "reference_input"
+                else {"x": 2220, "y": 120}
+                if role == "reference_output"
+                else {"x": 120 + index * 300, "y": 120}
+            ),
             "i18n_keys": {
                 "name": f"layer12.engineeringSelfAwareness.node.{suffix}.title",
                 "description": f"layer12.engineeringSelfAwareness.node.{suffix}.description",
@@ -8708,6 +8799,25 @@ def _engineering_self_awareness_module() -> ModuleV04:
                     ("input", "identity_normalize", "capability_parse", "model_build", "reality_boundary", "consistency"),
                     ("identity_normalize", "capability_parse", "model_build", "reality_boundary", "consistency", "output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in ("capability_parse", "model_build", "reality_boundary", "consistency")
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['output']}_to_{node_ids['reference_output']}",
+                    "source": node_ids["output"],
+                    "source_port": "p_out",
+                    "target": node_ids["reference_output"],
+                    "target_port": "p_in",
+                }
             ],
             "output_key": output_key,
             "compile_time_only": True,
@@ -8755,6 +8865,8 @@ def _self_state_metacognition_module() -> ModuleV04:
         "confidence": "self_state_confidence_uncertainty_assessment",
         "consistency": "self_state_consistency_validation",
         "output": "self_state_output",
+        "reference_input": "self_state_reference_input",
+        "reference_output": "self_state_reference_output",
     }
 
     def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
@@ -8953,6 +9065,33 @@ def _self_state_metacognition_module() -> ModuleV04:
         ("confidence", "validation", {"input": node_ids["emotion_parse"], "validation_rules": confidence_rules, "state_rules": state_rules, "threshold_rules": threshold_rules, "thresholds": {"clarification_information_sufficiency": 0.4, "uncertainty_answer_confidence": 0.5, "confidence_sufficiency_warning_gap": 0.3}, "outputs": ["confidence_level", "uncertainty_sources", "information_gaps", "direct_answer_allowed", "clarification_required", "certainty_reduction_required", "unsupported_inference_rejected"]}, "confidenceAssessment"),
         ("consistency", "validation", {"input": node_ids["confidence"], "validation_rules": consistency_rules, "state_rules": state_rules, "threshold_rules": threshold_rules, "status_values": ["pass", "warning", "block"], "risk_levels": ["none", "low", "medium", "high", "must_stop"], "outputs": ["validation_status", "problem_fields", "risk_level", "correction_suggestions", "reevaluation_required"]}, "consistencyValidation"),
         ("output", "module_output", {"input": node_ids["consistency"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+        (
+            "reference_input",
+            "reference_input",
+            {
+                "references": [],
+            },
+            "referenceInput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "authoritative_constraint",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
     nodes = [
@@ -8962,7 +9101,13 @@ def _self_state_metacognition_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_12",
             "params": params,
-            "position": {"x": 120 + index * 300, "y": 120},
+            "position": (
+                {"x": 870, "y": 520}
+                if role == "reference_input"
+                else {"x": 2220, "y": 120}
+                if role == "reference_output"
+                else {"x": 120 + index * 300, "y": 120}
+            ),
             "i18n_keys": {
                 "name": f"layer12.selfStateMetacognition.node.{suffix}.title",
                 "description": f"layer12.selfStateMetacognition.node.{suffix}.description",
@@ -8998,6 +9143,25 @@ def _self_state_metacognition_module() -> ModuleV04:
                     ("input", "normalize", "task_parse", "emotion_parse", "confidence", "consistency"),
                     ("normalize", "task_parse", "emotion_parse", "confidence", "consistency", "output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in ("task_parse", "emotion_parse", "confidence", "consistency")
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['output']}_to_{node_ids['reference_output']}",
+                    "source": node_ids["output"],
+                    "source_port": "p_out",
+                    "target": node_ids["reference_output"],
+                    "target_port": "p_in",
+                }
             ],
             "output_key": output_key,
             "compile_time_only": True,
@@ -9045,6 +9209,8 @@ def _controlled_self_will_module() -> ModuleV04:
         "actions": "controlled_will_candidate_action_priority",
         "decision": "controlled_will_permission_boundary_decision",
         "output": "controlled_will_output",
+        "reference_input": "controlled_will_reference_input",
+        "reference_output": "controlled_will_reference_output",
     }
 
     def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
@@ -9273,6 +9439,31 @@ def _controlled_self_will_module() -> ModuleV04:
         ("actions", "structure_normalize", {"input": node_ids["intent"], "candidate_action_types": candidate_actions, "action_rules": action_rules, "autonomy_levels": autonomy_levels, "candidate_action_schema": ["action_name", "action_purpose", "action_priority", "selection_reason", "required_capability", "required_permission", "risk_level", "reversible", "confirmation_required", "completion_condition"], "outputs": ["candidate_actions", "recommended_action", "selection_reason"]}, "actions"),
         ("decision", "validation", {"input": node_ids["actions"], "validation_rules": decision_rules, "decision_statuses": decision_statuses, "decision_priority": ["safety_boundary", "user_explicit_stop", "identity_relationship_boundary", "capability_permission_scope", "user_current_goal", "current_task_efficiency", "expression_preference"], "outputs": ["decision_status", "selected_action", "required_permissions", "user_confirmation_required", "continuation_allowed", "risk_items", "rejection_or_pause_reason"]}, "decision"),
         ("output", "module_output", {"input": node_ids["decision"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+        (
+            "reference_input",
+            "reference_input",
+            {"references": []},
+            "referenceInput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "authoritative_constraint",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
     nodes = [
@@ -9282,7 +9473,13 @@ def _controlled_self_will_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_12",
             "params": params,
-            "position": {"x": 120 + index * 300, "y": 120},
+            "position": (
+                {"x": 870, "y": 520}
+                if role == "reference_input"
+                else {"x": 2220, "y": 120}
+                if role == "reference_output"
+                else {"x": 120 + index * 300, "y": 120}
+            ),
             "i18n_keys": {
                 "name": f"layer12.controlledSelfWill.node.{suffix}.title",
                 "description": f"layer12.controlledSelfWill.node.{suffix}.description",
@@ -9318,6 +9515,25 @@ def _controlled_self_will_module() -> ModuleV04:
                     ("input", "normalize", "legality", "intent", "actions", "decision"),
                     ("normalize", "legality", "intent", "actions", "decision", "output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in ("legality", "intent", "actions", "decision")
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['output']}_to_{node_ids['reference_output']}",
+                    "source": node_ids["output"],
+                    "source_port": "p_out",
+                    "target": node_ids["reference_output"],
+                    "target_port": "p_in",
+                }
             ],
             "output_key": output_key,
             "compile_time_only": True,
@@ -9366,6 +9582,8 @@ def _consistency_monitor_self_correction_module() -> ModuleV04:
         "risk": "consistency_drift_risk_classification",
         "correction": "consistency_self_correction_strategy",
         "output": "consistency_correction_output",
+        "reference_input": "consistency_correction_reference_input",
+        "reference_output": "consistency_correction_reference_output",
     }
 
     def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
@@ -9606,6 +9824,31 @@ def _consistency_monitor_self_correction_module() -> ModuleV04:
         ("risk", "validation", {"input": node_ids["conflict"], "validation_rules": risk_rules, "drift_types": drift_types, "risk_levels": risk_levels, "check_statuses": check_statuses, "status_rules": status_rules, "risk_priority": ["safety_boundary", "user_stop_signal", "identity_consistency", "fact_accuracy", "relationship_boundary", "capability_permission", "personality_language_style", "expression_quality"], "outputs": ["overall_check_status", "highest_risk_level", "primary_drift_type", "secondary_drift_types", "conflict_fields", "continuation_allowed", "rewrite_required", "action_stop_required"]}, "riskClassification"),
         ("correction", "structure_normalize", {"input": node_ids["risk"], "correction_action_types": correction_actions, "correction_rules": correction_rules, "correction_priority": ["safety_boundary", "user_stop_signal", "identity_consistency", "fact_accuracy", "relationship_boundary", "capability_permission", "personality_language_style", "expression_quality"], "correction_action_schema": ["correction_action", "correction_target", "correction_reason", "correction_priority", "regeneration_required", "user_confirmation_required", "current_task_stop_required", "correction_completion_criteria"], "outputs": ["correction_actions", "primary_correction_action", "correction_reason", "regeneration_required", "user_confirmation_required", "action_stop_required", "post_correction_recheck_required"]}, "correction"),
         ("output", "module_output", {"input": node_ids["correction"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+        (
+            "reference_input",
+            "reference_input",
+            {"references": []},
+            "referenceInput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "authoritative_constraint",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
     nodes = [
@@ -9615,7 +9858,13 @@ def _consistency_monitor_self_correction_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_12",
             "params": params,
-            "position": {"x": 120 + index * 300, "y": 120},
+            "position": (
+                {"x": 870, "y": 520}
+                if role == "reference_input"
+                else {"x": 2220, "y": 120}
+                if role == "reference_output"
+                else {"x": 120 + index * 300, "y": 120}
+            ),
             "i18n_keys": {
                 "name": f"layer12.consistencyCorrection.node.{suffix}.title",
                 "description": f"layer12.consistencyCorrection.node.{suffix}.description",
@@ -9651,6 +9900,25 @@ def _consistency_monitor_self_correction_module() -> ModuleV04:
                     ("input", "normalize", "identity", "conflict", "risk", "correction"),
                     ("normalize", "identity", "conflict", "risk", "correction", "output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in ("identity", "conflict", "risk", "correction")
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['output']}_to_{node_ids['reference_output']}",
+                    "source": node_ids["output"],
+                    "source_port": "p_out",
+                    "target": node_ids["reference_output"],
+                    "target_port": "p_in",
+                }
             ],
             "output_key": output_key,
             "compile_time_only": True,
@@ -9700,6 +9968,8 @@ def _growth_identity_continuity_governance_module() -> ModuleV04:
         "continuity": "growth_identity_continuity_version_inheritance",
         "decision": "growth_change_permission_rollback_strategy",
         "output": "growth_governance_output",
+        "reference_input": "growth_governance_reference_input",
+        "reference_output": "growth_governance_reference_output",
     }
 
     def enum_options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
@@ -9987,6 +10257,26 @@ def _growth_identity_continuity_governance_module() -> ModuleV04:
         ("continuity", "validation", {"input": node_ids["scope"], "validation_rules": continuity_rules, "identity_priority": ["identity_single_source_of_truth", "safety_boundary", "resident_type_and_core_positioning", "core_personality", "primary_language_and_regional_anchor", "default_relationship_positioning", "confirmed_long_term_memory", "user_preference", "expression_and_interaction_habits"], "inheritance_results": inheritance_results, "continuity_statuses": continuity_statuses, "outputs": ["identity_continuity_status", "version_inheritance_result", "migration_record_required", "rollback_supported", "continuity_risks"]}, "continuity"),
         ("decision", "structure_normalize", {"input": node_ids["continuity"], "decision_rules": decision_rules, "governance_decisions": governance_decisions, "rollback_triggers": rollback_triggers, "decision_schema": ["change_target_fields", "change_source", "authorization_status", "allowed_change_scope", "maximum_change_amplitude", "effect_scope", "effect_duration", "long_term_memory_write", "identity_core_impact", "other_layer_impact", "user_confirmation_required", "version_record_required", "rollback_supported", "rollback_conditions", "rollback_target_version", "decision_reason"], "outputs": ["growth_governance_status", "save_allowed", "adaptation_allowed", "manual_review_required", "rollback_required", "rollback_conditions", "rollback_target", "decision_reason"]}, "decision"),
         ("output", "module_output", {"input": node_ids["decision"], "output_key": output_key, "output_schema": {"type": "object", "required": True, "fields": output_fields}}, "output"),
+        ("reference_input", "reference_input", {"references": []}, "referenceInput"),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "authoritative_constraint",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
     nodes = [
@@ -9996,7 +10286,13 @@ def _growth_identity_continuity_governance_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_12",
             "params": params,
-            "position": {"x": 120 + index * 300, "y": 120},
+            "position": (
+                {"x": 870, "y": 520}
+                if role == "reference_input"
+                else {"x": 2220, "y": 120}
+                if role == "reference_output"
+                else {"x": 120 + index * 300, "y": 120}
+            ),
             "i18n_keys": {
                 "name": f"layer12.growthContinuity.node.{suffix}.title",
                 "description": f"layer12.growthContinuity.node.{suffix}.description",
@@ -10032,6 +10328,25 @@ def _growth_identity_continuity_governance_module() -> ModuleV04:
                     ("input", "normalize", "source", "scope", "continuity", "decision"),
                     ("normalize", "source", "scope", "continuity", "decision", "output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in ("source", "scope", "continuity", "decision")
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['output']}_to_{node_ids['reference_output']}",
+                    "source": node_ids["output"],
+                    "source_port": "p_out",
+                    "target": node_ids["reference_output"],
+                    "target_port": "p_in",
+                }
             ],
             "output_key": output_key,
             "compile_time_only": True,

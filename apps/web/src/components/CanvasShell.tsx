@@ -40,6 +40,7 @@ import type { StudioAssistantPatch, StudioAssistantRequest } from "@/lib/studioA
 import {
   type CanvasState,
   type ModuleInstance as PersistenceModuleInstance,
+  attachedModuleIdsFromLayerModules,
   createEmptyCanvasState,
   deserializeCanvasState,
   downloadCanvasState,
@@ -1512,7 +1513,7 @@ const nodeTypes = {
 };
 
 const CURVED_EDGE_DEFAULT_OPTIONS = {
-  type: "bezier" as const,
+  type: "default" as const,
   animated: false,
   style: {
     strokeWidth: 2
@@ -2374,16 +2375,6 @@ function compileEdgesFromModuleGraph(
     }
   }
   const integrity = filterDanglingModuleGraphEdges(nodeIds, edges);
-  if (integrity.pruned.length && process.env.NODE_ENV !== "production") {
-    for (const edge of integrity.pruned) {
-      console.warn("[MODULE_GRAPH_EDGE_PRUNED]", {
-        layer_id: module.layer_id,
-        module_id: module.module_id,
-        source: edge.source,
-        target: edge.target,
-      });
-    }
-  }
   return integrity.edges.filter(isRecord).map((edge, index) => {
     const source = String(edge.source || "");
     const target = String(edge.target || "");
@@ -2782,7 +2773,7 @@ function buildFolderToLayerEdge(layer: CatalogLayerInput) {
     target: layer.layer_id,
     sourceHandle: "p_out",
     targetHandle: "p_left_in",
-    type: "bezier",
+    type: CURVED_EDGE_DEFAULT_OPTIONS.type,
     selectable: false,
     deletable: false,
     focusable: false,
@@ -2798,7 +2789,7 @@ function buildLayerSpineEdge(layer: CatalogLayerInput, nextLayer: CatalogLayerIn
     target: nextLayer.layer_id,
     sourceHandle: "p_out",
     targetHandle: "p_in",
-    type: "bezier",
+    type: CURVED_EDGE_DEFAULT_OPTIONS.type,
     selectable: false,
     deletable: false,
     focusable: false,
@@ -3309,6 +3300,17 @@ export function CanvasShell() {
     }
 
     try {
+      const canvasState = loadCanvasStateFromLocalStorage();
+      if (
+        canvasState &&
+        (Object.keys(canvasState.layerModules ?? {}).length > 0 ||
+          Object.keys(canvasState.moduleInstanceRegistry ?? {}).length > 0)
+      ) {
+        return {
+          layerModules: canvasState.layerModules ?? {},
+          moduleInstanceRegistry: canvasState.moduleInstanceRegistry ?? {},
+        };
+      }
       const stored = window.localStorage.getItem(layerModuleStateKey);
       if (stored) {
         const parsed = JSON.parse(stored);
@@ -3670,7 +3672,9 @@ export function CanvasShell() {
   // P1-BRIDGE：在挂载时初始化 store 状态（从 localStorage 恢复）
   useEffect(() => {
     console.log("[P1-BRIDGE] Initializing module state on mount");
-    initializeModuleState();
+    const restored = initializeModuleState();
+    setLayerModules(restored.layerModules);
+    setModuleInstanceRegistry(restored.moduleInstanceRegistry);
     cleanupOrphanedGraphs();
     ensureAllTabsHaveGraphs();
   }, []); // run once on mount
@@ -3893,6 +3897,17 @@ export function CanvasShell() {
 
   // 导出 Canvas 状态为 JSON 文件
   const handleExportCanvasState = useCallback(() => {
+    const storedGraphs = useCanvasStore.getState().moduleGraphs;
+    const exportedGraphs = Object.fromEntries(
+      Object.entries(storedGraphs).map(([instanceId, graph]) => [
+        instanceId,
+        {
+          moduleId: graph.moduleNodeId || instanceId,
+          nodes: cloneCanvasValue(graph.nodes),
+          edges: cloneCanvasValue(graph.edges),
+        },
+      ])
+    );
     const canvasState = deserializeCanvasState({
       moduleTabs,
       moduleNames,
@@ -3903,6 +3918,7 @@ export function CanvasShell() {
       moduleUiColors,
       layerModules,
       moduleInstanceRegistry,
+      moduleGraphs: exportedGraphs,
     });
     downloadCanvasState(canvasState);
     appendLog(t("export.success", "Canvas 状态已导出"), "info");
@@ -3923,6 +3939,47 @@ export function CanvasShell() {
   // 导入 Canvas 状态
   const fileInputRef = useRef<HTMLInputElement>(null);
   const drLoadInputRef = useRef<HTMLInputElement>(null);
+  const restoreCanvasState = useCallback((state: CanvasState) => {
+    setModuleTabs(state.moduleTabs);
+    setModuleNames(state.moduleNames);
+    setUiNodeNames(state.uiNodeNames);
+    setUiTags(state.uiTags);
+    setUiGroups(state.uiGroups);
+    setUiColors(state.uiColors);
+    setModuleUiColors(state.moduleUiColors);
+    setLayerModules(state.layerModules);
+    setModuleInstanceRegistry(state.moduleInstanceRegistry);
+
+    const restoredGraphs = Object.fromEntries(
+      Object.entries(state.moduleGraphs ?? {}).map(([instanceId, graph]) => {
+        const moduleNodeId = graph.moduleId || instanceId;
+        return [
+          instanceId,
+          {
+            moduleNodeId,
+            nodes: cloneCanvasValue(graph.nodes) as WorkflowNode[],
+            edges: cloneCanvasValue(graph.edges) as WorkflowEdge[],
+          },
+        ];
+      })
+    );
+    for (const [instanceId, graph] of Object.entries(state.moduleGraphs ?? {})) {
+      saveModuleGraphState(instanceId, graph.nodes, graph.edges);
+    }
+
+    console.log("[P1-SYNC] Syncing restored canvas state to store");
+    const store = useCanvasStore.getState();
+    store.setModuleTabs(state.moduleTabs);
+    store.setModuleNames(state.moduleNames);
+    store.setUiNodeNames(state.uiNodeNames);
+    store.setUiTags(state.uiTags);
+    store.setUiGroups(state.uiGroups);
+    store.setUiColors(state.uiColors);
+    store.setModuleUiColors(state.moduleUiColors);
+    store.setLayerModules(state.layerModules);
+    store.setModuleInstanceRegistry(state.moduleInstanceRegistry);
+    store.setModuleGraphs(restoredGraphs);
+  }, []);
   const handleImportCanvasState = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -3938,31 +3995,7 @@ export function CanvasShell() {
         }
 
         const state = result.state;
-        
-        // 恢复所有状态
-        setModuleTabs(state.moduleTabs);
-        setModuleNames(state.moduleNames);
-        setUiNodeNames(state.uiNodeNames);
-        setUiTags(state.uiTags);
-        setUiGroups(state.uiGroups);
-        setUiColors(state.uiColors);
-        setModuleUiColors(state.moduleUiColors);
-        setLayerModules(state.layerModules);
-        setModuleInstanceRegistry(state.moduleInstanceRegistry);
-        
-        // P1-BRIDGE：同时同步到 store
-        console.log("[P1-SYNC] Syncing imported canvas state to store");
-        const store = useCanvasStore.getState();
-        store.setModuleTabs(state.moduleTabs);
-        store.setModuleNames(state.moduleNames);
-        store.setUiNodeNames(state.uiNodeNames);
-        store.setUiTags(state.uiTags);
-        store.setUiGroups(state.uiGroups);
-        store.setUiColors(state.uiColors);
-        store.setModuleUiColors(state.moduleUiColors);
-        store.setLayerModules(state.layerModules);
-        store.setModuleInstanceRegistry(state.moduleInstanceRegistry);
-        
+        restoreCanvasState(state);
         appendLog(t("import.success", "Canvas 状态已导入"), "info");
       } catch (error) {
         appendLog(`${t("error.importException", "Import exception")}: ${error instanceof Error ? error.message : t("common.unknownError", "unknown error")}`, "error");
@@ -3973,7 +4006,7 @@ export function CanvasShell() {
         }
       }
     },
-    [appendLog, t, setModuleTabs, setModuleNames, setUiNodeNames, setUiTags, setUiGroups, setUiColors, setModuleUiColors, setLayerModules, setModuleInstanceRegistry]
+    [appendLog, restoreCanvasState, t]
   );
 
   const handleImportCanvasStateClick = useCallback(() => {
@@ -3988,10 +4021,15 @@ export function CanvasShell() {
       }
       setBottomTab("logs");
       setActiveDrawer("logs");
+      const recovered = await readCanvasStateFromFile(file);
+      if (recovered.success && recovered.state) {
+        restoreCanvasState(recovered.state);
+        appendLog(t("import.success", "Canvas 状态已导入"), "info");
+      }
       await loadDRFile(file);
       event.target.value = "";
     },
-    [loadDRFile, setActiveDrawer, setBottomTab]
+    [appendLog, loadDRFile, restoreCanvasState, setActiveDrawer, setBottomTab, t]
   );
 
   const handleLoadDRClick = useCallback(() => {
@@ -4780,20 +4818,24 @@ export function CanvasShell() {
       }
       const storeGraphs = useCanvasStore.getState().moduleGraphs;
       const overrides = new Map<string, Record<string, unknown>>();
-      for (const catalogModule of moduleCatalog.modules) {
-        const registryInstance = Object.values(moduleInstanceRegistry).find((instance) => instance.moduleId === catalogModule.module_id);
+      const attachedModuleIds = new Set(attachedModuleIdsFromLayerModules(layerModules));
+      const attachedCatalogModules = moduleCatalog.modules.filter((module) => attachedModuleIds.has(module.module_id));
+      for (const catalogModule of attachedCatalogModules) {
+        const registryInstance = Object.values(moduleInstanceRegistry).find(
+          (instance) => instance.moduleId === catalogModule.module_id && instance.layerId === catalogModule.layer_id
+        );
         const preferredInstanceId = registryInstance?.instanceId ?? `${catalogModule.layer_id}${MODULE_INSTANCE_SEPARATOR}${catalogModule.module_id}`;
         const graphId = bestModuleGraphId(catalogModule.module_id, preferredInstanceId, storeGraphs, catalogModule);
         const graph = storeGraphs[graphId] ?? loadModuleGraphState(graphId);
-        const graphNodes = graph?.nodes ?? [];
-        if (!graphNodes.length) {
+        if (!graph) {
           continue;
         }
+        const graphNodes = graph.nodes ?? [];
         overrides.set(catalogModule.module_id, moduleWithCompiledGraph(catalogModule, graphNodes, graph?.edges ?? []));
       }
-      const modules: Workflow["modules"] = moduleCatalog.modules.map((module) => {
+      const modules: Workflow["modules"] = attachedCatalogModules.map((module) => {
         const compiled = overrides.get(module.module_id);
-        const baseModule = compiled ?? withoutLegacyModuleOutputFallback(safeClone(module) as Record<string, unknown>);
+        const baseModule = compiled ?? withoutLegacyModuleOutputFallback(cloneCanvasValue(module) as Record<string, unknown>);
         return normalizeLayer11StaticConfigModuleForCompile({
           ...baseModule,
           module_id: module.module_id,
@@ -4806,7 +4848,7 @@ export function CanvasShell() {
         modules,
       };
     },
-    [moduleCatalog, moduleCatalogById, moduleInstanceRegistry]
+    [layerModules, moduleCatalog, moduleInstanceRegistry]
   );
 
   const requireWorkflow = useCallback(() => {
@@ -5669,7 +5711,7 @@ export function CanvasShell() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json"
+              accept=".digital_resident,application/json,.json"
               onChange={handleImportCanvasState}
               style={{ display: "none" }}
             />

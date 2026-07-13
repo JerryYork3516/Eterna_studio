@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..services.memory_store import DEFAULT_MEMORY_TYPE, DEFAULT_NAMESPACE
-from ..services.provider_adapters import route_provider_for_engine
+from ..services.execution_engine import execute_memory_operation
 
 router = APIRouter(prefix="/runtime/memory", tags=["runtime-memory"])
 
@@ -41,7 +41,7 @@ def memory_view(
         "memory_type": memory_type,
         "limit": limit,
     }
-    return route_provider_for_engine("memory_mock", payload)
+    return execute_memory_operation(payload)
 
 
 @router.post("/clear")
@@ -53,4 +53,4 @@ def memory_clear(req: MemoryClearRequest) -> Dict[str, Any]:
         "namespace": req.namespace,
         "memory_type": req.memory_type,
     }
-    return route_provider_for_engine("memory_mock", payload)
+    return execute_memory_operation(payload)

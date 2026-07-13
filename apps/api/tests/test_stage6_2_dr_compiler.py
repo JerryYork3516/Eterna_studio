@@ -58,6 +58,15 @@ def test_blueprint_has_13_layers_and_modules_slots():
     assert len(dr["slots"]) > 0
 
 
+def test_explicit_empty_workflow_modules_do_not_fall_back_to_the_catalog():
+    canvas = _canvas_13()
+    canvas["workflow"]["modules"] = []
+
+    dr = compile_dr(canvas)
+
+    assert dr["modules"] == []
+
+
 def test_audit_valid_true_for_full_canvas():
     dr = compile_dr(_canvas_13())
     assert dr["audit"]["valid"] is True  # 4
@@ -268,7 +277,9 @@ def test_export_endpoint_returns_file_when_valid():
     assert body["not_executable"] is True
     assert body["manifest"]["resident_id"]
     assert body["payload"]["runtime_plan"]["steps"]
-    assert "api_key" not in json.dumps(body, ensure_ascii=False)
+    # Policy deny-lists may name ``api_key``; the exported DR must not contain
+    # an actual secret-bearing field.
+    assert '"api_key":' not in json.dumps(body, ensure_ascii=False)
 
 
 def test_export_v03_endpoint_returns_file_when_valid():

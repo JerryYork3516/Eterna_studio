@@ -6,11 +6,19 @@
  */
 
 import { useCanvasStore, type ModuleGraph, type ModuleGraphsState } from "./canvas-store";
-import { loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphState } from "@/lib/canvas-persistence";
+import { attachedModuleIdsFromLayerModules, loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphState } from "@/lib/canvas-persistence";
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
 import { translate } from "@/i18n";
-import { preserveStoredModuleEdges, preserveStoredModuleNodePosition } from "./module-graph-merge";
+import {
+  filterDanglingModuleGraphEdges,
+  mergeChecklistTemplateDefaults,
+  mergeAvailableModuleReferencePointers,
+  normalizeCatalogNodeId,
+  preserveStoredModuleEdges,
+  preserveStoredModuleNodePosition,
+  type AvailableModuleReferenceSource,
+} from "./module-graph-merge";
 
 const MODULE_INSTANCE_SEPARATOR = "::";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
@@ -33,6 +41,160 @@ const LAYER12_CONTENT_SEED_MODULE_IDS = new Set([
   "self_evaluation",
   "growth_plan",
 ]);
+type Layer12ReferenceModuleConfig = {
+  layerId: string;
+  moduleId: string;
+  referenceInputNodeId: string;
+  referenceOutputNodeId: string;
+  sources: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">>;
+};
+
+const SELF_AWARENESS_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_1", source_module_id: "module_basic_identity", reference_type: "references" },
+  { source_layer_id: "layer_1", source_module_id: "module_identity_anchor", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "expression_style", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "values_profile", reference_type: "references" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_data_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_behavior_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "builtin_capability", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "permission_management", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+];
+const SELF_STATE_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "emotion_pattern", reference_type: "references" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_data_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "environment_setting", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "self_awareness", reference_type: "references" },
+];
+const CONTROLLED_WILL_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_3", source_module_id: "humanistic_data_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_behavior_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "environment_setting", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "behavior_habit", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "builtin_capability", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "permission_management", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "tool_calling", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "relationship_rule", reference_type: "constrains" },
+  { source_layer_id: "layer_12", source_module_id: "self_awareness", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "goal_setting", reference_type: "references" },
+];
+const CONSISTENCY_CORRECTION_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_1", source_module_id: "module_basic_identity", reference_type: "references" },
+  { source_layer_id: "layer_1", source_module_id: "module_identity_anchor", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "expression_style", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "emotion_pattern", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "behavior_style_mapper", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "values_profile", reference_type: "references" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_data_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_behavior_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "environment_setting", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "behavior_habit", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "builtin_capability", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "permission_management", reference_type: "references" },
+  { source_layer_id: "layer_9", source_module_id: "tool_calling", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "relationship_rule", reference_type: "constrains" },
+  { source_layer_id: "layer_12", source_module_id: "self_awareness", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "goal_setting", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "reflection_summary", reference_type: "references" },
+];
+const GROWTH_CONTINUITY_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_1", source_module_id: "module_basic_identity", reference_type: "references" },
+  { source_layer_id: "layer_1", source_module_id: "module_identity_anchor", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "expression_style", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "values_profile", reference_type: "references" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_data_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_behavior_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "environment_setting", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "behavior_habit", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "relationship_rule", reference_type: "constrains" },
+  { source_layer_id: "layer_11", source_module_id: "intimacy_level", reference_type: "references" },
+  { source_layer_id: "layer_13", source_module_id: "version_management", reference_type: "references" },
+  { source_layer_id: "layer_13", source_module_id: "export_record", reference_type: "references" },
+  { source_layer_id: "layer_13", source_module_id: "deployment_platform", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "self_awareness", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "goal_setting", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "reflection_summary", reference_type: "references" },
+  { source_layer_id: "layer_12", source_module_id: "self_evaluation", reference_type: "references" },
+];
+const LAYER12_REFERENCE_MODULE_CONFIGS: Record<string, Layer12ReferenceModuleConfig> = {
+  self_awareness: {
+    layerId: "layer_12",
+    moduleId: "self_awareness",
+    referenceInputNodeId: "self_awareness_reference_input",
+    referenceOutputNodeId: "self_awareness_reference_output",
+    sources: SELF_AWARENESS_REFERENCE_SOURCES,
+  },
+  goal_setting: {
+    layerId: "layer_12",
+    moduleId: "goal_setting",
+    referenceInputNodeId: "self_state_reference_input",
+    referenceOutputNodeId: "self_state_reference_output",
+    sources: SELF_STATE_REFERENCE_SOURCES,
+  },
+  reflection_summary: {
+    layerId: "layer_12",
+    moduleId: "reflection_summary",
+    referenceInputNodeId: "controlled_will_reference_input",
+    referenceOutputNodeId: "controlled_will_reference_output",
+    sources: CONTROLLED_WILL_REFERENCE_SOURCES,
+  },
+  self_evaluation: {
+    layerId: "layer_12",
+    moduleId: "self_evaluation",
+    referenceInputNodeId: "consistency_correction_reference_input",
+    referenceOutputNodeId: "consistency_correction_reference_output",
+    sources: CONSISTENCY_CORRECTION_REFERENCE_SOURCES,
+  },
+  growth_plan: {
+    layerId: "layer_12",
+    moduleId: "growth_plan",
+    referenceInputNodeId: "growth_governance_reference_input",
+    referenceOutputNodeId: "growth_governance_reference_output",
+    sources: GROWTH_CONTINUITY_REFERENCE_SOURCES,
+  },
+};
 const LAYER12_PREVIOUS_FIELD_VALUES: Record<string, Record<string, unknown>> = {
   self_awareness: {
     identity_type: "digital_resident",
@@ -1294,7 +1456,7 @@ function catalogModuleIdFromSeed(initialNodes?: WorkflowNode[]): string {
 function catalogNodeIdFromGraphNode(node: unknown): string {
   const schemaNode = schemaNodeRecord(node);
   const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
-  return String(data.catalog_node_id || schemaNode?.node_id || "");
+  return normalizeCatalogNodeId(data.catalog_node_id || schemaNode?.node_id);
 }
 
 function graphNodeId(node: unknown): string {
@@ -1374,8 +1536,7 @@ function seedPositionsByCatalogNodeId(initialNodes?: WorkflowNode[]) {
   const positions = new Map<string, { x: number; y: number }>();
   for (const node of initialNodes ?? []) {
     const schemaNode = schemaNodeRecord(node);
-    const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
-    const catalogNodeId = String(data.catalog_node_id || schemaNode?.node_id || "");
+    const catalogNodeId = catalogNodeIdFromGraphNode(node);
     const position = positionValue(schemaNode?.position);
     if (catalogNodeId && position) {
       positions.set(catalogNodeId, position);
@@ -1389,7 +1550,7 @@ function seedParamsByCatalogNodeId(initialNodes?: WorkflowNode[]) {
   for (const node of initialNodes ?? []) {
     const schemaNode = schemaNodeRecord(node);
     const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
-    const catalogNodeId = String(data.catalog_node_id || schemaNode?.node_id || "");
+    const catalogNodeId = catalogNodeIdFromGraphNode(node);
     const params = isRecord(data.params) ? data.params : {};
     if (catalogNodeId && Object.keys(params).length) {
       paramsByNodeId.set(catalogNodeId, params);
@@ -1450,6 +1611,16 @@ function mergeCatalogLayoutSeed(
           params.checkbox_config = cloneJson(seedCheckboxConfig);
           data.params = params;
           changed = true;
+        } else if (
+          catalogModuleId === "language_habit" &&
+          catalogNodeId === "language_behavior_output_expression"
+        ) {
+          const mergedCheckboxConfig = mergeChecklistTemplateDefaults(params.checkbox_config, seedCheckboxConfig);
+          if (stableJson(mergedCheckboxConfig) !== stableJson(params.checkbox_config)) {
+            params.checkbox_config = mergedCheckboxConfig;
+            data.params = params;
+            changed = true;
+          }
         }
       }
     }
@@ -1590,15 +1761,116 @@ function mergeLayer12ContentSeed(
   return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
+function graphNodeTypeFromGraphNode(node: unknown) {
+  const schemaNode = schemaNodeRecord(node);
+  if (!schemaNode) return "";
+  const data = isRecord(schemaNode.data) ? schemaNode.data : {};
+  return String(data.node_type || schemaNode.node_type || schemaNode.type || "");
+}
+
+function mergeLayer12ReferenceSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  const config = LAYER12_REFERENCE_MODULE_CONFIGS[catalogModuleIdFromSeed(initialNodes)];
+  if (!config || !initialNodes?.length) {
+    return null;
+  }
+
+  const referenceNodeIds = new Set([
+    config.referenceInputNodeId,
+    config.referenceOutputNodeId,
+  ]);
+  const nextNodes = [...graph.nodes];
+  const catalogIdToGraphId = new Map<string, string>();
+  const existingReferenceNodeByType = new Map<string, string>();
+  for (const node of nextNodes) {
+    const catalogNodeId = catalogNodeIdFromGraphNode(node);
+    const nodeId = graphNodeId(node);
+    if (catalogNodeId && nodeId) catalogIdToGraphId.set(catalogNodeId, nodeId);
+    const nodeType = graphNodeTypeFromGraphNode(node);
+    if ((nodeType === "reference_input" || nodeType === "reference_output") && nodeId && !existingReferenceNodeByType.has(nodeType)) {
+      existingReferenceNodeByType.set(nodeType, nodeId);
+    }
+  }
+
+  let changed = false;
+  for (const seedNode of initialNodes) {
+    const catalogNodeId = catalogNodeIdFromGraphNode(seedNode);
+    if (!referenceNodeIds.has(catalogNodeId)) continue;
+    const nodeType = graphNodeTypeFromGraphNode(seedNode);
+    const existingNodeId = catalogIdToGraphId.get(catalogNodeId) || existingReferenceNodeByType.get(nodeType);
+    if (existingNodeId) {
+      catalogIdToGraphId.set(catalogNodeId, existingNodeId);
+      continue;
+    }
+    const nextNode = cloneJson(seedNode) as WorkflowNode;
+    nextNodes.push(nextNode);
+    const nextNodeId = graphNodeId(nextNode);
+    if (nextNodeId) {
+      catalogIdToGraphId.set(catalogNodeId, nextNodeId);
+      existingReferenceNodeByType.set(nodeType, nextNodeId);
+    }
+    changed = true;
+  }
+
+  const initialNodeIdMap = nodeIdToCatalogNodeId(initialNodes);
+  const nextEdges = [...graph.edges];
+  const existingPairs = new Set(
+    nextEdges.map((edge) => `${edgeEndpoint(edge, "source")}->${edgeEndpoint(edge, "target")}`)
+  );
+  const existingEdgeIds = new Set(
+    nextEdges
+      .map((edge) => {
+        const edgeRecord = edge as unknown as Record<string, unknown>;
+        return String(edgeRecord.edge_id || edgeRecord.id || "");
+      })
+      .filter(Boolean)
+  );
+  for (const seedEdge of initialEdges ?? []) {
+    const seedSource = edgeEndpoint(seedEdge, "source");
+    const seedTarget = edgeEndpoint(seedEdge, "target");
+    const sourceCatalogId = catalogNodeIdFromEndpoint(seedSource, initialNodeIdMap);
+    const targetCatalogId = catalogNodeIdFromEndpoint(seedTarget, initialNodeIdMap);
+    if (!referenceNodeIds.has(sourceCatalogId) && !referenceNodeIds.has(targetCatalogId)) continue;
+    const source = catalogIdToGraphId.get(sourceCatalogId);
+    const target = catalogIdToGraphId.get(targetCatalogId);
+    if (!source || !target || existingPairs.has(`${source}->${target}`)) continue;
+
+    const nextEdge = cloneJson(seedEdge) as WorkflowEdge & Record<string, unknown>;
+    nextEdge.source = source;
+    nextEdge.target = target;
+    if ("source_node_id" in nextEdge) nextEdge.source_node_id = source;
+    if ("target_node_id" in nextEdge) nextEdge.target_node_id = target;
+    const baseEdgeId = String(nextEdge.edge_id || nextEdge.id || `${source}_to_${target}`);
+    let edgeId = baseEdgeId;
+    let suffix = 2;
+    while (existingEdgeIds.has(edgeId)) {
+      edgeId = `${baseEdgeId}_${suffix}`;
+      suffix += 1;
+    }
+    nextEdge.edge_id = edgeId;
+    nextEdge.id = edgeId;
+    nextEdges.push(nextEdge as WorkflowEdge);
+    existingPairs.add(`${source}->${target}`);
+    existingEdgeIds.add(edgeId);
+    changed = true;
+  }
+
+  return changed ? { ...graph, nodes: nextNodes, edges: nextEdges } : null;
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ): ModuleGraph | null {
-  const fieldMerged = mergeCatalogFieldSeed(graph, initialNodes, initialEdges);
-  const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graph, initialNodes);
-  const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graph, initialNodes, initialEdges);
-  return layoutMerged ?? contentMerged ?? fieldMerged;
+  const referenceMerged = mergeLayer12ReferenceSeed(graph, initialNodes, initialEdges);
+  const fieldMerged = mergeCatalogFieldSeed(referenceMerged ?? graph, initialNodes, initialEdges);
+  const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? referenceMerged ?? graph, initialNodes);
+  const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? referenceMerged ?? graph, initialNodes, initialEdges);
+  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged;
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {
@@ -1623,6 +1895,9 @@ function shouldMigrateGenericFieldNode(
   data: Record<string, unknown>,
   params: Record<string, unknown>
 ) {
+  if (nodeType === "reference_input" || nodeType === "reference_output") {
+    return false;
+  }
   if (GENERIC_FIELD_MIGRATION_NODE_TYPES.has(nodeType)) {
     return true;
   }
@@ -1700,6 +1975,56 @@ function isRiskResponseIdentity(identity: ModuleInstance) {
 
 function graphNodeType(schemaNode: Record<string, unknown>, data: Record<string, unknown>) {
   return String(data.node_type || schemaNode.type || "");
+}
+
+function migrateLayer12ReferenceGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>,
+  moduleGraphs: ModuleGraphsState
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  const config = LAYER12_REFERENCE_MODULE_CONFIGS[identity.moduleId];
+  if (!config || identity.layerId !== config.layerId) {
+    return null;
+  }
+
+  const availableSources: AvailableModuleReferenceSource[] = config.sources.map((source) => {
+    const sourceNodeIds = Object.values(moduleGraphs)
+      .filter((candidate) => {
+        const candidateIdentity = layerModuleIdentity(candidate.moduleNodeId, registry);
+        return candidateIdentity.layerId === source.source_layer_id && candidateIdentity.moduleId === source.source_module_id;
+      })
+      .flatMap((candidate) =>
+        candidate.nodes
+          .filter((node) => graphNodeTypeFromGraphNode(node) === "reference_output")
+          .map(graphNodeId)
+          .filter(Boolean)
+      );
+    return {
+      ...source,
+      source_node_ids: [...new Set(sourceNodeIds)],
+    };
+  });
+
+  let changed = false;
+  let referenceInputProcessed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    if (referenceInputProcessed || graphNodeTypeFromGraphNode(node) !== "reference_input") return node;
+    referenceInputProcessed = true;
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) return node;
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const merged = mergeAvailableModuleReferencePointers(params.references, availableSources);
+    if (!merged.changed) return node;
+    data.params = { ...params, references: merged.references };
+    data.references = cloneJson(merged.references);
+    changed = true;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
 }
 
 function replaceReferenceNodeIdPrefix(nodeId: string) {
@@ -2072,7 +2397,25 @@ function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
 
 function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
   const store = useCanvasStore.getState();
-  const riskMigration = migrateRiskResponseReferenceGraph(graph, store.moduleInstanceRegistry);
+  const edgeIntegrity = filterDanglingModuleGraphEdges(graph.nodes.map(graphNodeId).filter(Boolean), graph.edges);
+  const graphAfterEdgeCleanup = edgeIntegrity.pruned.length
+    ? { ...graph, edges: edgeIntegrity.edges as WorkflowEdge[] }
+    : graph;
+  if (graphAfterEdgeCleanup !== graph) {
+    store.updateModuleGraph(
+      graphAfterEdgeCleanup.moduleNodeId,
+      graphAfterEdgeCleanup.nodes,
+      graphAfterEdgeCleanup.edges,
+      graphAfterEdgeCleanup.viewport
+    );
+    saveModuleGraphState(
+      graphAfterEdgeCleanup.moduleNodeId,
+      graphAfterEdgeCleanup.nodes,
+      graphAfterEdgeCleanup.edges
+    );
+  }
+
+  const riskMigration = migrateRiskResponseReferenceGraph(graphAfterEdgeCleanup, store.moduleInstanceRegistry);
   if (riskMigration) {
     store.updateModuleGraph(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges, riskMigration.graph.viewport);
     saveModuleGraphState(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges);
@@ -2088,7 +2431,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
       movedIds: riskMigration.nodeIdMap.size,
     });
   }
-  const graphAfterRiskMigration = riskMigration?.graph ?? graph;
+  const graphAfterRiskMigration = riskMigration?.graph ?? graphAfterEdgeCleanup;
   const memoryRouterMigration = migrateMemoryProviderRouterTypeResolverGraph(graphAfterRiskMigration, store.moduleInstanceRegistry);
   if (memoryRouterMigration) {
     store.updateModuleGraph(memoryRouterMigration.moduleNodeId, memoryRouterMigration.nodes, memoryRouterMigration.edges, memoryRouterMigration.viewport);
@@ -2182,7 +2525,29 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
   }
   const graphAfterLayer11P2Migration = layer11P2Migration ?? graphAfterLayer11SemanticMigration;
-  const migratedGraph = migrateGenericFieldsGraph(graphAfterLayer11P2Migration, store.moduleInstanceRegistry);
+  const layer12ReferenceMigration = migrateLayer12ReferenceGraph(
+    graphAfterLayer11P2Migration,
+    store.moduleInstanceRegistry,
+    store.moduleGraphs
+  );
+  if (layer12ReferenceMigration) {
+    store.updateModuleGraph(
+      layer12ReferenceMigration.moduleNodeId,
+      layer12ReferenceMigration.nodes,
+      layer12ReferenceMigration.edges,
+      layer12ReferenceMigration.viewport
+    );
+    saveModuleGraphState(
+      layer12ReferenceMigration.moduleNodeId,
+      layer12ReferenceMigration.nodes,
+      layer12ReferenceMigration.edges
+    );
+    console.log("[P1-BRIDGE] synchronized Layer 12 module references", {
+      moduleNodeId: layer12ReferenceMigration.moduleNodeId,
+    });
+  }
+  const graphAfterLayer12ReferenceMigration = layer12ReferenceMigration ?? graphAfterLayer11P2Migration;
+  const migratedGraph = migrateGenericFieldsGraph(graphAfterLayer12ReferenceMigration, store.moduleInstanceRegistry);
   if (migratedGraph) {
     store.updateModuleGraph(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges, migratedGraph.viewport);
     saveModuleGraphState(migratedGraph.moduleNodeId, migratedGraph.nodes, migratedGraph.edges);
@@ -2191,7 +2556,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     });
     return migratedGraph;
   }
-  return graphAfterLayer11SemanticMigration;
+  return graphAfterLayer12ReferenceMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {
@@ -2215,6 +2580,7 @@ export function initializeModuleState() {
   
   // 1. 尝试从 localStorage 恢复（作为后备方案）
   const stored = loadCanvasStateFromLocalStorage();
+  const storeHasAttachedModules = attachedModuleIdsFromLayerModules(store.layerModules).length > 0;
   
   // 2. 构建完整的 module state（store 优先）
   const moduleState = {
@@ -2240,10 +2606,10 @@ export function initializeModuleState() {
     moduleUiColors: Object.keys(store.moduleUiColors).length > 0
       ? store.moduleUiColors
       : stored?.moduleUiColors ?? {},
-    layerModules: Object.keys(store.layerModules).length > 0
+    layerModules: storeHasAttachedModules
       ? store.layerModules
       : stored?.layerModules ?? {},
-    moduleInstanceRegistry: Object.keys(store.moduleInstanceRegistry).length > 0
+    moduleInstanceRegistry: storeHasAttachedModules && Object.keys(store.moduleInstanceRegistry).length > 0
       ? store.moduleInstanceRegistry
       : stored?.moduleInstanceRegistry ?? {},
   };
@@ -2264,6 +2630,7 @@ export function initializeModuleState() {
     tabCount: moduleState.moduleTabs.length,
     instanceCount: Object.keys(moduleState.moduleInstanceRegistry).length,
   });
+  return moduleState;
 }
 
 /**

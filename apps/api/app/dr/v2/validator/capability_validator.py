@@ -7,7 +7,9 @@ whether bindings *exist*; it never invokes a slot, engine, tool, or MCP.
 
 from __future__ import annotations
 
-from ....models.v0_4 import SlotType
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
+
+from ....models.v0_4 import SCHEMA_VERSION_V0_4, SlotType
 from ....registry.engine_registry import engine_registry_map
 from ....registry.module_catalog import module_catalog_map
 from ....registry.provider_registry import resolve_provider_for_engine
@@ -20,6 +22,253 @@ _ALLOWED_SKILL_SOURCES = {"official", "verified"}
 # Resident classes enabled this stage (civilization_synthesis is reserved only).
 _ENABLED_RESIDENT_CLASSES = {ResidentClass.industry_expertise, ResidentClass.human_empathy}
 _WEIGHT_TOL = 1e-9
+
+STAGE_7_4_REQUIRED_SLOT_TYPES: Tuple[str, ...] = ("llm", "memory", "lattice")
+_STAGE_7_4_OPTIONAL_SLOT_TYPES = frozenset({"tts", "speech", "screen", "avatar", "ar", "tool"})
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump(mode="json")
+        return dumped if isinstance(dumped, Mapping) else {}
+    return {}
+
+
+def _v03_finding(status: str, code: str, message: str, path: str) -> Dict[str, str]:
+    return {"status": status, "code": code, "message": message, "path": path}
+
+
+def _slot_chain(slot_type: str, slots: Sequence[Any]) -> Tuple[str, str | None, Dict[str, Any] | None]:
+    """Resolve one DR slot type through the frozen Slot -> Engine -> Provider chain."""
+    catalog_slots = slot_catalog_map()
+    engines = engine_registry_map()
+    matched_slot_id: str | None = None
+    for raw_slot in slots:
+        slot = _mapping(raw_slot)
+        if str(slot.get("slot_type") or "") != slot_type:
+            continue
+        slot_id = str(slot.get("slot_id") or "")
+        catalog_slot = catalog_slots.get(slot_id)
+        if catalog_slot is None or catalog_slot.slot_type.value != slot_type:
+            continue
+        matched_slot_id = slot_id
+        engine_id = str(slot.get("engine_binding") or catalog_slot.engine_binding or "")
+        engine = engines.get(engine_id)
+        if engine is None or slot_type not in {item.value for item in engine.supported_slot_types}:
+            continue
+        return engine_id, slot_id, resolve_provider_for_engine(engine_id)
+    return "", matched_slot_id, None
+
+
+def build_v03_runtime_contract(slots: Sequence[Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build Stage 7.4 requirements from the real registries, without Provider binding."""
+    required_engines: List[str] = []
+    required_provider_types: List[str] = []
+    provider_requirements: Dict[str, Any] = {
+        "llm": {"required": True, "mode": "mock", "capabilities": ["reasoning"]},
+        "memory": {"required": True, "mode": "local_runtime", "capabilities": ["read", "write", "view", "clear"]},
+        "lattice": {"required": True, "mode": "mock_fallback", "capabilities": ["state_update", "state_read"]},
+        "tts": {"required": False, "mode": "reserved", "capabilities": ["speak", "preview"]},
+        "speech": {"required": False, "mode": "reserved", "capabilities": ["input_event"]},
+        "avatar": {"required": False, "mode": "reserved", "capabilities": ["render_state"]},
+        "screen": {"required": False, "mode": "reserved", "capabilities": ["context", "anchor", "guidance"]},
+        "ar": {"required": False, "mode": "reserved", "capabilities": ["render_state"]},
+        "tool": {"required": False, "mode": "reserved", "capabilities": ["invoke"]},
+    }
+
+    for slot_type in STAGE_7_4_REQUIRED_SLOT_TYPES:
+        engine_id, _slot_id, provider = _slot_chain(slot_type, slots)
+        if engine_id and engine_id not in required_engines:
+            required_engines.append(engine_id)
+        provider_type = str((provider or {}).get("provider_type") or "")
+        if provider_type == slot_type:
+            if provider_type not in required_provider_types:
+                required_provider_types.append(provider_type)
+            provider_requirements[slot_type]["provider_type"] = provider_type
+        elif slot_type == "lattice" and provider and bool(provider.get("mock")):
+            # The frozen registry maps lattice_mock to a screen-typed mock
+            # provider. Keep it as an explicit fallback so screen does not
+            # become a Stage 7.4 required provider capability.
+            provider_requirements[slot_type]["fallback_provider_type"] = provider_type
+
+    return (
+        {
+            "required_slot_types": list(STAGE_7_4_REQUIRED_SLOT_TYPES),
+            "required_engines": required_engines,
+            "required_provider_types": required_provider_types,
+            "runtime_api_version": SCHEMA_VERSION_V0_4,
+            "execution_mode": "mock",
+            "fallback_mode": "mock_fallback",
+        },
+        provider_requirements,
+    )
+
+
+def validate_v03_runtime_contract(dr: Mapping[str, Any]) -> List[Dict[str, str]]:
+    """Validate a v0.3 DR against the current Slot/Engine/Provider registries."""
+    findings: List[Dict[str, str]] = []
+    manifest = _mapping(dr.get("manifest"))
+    payload = _mapping(dr.get("payload"))
+    runtime = _mapping(payload.get("runtime_requirements"))
+    provider_requirements = _mapping(payload.get("provider_requirements"))
+    slots = payload.get("slots") if isinstance(payload.get("slots"), list) else []
+
+    expected = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    manifest_required = [str(item) for item in manifest.get("required_capabilities", []) if isinstance(item, str)]
+    runtime_required = [str(item) for item in runtime.get("required_slot_types", []) if isinstance(item, str)]
+    if manifest_required != expected:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_REQUIRED_CAPABILITIES",
+                f"manifest.required_capabilities must be {expected!r}, got {manifest_required!r}",
+                "manifest.required_capabilities",
+            )
+        )
+    if runtime_required != expected:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_REQUIRED_SLOTS",
+                f"runtime required_slot_types must be {expected!r}, got {runtime_required!r}",
+                "payload.runtime_requirements.required_slot_types",
+            )
+        )
+
+    illegal_required = (set(manifest_required) | set(runtime_required)) & (_STAGE_7_4_OPTIONAL_SLOT_TYPES | {"voice"})
+    if illegal_required:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_OPTIONAL_MARKED_REQUIRED",
+                f"optional or nonexistent capabilities cannot be required in Stage 7.4: {sorted(illegal_required)!r}",
+                "payload.runtime_requirements.required_slot_types",
+            )
+        )
+
+    derived_runtime, derived_providers = build_v03_runtime_contract(slots)
+    for slot_type in expected:
+        engine_id, slot_id, provider = _slot_chain(slot_type, slots)
+        if slot_id is None:
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_REQUIRED_SLOT_UNRESOLVED",
+                    f"required slot_type {slot_type!r} has no matching real Slot Catalog entry in payload.slots",
+                    "payload.slots",
+                )
+            )
+            continue
+        if not engine_id:
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_REQUIRED_ENGINE_UNRESOLVED",
+                    f"required slot_type {slot_type!r} cannot resolve a supporting Engine",
+                    f"payload.slots[{slot_id}].engine_binding",
+                )
+            )
+            continue
+        if provider is None:
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_REQUIRED_PROVIDER_UNRESOLVED",
+                    f"required engine {engine_id!r} cannot resolve a Provider or legal mock fallback",
+                    "payload.runtime_requirements.required_engines",
+                )
+            )
+        elif slot_type in {"llm", "memory"} and provider.get("provider_type") != slot_type:
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_REQUIRED_PROVIDER_TYPE_MISMATCH",
+                    f"required {slot_type!r} engine {engine_id!r} resolves provider_type {provider.get('provider_type')!r}",
+                    f"payload.provider_requirements.{slot_type}.provider_type",
+                )
+            )
+        elif slot_type == "lattice" and not bool(provider.get("mock")):
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_LATTICE_FALLBACK_INVALID",
+                    "lattice must resolve through the frozen legal mock fallback",
+                    "payload.provider_requirements.lattice",
+                )
+            )
+
+    actual_engines = [str(item) for item in runtime.get("required_engines", []) if isinstance(item, str)]
+    if actual_engines != derived_runtime["required_engines"]:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_REQUIRED_ENGINES_MISMATCH",
+                f"required_engines must be registry-derived {derived_runtime['required_engines']!r}, got {actual_engines!r}",
+                "payload.runtime_requirements.required_engines",
+            )
+        )
+    actual_provider_types = [str(item) for item in runtime.get("required_provider_types", []) if isinstance(item, str)]
+    if actual_provider_types != derived_runtime["required_provider_types"]:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_REQUIRED_PROVIDER_TYPES_MISMATCH",
+                f"required_provider_types must be registry-derived {derived_runtime['required_provider_types']!r}, got {actual_provider_types!r}",
+                "payload.runtime_requirements.required_provider_types",
+            )
+        )
+
+    for capability, expected_requirement in derived_providers.items():
+        actual = _mapping(provider_requirements.get(capability))
+        if bool(actual.get("required")) != bool(expected_requirement.get("required")):
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_PROVIDER_REQUIREMENT_MISMATCH",
+                    f"provider requirement {capability!r} required flag must be {expected_requirement.get('required')!r}",
+                    f"payload.provider_requirements.{capability}.required",
+                )
+            )
+        if not expected_requirement.get("required"):
+            continue
+        for field_name in ("mode", "provider_type", "fallback_provider_type"):
+            if field_name in expected_requirement and actual.get(field_name) != expected_requirement.get(field_name):
+                findings.append(
+                    _v03_finding(
+                        "FAIL",
+                        "DR_CAP_PROVIDER_REQUIREMENT_MISMATCH",
+                        f"provider requirement {capability!r} {field_name} must be {expected_requirement.get(field_name)!r}",
+                        f"payload.provider_requirements.{capability}.{field_name}",
+                    )
+                )
+    expected_required_requirements = set(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    actual_required_requirements = {
+        str(capability)
+        for capability, requirement in provider_requirements.items()
+        if bool(_mapping(requirement).get("required"))
+    }
+    if actual_required_requirements != expected_required_requirements:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_PROVIDER_REQUIRED_SET_MISMATCH",
+                f"required provider requirements must be {sorted(expected_required_requirements)!r}, got {sorted(actual_required_requirements)!r}",
+                "payload.provider_requirements",
+            )
+        )
+
+    if not any(item["status"] == "FAIL" for item in findings):
+        findings.append(
+            _v03_finding(
+                "PASS",
+                "DR_CAPABILITY_CHAIN_VALID",
+                "required llm, memory, and lattice Slot -> Engine -> Provider/fallback chains resolved; optional capabilities remain non-required",
+                "payload.runtime_requirements",
+            )
+        )
+    return findings
 
 
 def validate_capabilities(model: DigitalResidentV02Gate, result: DRValidationResult) -> None:

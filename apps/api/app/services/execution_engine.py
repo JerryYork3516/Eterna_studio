@@ -77,3 +77,8 @@ def execute_load_digital_resident_from_bytes(raw: bytes, input_text: Optional[st
         "runtime_version": RUNTIME_VERSION,
         **result,
     }
+
+
+def execute_memory_operation(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Route a Runtime memory request through the resident's compiled access gate."""
+    return resident_runtime.execute_memory_operation(payload)
