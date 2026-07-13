@@ -193,8 +193,21 @@ def _build_runtime_prompt(
 
 
 def _memory_policy_section(state: ResidentRuntimeState, key: str) -> Dict[str, Any]:
+    extensions = state.memory_policy.get("memory_policy_extensions")
+    if isinstance(extensions, dict):
+        extended = extensions.get(key)
+        if isinstance(extended, dict):
+            return extended
     value = state.memory_policy.get(key)
     return value if isinstance(value, dict) else {}
+
+
+def _memory_support_level(state: ResidentRuntimeState, memory_type: str) -> str:
+    extensions = state.memory_policy.get("memory_policy_extensions")
+    levels = extensions.get("memory_support_levels") if isinstance(extensions, dict) else None
+    if not isinstance(levels, dict):
+        return ""
+    return str(levels.get(memory_type) or "")
 
 
 def _memory_namespace_policy(state: ResidentRuntimeState) -> Dict[str, Any]:
@@ -202,7 +215,10 @@ def _memory_namespace_policy(state: ResidentRuntimeState) -> Dict[str, Any]:
     value = router.get("namespace_policy")
     if isinstance(value, dict):
         return value
-    fallback = state.memory_policy.get("namespace_policy")
+    extensions = state.memory_policy.get("memory_policy_extensions")
+    fallback = extensions.get("namespace_policy") if isinstance(extensions, dict) else None
+    if not isinstance(fallback, dict):
+        fallback = state.memory_policy.get("namespace_policy")
     return fallback if isinstance(fallback, dict) else {}
 
 
@@ -787,6 +803,9 @@ def _memory_access_decision(
         if allowed_records_only and not runtime_authorized:
             return False, "public_transcript_retention_not_allowed", normalized
 
+    if _memory_support_level(state, memory_type) == "policy_only":
+        return False, "memory_policy_only_not_runtime_supported", normalized
+
     return True, "allowed_by_compiled_memory_access_control", normalized
 
 
@@ -869,7 +888,9 @@ def execute_memory_operation(
             "items": [],
             "count": 0,
         }
-    if str(normalized.get("memory_type") or "") == "short_term_memory" and _short_term_is_session_only(state):
+    memory_type = str(normalized.get("memory_type") or "")
+    support_level = _memory_support_level(state, memory_type)
+    if (memory_type == "short_term_memory" and _short_term_is_session_only(state)) or support_level == "display_cache_only":
         result = _session_memory_operation(state, normalized)
     else:
         result = route_provider_for_engine("memory_mock", normalized)

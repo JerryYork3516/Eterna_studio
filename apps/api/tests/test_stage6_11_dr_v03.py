@@ -424,7 +424,7 @@ def test_layer8_behavior_policy_assembled_into_layer8_and_top_payload():
     layer_8 = layer_outputs["layer_8"]
     behavior_policy = dr["payload"]["behavior_policy"]
 
-    assert dr["behavior_policy"] == behavior_policy
+    assert "behavior_policy" not in dr
     assert dr["payload"]["resident_blueprint"]["behavior_policy"] == behavior_policy
     assert layer_outputs["behavior_policy"] == behavior_policy
     assert layer_8["behavior_policy"] == behavior_policy

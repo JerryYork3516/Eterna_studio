@@ -67,6 +67,10 @@ def _language_selected_options(dr: dict) -> list[str]:
     return dr["payload"]["behavior_policy"]["modules"]["language_behavior"]["selected_options"]
 
 
+def _memory_extensions(dr: dict) -> dict:
+    return dr["payload"]["memory_policy"]["memory_policy_extensions"]
+
+
 def _reasoning_step(body: dict) -> dict:
     return next(step for step in body["execution_trace"] if step["step"] == "reasoning")
 
@@ -88,6 +92,7 @@ def _run_with_candidate(
     if initialize:
         resident_runtime.create_runtime_state_from_dr(dr)
     original_route = resident_runtime.route_provider_for_engine
+    original_session_operation = resident_runtime._session_memory_operation
     calls: list[tuple[str, dict]] = []
 
     def route(engine_id: str, payload: dict) -> dict:
@@ -106,6 +111,13 @@ def _run_with_candidate(
         return original_route(engine_id, payload)
 
     monkeypatch.setattr(resident_runtime, "route_provider_for_engine", route)
+    if read_result is not None:
+        def session_operation(state: resident_runtime.ResidentRuntimeState, payload: dict) -> dict:
+            if payload.get("op") == "read" and payload.get("memory_type") == "interaction_log":
+                return deepcopy(read_result)
+            return original_session_operation(state, payload)
+
+        monkeypatch.setattr(resident_runtime, "_session_memory_operation", session_operation)
     return resident_runtime.run_resident_loop(dr, input_text, resident_id), calls
 
 
@@ -224,7 +236,8 @@ def test_memory_namespace_policy_projects_to_router_and_top_policy():
     dr = _compile(name="namespace-projection")
     resident_id = dr["manifest"]["resident_id"]
     memory_policy = dr["payload"]["memory_policy"]
-    router_policy = memory_policy["memory_provider_router"]
+    extensions = _memory_extensions(dr)
+    router_policy = extensions["memory_provider_router"]
     router_module = next(
         module for module in dr["payload"]["modules"] if module["module_id"] == "memory_provider_router"
     )
@@ -234,15 +247,16 @@ def test_memory_namespace_policy_projects_to_router_and_top_policy():
         if node["node_id"] == "memory_router_namespace_resolver"
     )
 
-    assert memory_policy["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
+    assert extensions["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
     assert router_policy["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
     assert namespace_node["params"]["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
-    assert memory_policy["namespace"] == f"private_memory:{resident_id}"
-    assert dr["payload"]["memory_config"]["namespace"] == f"private_memory:{resident_id}"
-    assert dr["memory_namespace"] == f"private_memory:{resident_id}"
-    assert dr["legacy_blueprint"]["memory_namespace"] == f"private_memory:{resident_id}"
+    assert extensions["namespace"] == f"private_memory:{resident_id}"
+    assert memory_policy["namespace"] == "default"
+    assert dr["payload"]["memory_config"]["namespace"] == "default"
+    assert dr["memory_namespace"] == "default"
+    assert dr["legacy_blueprint"]["memory_namespace"] == "default"
 
-    namespaces = memory_policy["namespace_policy"]["namespaces"]
+    namespaces = extensions["namespace_policy"]["namespaces"]
     assert namespaces["private_memory"] == {
         "namespace_template": "private_memory:{resident_id}",
         "default_memory_types": ["preference_memory", "event_memory", "relationship_memory"],
@@ -256,7 +270,7 @@ def test_memory_namespace_policy_projects_to_router_and_top_policy():
     assert namespaces["public_transcript"]["namespace_template"] == "public_transcript:{session_id}"
     assert namespaces["public_transcript"]["default_memory_types"] == ["interaction_log"]
     assert namespaces["public_transcript"]["retention"] == "allowed_session_records_only"
-    assert memory_policy["namespace_policy"]["all_operations_require"] == "memory_access_control"
+    assert extensions["namespace_policy"]["all_operations_require"] == "memory_access_control"
 
 
 def test_memory_namespace_policy_drift_blocks_compile_and_export():
@@ -417,13 +431,20 @@ def test_memory_types_resolve_to_their_isolated_default_namespaces():
             _runtime_authorized=memory_type == "interaction_log",
         )
 
-    assert all(result["status"] == "success" for result in results.values())
+    assert results["preference_memory"]["status"] == "success"
+    assert results["short_term_memory"]["status"] == "success"
+    assert results["interaction_log"]["status"] == "success"
+    assert results["event_memory"]["status"] == "denied"
+    assert results["event_memory"]["reason"] == "memory_policy_only_not_runtime_supported"
+    assert results["relationship_memory"]["status"] == "denied"
+    assert results["relationship_memory"]["reason"] == "memory_policy_only_not_runtime_supported"
     assert results["preference_memory"]["namespace"] == f"private_memory:{resident_id}"
     assert results["event_memory"]["namespace"] == f"private_memory:{resident_id}"
     assert results["relationship_memory"]["namespace"] == f"private_memory:{resident_id}"
     assert results["short_term_memory"]["namespace"] == f"shared_session_context:{state.session_id}"
     assert results["short_term_memory"]["storage_backend"] == "session_state"
     assert results["interaction_log"]["namespace"] == f"public_transcript:{state.session_id}"
+    assert results["interaction_log"]["storage_backend"] == "session_state"
 
 
 def test_missing_memory_type_cannot_bypass_namespace_retention_or_session_storage():
@@ -575,9 +596,7 @@ def test_public_transcript_requires_an_allowed_session_record():
 def test_legacy_dr_without_namespace_policy_keeps_default_runtime_behavior():
     dr = _compile(name="legacy-runtime-namespace")
     memory_policy = dr["payload"]["memory_policy"]
-    memory_policy.pop("namespace_policy")
-    memory_policy["memory_provider_router"].pop("namespace_policy")
-    memory_policy["namespace"] = "default"
+    memory_policy.pop("memory_policy_extensions")
     resident_id = dr["manifest"]["resident_id"]
 
     resident_runtime.create_runtime_state_from_dr(dr)
@@ -596,7 +615,7 @@ def test_legacy_dr_without_namespace_policy_keeps_default_runtime_behavior():
 
 def test_recall_claim_rule_projects_through_the_existing_memory_policy_source():
     dr = _compile()
-    access = dr["payload"]["memory_policy"]["memory_access_control"]
+    access = _memory_extensions(dr)["memory_access_control"]
     module = next(item for item in dr["payload"]["modules"] if item["module_id"] == MEMORY_ACCESS_CONTROL_MODULE_ID)
     output_node = next(item for item in module["module_graph"]["nodes"] if item["node_type"] == "module_output")
 
@@ -617,7 +636,7 @@ def test_catalog_memory_rule_cannot_mutate_the_compiler_canonical_policy():
         compiled = _compile(name="policy-object-isolation")
 
         assert MEMORY_RECALL_CLAIM_POLICY["claim_rule"] == "verified_read_only"
-        assert compiled["payload"]["memory_policy"]["memory_access_control"]["recall_claim_policy"][
+        assert _memory_extensions(compiled)["memory_access_control"]["recall_claim_policy"][
             "claim_rule"
         ] == "verified_read_only"
     finally:
@@ -868,21 +887,27 @@ def test_memory_unavailable_does_not_create_fake_memory(monkeypatch: pytest.Monk
     resident_id = dr["manifest"]["resident_id"]
     resident_runtime.create_runtime_state_from_dr(dr)
     original_route = resident_runtime.route_provider_for_engine
+    original_session_operation = resident_runtime._session_memory_operation
 
     def route(engine_id: str, payload: dict) -> dict:
-        if engine_id == "memory_mock":
-            return {"status": "error", "mock": True, "error": "unavailable", "resident_id": resident_id, "namespace": "default"}
         if engine_id.startswith("llm"):
             return {"status": "success", "mock": True, "text": "我记得你之前说过一件事。"}
         return original_route(engine_id, payload)
 
+    def session_operation(state: resident_runtime.ResidentRuntimeState, payload: dict) -> dict:
+        if payload.get("op") == "read" and payload.get("memory_type") == "interaction_log":
+            return {"status": "error", "mock": True, "error": "unavailable", "resident_id": resident_id, "namespace": "default"}
+        return original_session_operation(state, payload)
+
     monkeypatch.setattr(resident_runtime, "route_provider_for_engine", route)
+    monkeypatch.setattr(resident_runtime, "_session_memory_operation", session_operation)
     body = resident_runtime.run_resident_loop(dr, "继续聊", resident_id)
 
     assert body["diagnostics"]["memory_unavailable"] is True
     assert body["diagnostics"]["memory_grounding"] == "unavailable"
     assert "无法确认过去的记录" in body["output_text"]
-    assert body["memory_snapshot"]["count"] == 0
+    assert body["memory_snapshot"]["count"] == 1
+    assert body["memory_snapshot"]["entries"][0]["input"] == "继续聊"
 
 
 @pytest.mark.parametrize("wrong_scope", ("resident", "namespace"))
@@ -1250,7 +1275,7 @@ def test_runtime_consumes_compiled_recall_rejection_and_response_policy(
     monkeypatch: pytest.MonkeyPatch,
 ):
     dr = _compile(name="runtime-recall-policy-consumption")
-    recall_policy = dr["payload"]["memory_policy"]["memory_access_control"]["recall_claim_policy"]
+    recall_policy = _memory_extensions(dr)["memory_access_control"]["recall_claim_policy"]
     recall_policy["rejected_record_states"] = [*recall_policy["rejected_record_states"], "stale"]
     recall_policy["uncertain_response"] = "这条记录的准确性不足，需要你重新确认。"
     resident_id = dr["manifest"]["resident_id"]
@@ -1281,7 +1306,7 @@ def test_recall_policy_cannot_remove_required_evidence_and_fail_open(
     monkeypatch: pytest.MonkeyPatch,
 ):
     dr = _compile(name="recall-policy-evidence-floor")
-    recall_policy = dr["payload"]["memory_policy"]["memory_access_control"]["recall_claim_policy"]
+    recall_policy = _memory_extensions(dr)["memory_access_control"]["recall_claim_policy"]
     recall_policy["required_evidence"].remove("current_runtime_session")
     resident_id = dr["manifest"]["resident_id"]
     state = resident_runtime.create_runtime_state_from_dr(dr)
@@ -1764,7 +1789,7 @@ def test_compile_export_load_step_keeps_p1b_policies_active():
     assert compiled_response.json()["valid"] is True
     assert exported_response.status_code == 200
     exported = json.loads(exported_response.text)
-    assert exported["payload"]["memory_policy"]["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
+    assert _memory_extensions(exported)["namespace_policy"] == MEMORY_PROVIDER_ROUTER_NAMESPACE_POLICY
     load = client.post("/runtime/resident/load-dr", json={"dr": exported, "input_text": "普通加载"})
     assert load.status_code == 200
     assert load.json()["loaded"] is True

@@ -25,6 +25,7 @@ _WEIGHT_TOL = 1e-9
 
 STAGE_7_4_REQUIRED_SLOT_TYPES: Tuple[str, ...] = ("llm", "memory", "lattice")
 _STAGE_7_4_OPTIONAL_SLOT_TYPES = frozenset({"tts", "speech", "screen", "avatar", "ar", "tool"})
+_LATTICE_FALLBACK_ENGINE_ID = "lattice_mock"
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -88,10 +89,10 @@ def build_v03_runtime_contract(slots: Sequence[Any]) -> Tuple[Dict[str, Any], Di
                 required_provider_types.append(provider_type)
             provider_requirements[slot_type]["provider_type"] = provider_type
         elif slot_type == "lattice" and provider and bool(provider.get("mock")):
-            # The frozen registry maps lattice_mock to a screen-typed mock
-            # provider. Keep it as an explicit fallback so screen does not
-            # become a Stage 7.4 required provider capability.
-            provider_requirements[slot_type]["fallback_provider_type"] = provider_type
+            # `lattice_mock` is the frozen fallback Engine. Its registry
+            # provider happens to be screen-typed, but that implementation
+            # detail must never be serialized as a lattice fallback contract.
+            pass
 
     return (
         {
@@ -114,6 +115,7 @@ def validate_v03_runtime_contract(dr: Mapping[str, Any]) -> List[Dict[str, str]]
     runtime = _mapping(payload.get("runtime_requirements"))
     provider_requirements = _mapping(payload.get("provider_requirements"))
     slots = payload.get("slots") if isinstance(payload.get("slots"), list) else []
+    fallback_routes = payload.get("fallback_routes") if isinstance(payload.get("fallback_routes"), list) else []
 
     expected = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     manifest_required = [str(item) for item in manifest.get("required_capabilities", []) if isinstance(item, str)]
@@ -256,6 +258,49 @@ def validate_v03_runtime_contract(dr: Mapping[str, Any]) -> List[Dict[str, str]]
                 "DR_CAP_PROVIDER_REQUIRED_SET_MISMATCH",
                 f"required provider requirements must be {sorted(expected_required_requirements)!r}, got {sorted(actual_required_requirements)!r}",
                 "payload.provider_requirements",
+            )
+        )
+
+    lattice_requirement = _mapping(provider_requirements.get("lattice"))
+    if "fallback_provider_type" in lattice_requirement:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_LATTICE_FALLBACK_PROVIDER_TYPE_FORBIDDEN",
+                "lattice fallback is the lattice_mock Engine; provider_type fallback declarations are forbidden",
+                "payload.provider_requirements.lattice.fallback_provider_type",
+            )
+        )
+
+    for raw_slot in slots:
+        slot = _mapping(raw_slot)
+        if str(slot.get("slot_type") or "") != "lattice":
+            continue
+        slot_id = str(slot.get("slot_id") or "")
+        catalog_slot = slot_catalog_map().get(slot_id)
+        engine_id = str(slot.get("engine_binding") or getattr(catalog_slot, "engine_binding", "") or "")
+        if engine_id != _LATTICE_FALLBACK_ENGINE_ID:
+            findings.append(
+                _v03_finding(
+                    "FAIL",
+                    "DR_CAP_LATTICE_SLOT_FALLBACK_MISMATCH",
+                    f"lattice slot {slot_id!r} must bind {_LATTICE_FALLBACK_ENGINE_ID!r}, got {engine_id!r}",
+                    f"payload.slots[{slot_id}].engine_binding",
+                )
+            )
+
+    lattice_routes = [
+        _mapping(route)
+        for route in fallback_routes
+        if str(_mapping(route).get("capability") or "") == "lattice"
+    ]
+    if len(lattice_routes) != 1 or str(lattice_routes[0].get("route") or "") != _LATTICE_FALLBACK_ENGINE_ID:
+        findings.append(
+            _v03_finding(
+                "FAIL",
+                "DR_CAP_LATTICE_FALLBACK_ROUTE_MISMATCH",
+                "lattice must have exactly one lattice_mock fallback route and must never fall back to screen",
+                "payload.fallback_routes",
             )
         )
 

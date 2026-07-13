@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -128,6 +129,31 @@ RUNTIME_VERSION = "resident_v1_mock"
 MIN_KERNEL = "6.1"
 STAGE_7_4_BASELINE_WORKFLOW_NAME = "Stage 7.4 Human Empathy DR Baseline"
 _FORBIDDEN_STAGE_7_4_DOMAIN_FOCUS = {"ar", "tool", "screen_guidance", "provider", "cross_app_control"}
+_V03_FROZEN_MEMORY_TYPES = (
+    "short_term_memory",
+    "profile_memory",
+    "preference_memory",
+    "interaction_log",
+)
+_V03_MEMORY_POLICY_EXTENSIONS_KEY = "memory_policy_extensions"
+_V03_MEMORY_SUPPORT_LEVELS = {
+    "short_term_memory": "supported",
+    "preference_memory": "supported_minimal_kv",
+    "event_memory": "policy_only",
+    "relationship_memory": "policy_only",
+    "interaction_log": "display_cache_only",
+}
+_STAGE_7_4_RESERVED_SLOT_TYPES = frozenset({"tts", "speech", "screen", "avatar", "ar", "tool"})
+_STAGE_7_3_FROZEN_MODULE_IDS = frozenset({"particle_avatar"})
+_V03_AUDIT_CHECK_NAMES = (
+    "stage_scope_check",
+    "compatibility_check",
+    "pending_validation_check",
+    "duplicate_source_check",
+    "memory_support_level_check",
+    "file_size_check",
+)
+_V03_FILE_SIZE_WARNING_BYTES = 5 * 1024 * 1024
 
 # Allowed slot_types this stage (mock-only capability interfaces).
 _ALLOWED_SLOT_TYPES = frozenset(t.value for t in SlotType)
@@ -1831,6 +1857,26 @@ def _assemble_layer3_safety_outputs(collection: Dict[str, Any]) -> Dict[str, Any
     }
 
 
+def _synchronize_layer3_module_outputs(collection: Dict[str, Any]) -> None:
+    """Write the compiled safety decision back to the canonical module list."""
+    modules = {
+        module.get("module_id"): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict)
+    }
+    for module_id, output_key in LAYER3_SAFETY_POLICY_MODULES:
+        module = modules.get(module_id)
+        policy = _layer3_safety_module_policy(collection, module_id)
+        if isinstance(module, dict) and policy:
+            _set_compiled_module_output(module, output_key, policy)
+
+    risk_module = modules.get(RISK_RESPONSE_MODULE_ID)
+    if isinstance(risk_module, dict):
+        for output_key, output in _risk_response_module_outputs(collection).items():
+            if isinstance(output, dict) and output:
+                _set_compiled_module_output(risk_module, output_key, output)
+
+
 def _merge_layer3_safety_into_safety_policy(payload: Dict[str, Any]) -> None:
     graph_snapshot = _as_dict(payload.get("graph_snapshot"))
     layer_outputs = _as_dict(graph_snapshot.get("layer_outputs"))
@@ -2201,8 +2247,8 @@ def _validate_memory_router_projection(
             _finding(
                 "FAIL",
                 "DR_MEMORY_ROUTER_PROJECTION_INCONSISTENT",
-                "memory_provider_router node config, module_output, and top-level memory_policy differ",
-                "payload.memory_policy.memory_provider_router",
+                "memory_provider_router node config, module_output, and memory_policy extension differ",
+                "payload.memory_policy.memory_policy_extensions.memory_provider_router",
             )
         )
         return
@@ -2210,8 +2256,8 @@ def _validate_memory_router_projection(
         _finding(
             "PASS",
             "DR_MEMORY_ROUTER_PROJECTION_CONSISTENT",
-            "memory_provider_router node config, module_output, and top-level memory_policy are semantically aligned",
-            "payload.memory_policy.memory_provider_router",
+            "memory_provider_router node config, module_output, and memory_policy extension are semantically aligned",
+            "payload.memory_policy.memory_policy_extensions.memory_provider_router",
         )
     )
 
@@ -2238,6 +2284,7 @@ def _assemble_layer5_memory_policy(
         "interaction_log": {"type": "append_only", "scope": "per_resident"},
         "retention_policy": "policy_managed",
         "read_write_policy": "memory_access_control",
+        "memory_support_levels": deepcopy(_V03_MEMORY_SUPPORT_LEVELS),
     }
     missing = False
     memory_router_module: Dict[str, Any] | None = None
@@ -2304,7 +2351,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_SHORT_TERM_NOT_SESSION_ONLY",
                 "short_term_memory must remain session-only and expire at session end",
-                "payload.memory_policy.short_term_memory",
+                "payload.memory_policy.memory_policy_extensions.short_term_memory",
             )
         )
     preference = _as_dict(memory_policy.get("preference_memory"))
@@ -2314,7 +2361,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_PREFERENCE_INFERENCE_ALLOWED",
                 "preference_memory must reject inferred facts and accept only explicit or confirmed preferences",
-                "payload.memory_policy.preference_memory.save_forbidden",
+                "payload.memory_policy.memory_policy_extensions.preference_memory.save_forbidden",
             )
         )
     event = _as_dict(memory_policy.get("event_memory"))
@@ -2324,7 +2371,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_EVENT_FIELDS_INVALID",
                 "event_memory must limit persistence to a necessary summary, meaning, and timestamp",
-                "payload.memory_policy.event_memory.save_allowed",
+                "payload.memory_policy.memory_policy_extensions.event_memory.save_allowed",
             )
         )
     relationship = _as_dict(memory_policy.get("relationship_memory"))
@@ -2334,7 +2381,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_RELATIONSHIP_JUMP_ALLOWED",
                 "relationship_memory must update gradually and reject single-interaction level jumps",
-                "payload.memory_policy.relationship_memory.change_policy",
+                "payload.memory_policy.memory_policy_extensions.relationship_memory.change_policy",
             )
         )
     memory_update = _as_dict(memory_policy.get("memory_update"))
@@ -2347,7 +2394,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_UPDATE_BOUNDARY_INVALID",
                 "memory_update must deny inferred facts and forbid DR writeback",
-                "payload.memory_policy.memory_update",
+                "payload.memory_policy.memory_policy_extensions.memory_update",
             )
         )
     access = _as_dict(memory_policy.get("memory_access_control"))
@@ -2358,7 +2405,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_ACCESS_INFERENCE_DEFAULT_INVALID",
                 "memory_access_control must deny inferred facts by default",
-                "payload.memory_policy.memory_access_control.sensitive_policy",
+                "payload.memory_policy.memory_policy_extensions.memory_access_control.sensitive_policy",
             )
         )
     router = _as_dict(memory_policy.get("memory_provider_router"))
@@ -2369,7 +2416,7 @@ def _assemble_layer5_memory_policy(
                 "FAIL",
                 "DR_MEMORY_CROSS_RESIDENT_ACCESS_ALLOWED",
                 "memory_provider_router must forbid cross-resident private memory access",
-                "payload.memory_policy.memory_provider_router.resident_scope",
+                "payload.memory_policy.memory_policy_extensions.memory_provider_router.resident_scope",
             )
         )
 
@@ -2381,11 +2428,26 @@ def _assemble_layer5_memory_policy(
             _finding(
                 "PASS",
                 "DR_MEMORY_POLICY_PROJECTED",
-                "all seven Layer 5 memory modules were projected into the authoritative top-level memory_policy",
-                "payload.memory_policy",
+                "all seven Layer 5 memory modules were projected into the optional memory_policy extension",
+                "payload.memory_policy.memory_policy_extensions",
             )
         )
     return memory_policy
+
+
+def _build_v03_memory_policy(resident_id: str, extensions: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the frozen v0.3 surface stable and nest Stage 7.4 strategy data."""
+    return {
+        "schema_version": DR_SCHEMA_VERSION_V0_3,
+        "resident_id": resident_id,
+        "namespace": "default",
+        "memory_types": list(_V03_FROZEN_MEMORY_TYPES),
+        "interaction_log": {"type": "append_only", "scope": "per_resident"},
+        "preference_memory": {"type": "kv", "scope": "per_resident"},
+        "retention_policy": "persistent",
+        "read_write_policy": "local_runtime",
+        _V03_MEMORY_POLICY_EXTENSIONS_KEY: deepcopy(extensions),
+    }
 
 
 def _v3_identity_sync_from_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2449,17 +2511,57 @@ def _sync_legacy_blueprint_runtime_requirements(blueprint: Dict[str, Any]) -> No
         runtime_requirements["required_slot_types"] = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
 
 
-def _build_v03_audit_report(findings: List[Dict[str, str]], checked_at: str) -> Dict[str, Any]:
+def _synchronize_stage_7_4_module_scope(collection: Dict[str, Any]) -> None:
+    """Generate reserved capability state on the compiler-owned module copies."""
+    required_slot_types = set(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    for module in collection.get("modules", []):
+        if not isinstance(module, dict):
+            continue
+        module_id = _nonempty_str(module.get("module_id"))
+        slot_type = _nonempty_str(module.get("slot_type"))
+        if (
+            slot_type in required_slot_types
+            or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
+            or module_id in _STAGE_7_3_FROZEN_MODULE_IDS
+        ):
+            continue
+        module["status"] = "RESERVED"
+        module["is_placeholder"] = True
+        module["no_execution"] = True
+        module["runtime_enabled"] = False
+        module["runtime_mapping"] = {}
+        module_graph = module.get("module_graph")
+        if isinstance(module_graph, dict):
+            module_graph.pop("runtime_flow", None)
+            module_graph.pop("slot_routes", None)
+
+
+def _build_v03_audit_report(
+    findings: List[Dict[str, str]],
+    checked_at: str,
+    named_check_findings: Optional[Dict[str, List[Dict[str, str]]]] = None,
+) -> Dict[str, Any]:
+    named_check_findings = named_check_findings or {}
+    all_findings = list(findings)
+    for check_name in _V03_AUDIT_CHECK_NAMES:
+        all_findings.extend(named_check_findings.get(check_name, []))
+    summary = {
+        "fail": sum(1 for finding in all_findings if finding.get("status") == "FAIL"),
+        "warning": sum(1 for finding in all_findings if finding.get("status") == "WARNING"),
+        "pass": sum(1 for finding in all_findings if finding.get("status") == "PASS"),
+    }
+    for check_name in _V03_AUDIT_CHECK_NAMES:
+        check_items = named_check_findings.get(check_name, [])
+        for status in ("fail", "warning", "pass"):
+            summary[f"{check_name}_{status}"] = sum(
+                1 for finding in check_items if str(finding.get("status") or "").lower() == status
+            )
     return {
         "schema_version": DR_SCHEMA_VERSION_V0_3,
-        "valid": not any(finding.get("status") == "FAIL" for finding in findings),
-        "findings": findings,
+        "valid": not any(finding.get("status") == "FAIL" for finding in all_findings),
+        "findings": all_findings,
         "checked_at": checked_at,
-        "summary": {
-            "fail": sum(1 for finding in findings if finding.get("status") == "FAIL"),
-            "warning": sum(1 for finding in findings if finding.get("status") == "WARNING"),
-            "pass": sum(1 for finding in findings if finding.get("status") == "PASS"),
-        },
+        "summary": summary,
     }
 
 
@@ -3650,7 +3752,7 @@ def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = Non
         "dr_version": v03.get("dr_version", DR_VERSION_V0_3),
         "errors": errors,
         "warnings": warnings,
-        "module_audit": {"checked": len(v03.get("modules", [])), "findings": errors, "ok": valid},
+        "module_audit": {"checked": len(v03.get("payload", {}).get("modules", [])), "findings": errors, "ok": valid},
         "layer_audit": {
             "present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")],
             "missing_layers": [],
@@ -3690,8 +3792,7 @@ def _v3_runtime_plan() -> Dict[str, Any]:
             {"step": "memory.read", "from": "memory.read", "to": "llm.reasoning", "optional": False},
             {"step": "llm.reasoning", "from": "llm.reasoning", "to": "memory.write", "optional": False},
             {"step": "memory.write", "from": "memory.write", "to": "lattice.update", "optional": False},
-            {"step": "lattice.update", "from": "lattice.update", "to": "voice.speak", "optional": True},
-            {"step": "voice.speak", "from": "voice.speak", "to": "output", "optional": True},
+            {"step": "lattice.update", "from": "lattice.update", "to": "output", "optional": False},
         ],
         "forbidden": ["agent_loop", "cloud_task_queue", "bridge_executor", "auto_click", "screen_control", "autonomous_action"],
     }
@@ -3715,6 +3816,457 @@ def _v3_screen_capability() -> Dict[str, Any]:
     }
 
 
+def _v03_compatibility_aliases(
+    payload: Dict[str, Any],
+    resident: Dict[str, Any],
+    blueprint: Dict[str, Any],
+    resident_id: str,
+) -> Dict[str, Any]:
+    """Project only frozen public aliases from the authoritative payload."""
+    legacy_blueprint = deepcopy(blueprint)
+    legacy_blueprint.pop("modules", None)
+    lattice = _as_dict(payload.get("lattice_config"))
+    return {
+        "resident": deepcopy(resident),
+        "layers": deepcopy(payload.get("13_layers_snapshot") or []),
+        "slots": deepcopy(payload.get("slots") or []),
+        "runtime_requirements": deepcopy(payload.get("runtime_requirements") or {}),
+        "memory_config": deepcopy(payload.get("memory_config") or {}),
+        "memory_namespace": _as_dict(payload.get("memory_policy")).get("namespace", "default"),
+        "memory_policy": deepcopy(payload.get("memory_policy") or {}),
+        "lattice_config": deepcopy(lattice),
+        "lattice_state_schema": {
+            "resident_id": resident_id,
+            "emotion": lattice.get("emotion", "neutral"),
+            "energy": lattice.get("energy", 0.5),
+            "attention": lattice.get("attention", "self"),
+            "motion": lattice.get("motion", "idle_breathing"),
+            "voice_state": lattice.get("voice_state", "idle"),
+            "particle_density": lattice.get("particle_density", 0.5),
+            "color_palette": deepcopy(lattice.get("color_palette") or []),
+            "focus_target": lattice.get("focus_target", "none"),
+        },
+        "voice_config": deepcopy(payload.get("voice_config") or {}),
+        "safety_policy": deepcopy(payload.get("safety_policy") or {}),
+        "screen_capability_declaration": deepcopy(payload.get("screen_capability_declaration") or {}),
+        "multi_resident_lattice_state": {"resident_ids": [resident_id], "states": []},
+        "voice_state": lattice.get("voice_state"),
+        "legacy_blueprint": legacy_blueprint,
+    }
+
+
+def _v03_duplicate_source_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    payload = _as_dict(dr.get("payload"))
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+    legacy_blueprint = _as_dict(dr.get("legacy_blueprint"))
+    for path, container in (
+        ("modules", dr),
+        ("payload.graph_snapshot.modules", graph_snapshot),
+        ("legacy_blueprint.modules", legacy_blueprint),
+    ):
+        if "modules" in container:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_EXPORT_NONAUTHORITATIVE_MODULE_COPY",
+                    "payload.modules is the sole authoritative module path; non-contract deep copies are forbidden",
+                    path,
+                )
+            )
+    if "behavior_policy" in dr:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_EXPORT_NONAUTHORITATIVE_POLICY_COPY",
+                "behavior_policy is authoritative under payload and must not be duplicated at the document root",
+                "behavior_policy",
+            )
+        )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_DUPLICATE_SOURCE_CHECK_PASSED",
+                "payload.modules is the sole module authority and no non-contract policy copy exists",
+                "payload.modules",
+            )
+        )
+    return findings
+
+
+def _v03_stage_scope_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    payload = _as_dict(dr.get("payload"))
+    required_slot_types = set(
+        _string_list(_as_dict(payload.get("runtime_requirements")).get("required_slot_types"))
+    )
+    for module in payload.get("modules", []):
+        if not isinstance(module, dict):
+            continue
+        module_id = _nonempty_str(module.get("module_id"))
+        slot_type = _nonempty_str(module.get("slot_type"))
+        if (
+            slot_type in required_slot_types
+            or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
+            or module_id in _STAGE_7_3_FROZEN_MODULE_IDS
+        ):
+            continue
+        runtime_mapping = _as_dict(module.get("runtime_mapping"))
+        module_graph = _as_dict(module.get("module_graph"))
+        violations: List[str] = []
+        if module.get("status") != "RESERVED":
+            violations.append(f"status={module.get('status')!r}")
+        if module.get("is_placeholder") is not True:
+            violations.append("is_placeholder must be true")
+        if module.get("no_execution") is not True:
+            violations.append("no_execution must be true")
+        if module.get("runtime_enabled") is not False:
+            violations.append("runtime_enabled must be false")
+        if runtime_mapping.get("flow"):
+            violations.append("runtime flow must be empty")
+        if module_graph.get("runtime_flow") or module_graph.get("slot_routes"):
+            violations.append("module graph runtime routes must be empty")
+        if violations:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_STAGE_SCOPE_RESERVED_MODULE_EXECUTABLE",
+                    f"future capability module {module_id!r} ({slot_type}) is outside Stage 7.4: "
+                    + "; ".join(violations),
+                    f"payload.modules.{module_id}",
+                )
+            )
+
+    provider_requirements = _as_dict(payload.get("provider_requirements"))
+    for slot_type in sorted(_STAGE_7_4_RESERVED_SLOT_TYPES):
+        requirement = _as_dict(provider_requirements.get(slot_type))
+        if requirement and (requirement.get("required") is not False or requirement.get("mode") != "reserved"):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_STAGE_SCOPE_OPTIONAL_CAPABILITY_ENABLED",
+                    f"optional capability {slot_type!r} must remain required=false and mode=reserved",
+                    f"payload.provider_requirements.{slot_type}",
+                )
+            )
+
+    reserved_prefixes = ("tts.", "speech.", "voice.", "screen.", "avatar.", "ar.", "tool.")
+    runtime_plan = _as_dict(payload.get("runtime_plan"))
+    for index, step in enumerate(runtime_plan.get("steps", [])):
+        if not isinstance(step, dict):
+            continue
+        values = [str(step.get(key) or "").lower() for key in ("step", "from", "to")]
+        if any(value.startswith(reserved_prefixes) for value in values):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_STAGE_SCOPE_RESERVED_RUNTIME_FLOW",
+                    "reserved future capabilities cannot remain in the Stage 7.4 runtime flow",
+                    f"payload.runtime_plan.steps[{index}]",
+                )
+            )
+    for index, route in enumerate(payload.get("fallback_routes", [])):
+        if not isinstance(route, dict):
+            continue
+        capability = str(route.get("capability") or "").lower()
+        if capability in _STAGE_7_4_RESERVED_SLOT_TYPES or capability in {"voice", "screen_mock"}:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_STAGE_SCOPE_RESERVED_FALLBACK_ROUTE",
+                    f"reserved capability {capability!r} cannot have an executable fallback route",
+                    f"payload.fallback_routes[{index}]",
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_STAGE_SCOPE_CHECK_PASSED",
+                "future non-required capabilities are reserved and current required capabilities are unchanged",
+                "payload.modules",
+            )
+        )
+    return findings
+
+
+def _pending_validation_paths(value: Any, path: str) -> List[str]:
+    paths: List[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            item_path = f"{path}.{key}"
+            if key in {"validation_result", "validation_status", "compile_validation_status"}:
+                if isinstance(item, str) and item.strip().lower() == "pending":
+                    paths.append(item_path)
+            paths.extend(_pending_validation_paths(item, item_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            paths.extend(_pending_validation_paths(item, f"{path}[{index}]"))
+    return paths
+
+
+def _v03_pending_validation_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    modules = _as_dict(dr.get("payload")).get("modules", [])
+    for module in modules:
+        if not isinstance(module, dict):
+            continue
+        module_id = _nonempty_str(module.get("module_id")) or "unknown"
+        paths = _pending_validation_paths(module, f"payload.modules.{module_id}")
+        if paths:
+            findings.append(
+                _finding(
+                    "WARNING",
+                    "DR_PENDING_VALIDATION_REPORTED",
+                    f"module {module_id!r} contains {len(paths)} pending validation result(s)",
+                    paths[0],
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_PENDING_VALIDATION_CHECK_PASSED",
+                "no pending validation result is present in exported modules",
+                "payload.modules",
+            )
+        )
+    return findings
+
+
+def _v03_memory_support_level_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    payload = _as_dict(dr.get("payload"))
+    extensions = _as_dict(
+        _as_dict(payload.get("memory_policy")).get(_V03_MEMORY_POLICY_EXTENSIONS_KEY)
+    )
+    levels = _as_dict(extensions.get("memory_support_levels"))
+    unexpected = sorted(set(levels) - set(_V03_MEMORY_SUPPORT_LEVELS))
+    if unexpected:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_SUPPORT_LEVEL_UNKNOWN_TYPE",
+                f"memory support levels contain unknown memory types: {unexpected!r}",
+                "payload.memory_policy.memory_policy_extensions.memory_support_levels",
+            )
+        )
+    modules = {
+        module.get("module_id"): module
+        for module in payload.get("modules", [])
+        if isinstance(module, dict)
+    }
+    for memory_type, expected in _V03_MEMORY_SUPPORT_LEVELS.items():
+        actual = levels.get(memory_type)
+        if actual != expected:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MEMORY_SUPPORT_LEVEL_INACCURATE",
+                    f"{memory_type} support level must be {expected!r}, got {actual!r}",
+                    f"payload.memory_policy.memory_policy_extensions.memory_support_levels.{memory_type}",
+                )
+            )
+            continue
+        module = modules.get(memory_type)
+        if expected == "policy_only" and isinstance(module, dict) and (
+            module.get("runtime_enabled") is not False or module.get("no_execution") is not True
+        ):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MEMORY_POLICY_ONLY_RUNTIME_ENABLED",
+                    f"{memory_type} is policy_only and cannot advertise executable Runtime support",
+                    f"payload.modules.{memory_type}",
+                )
+            )
+            continue
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_MEMORY_SUPPORT_LEVEL_ACCURATE",
+                f"{memory_type} support level is {expected}",
+                f"payload.memory_policy.memory_policy_extensions.memory_support_levels.{memory_type}",
+            )
+        )
+    return findings
+
+
+def _v03_file_size_findings(measured_bytes: int) -> List[Dict[str, str]]:
+    over_limit = measured_bytes > _V03_FILE_SIZE_WARNING_BYTES
+    return [
+        _finding(
+            "WARNING" if over_limit else "PASS",
+            "DR_FILE_SIZE_WARNING" if over_limit else "DR_FILE_SIZE_CHECK_PASSED",
+            f"serialized export size is {measured_bytes} bytes; warning threshold is "
+            f"{_V03_FILE_SIZE_WARNING_BYTES} bytes",
+            "audit_report.file_size_check",
+        )
+    ]
+
+
+def _attach_v03_audit_report(
+    dr: Dict[str, Any],
+    findings: List[Dict[str, str]],
+    checked_at: str,
+    named_check_findings: Dict[str, List[Dict[str, str]]],
+) -> None:
+    measured_bytes = 0
+    for _ in range(8):
+        named_check_findings["file_size_check"] = _v03_file_size_findings(measured_bytes)
+        audit_report = _build_v03_audit_report(findings, checked_at, named_check_findings)
+        dr["audit_report"] = audit_report
+        dr["audit"] = deepcopy(audit_report)
+        next_size = len(json.dumps(dr, ensure_ascii=False, indent=2).encode("utf-8"))
+        if next_size == measured_bytes:
+            return
+        measured_bytes = next_size
+
+
+def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Reject drift in required v0.3 compatibility aliases and frozen fields."""
+    findings: List[Dict[str, str]] = []
+    payload = _as_dict(dr.get("payload"))
+    graph_snapshot = _as_dict(payload.get("graph_snapshot"))
+
+    required_aliases = {
+        "layers": "13_layers_snapshot",
+        "slots": "slots",
+        "runtime_requirements": "runtime_requirements",
+        "memory_config": "memory_config",
+        "memory_policy": "memory_policy",
+        "lattice_config": "lattice_config",
+        "voice_config": "voice_config",
+        "safety_policy": "safety_policy",
+        "screen_capability_declaration": "screen_capability_declaration",
+    }
+    for root_key, payload_key in required_aliases.items():
+        if dr.get(root_key) != payload.get(payload_key):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT",
+                    f"required compatibility alias {root_key!r} must equal payload.{payload_key}",
+                    root_key,
+                )
+            )
+    memory_config = _as_dict(payload.get("memory_config"))
+    if memory_config.get("storage_backend") != "local_runtime":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_STORAGE_BACKEND_OVERBOUND",
+                "memory_config.storage_backend must use the semantic local_runtime contract",
+                "payload.memory_config.storage_backend",
+            )
+        )
+    legacy_memory_config = _as_dict(_as_dict(dr.get("legacy_blueprint")).get("memory_config"))
+    if legacy_memory_config and legacy_memory_config.get("store") != "local_runtime":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_LEGACY_MEMORY_STORAGE_BACKEND_OVERBOUND",
+                "legacy memory_config.store must project the semantic local_runtime contract",
+                "legacy_blueprint.memory_config.store",
+            )
+        )
+
+    memory_policy = _as_dict(payload.get("memory_policy"))
+    if dr.get("memory_namespace") != memory_policy.get("namespace"):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT",
+                "required memory_namespace compatibility alias must equal payload.memory_policy.namespace",
+                "memory_namespace",
+            )
+        )
+    expected_memory_base = {
+        "namespace": "default",
+        "memory_types": list(_V03_FROZEN_MEMORY_TYPES),
+        "preference_memory": {"type": "kv", "scope": "per_resident"},
+        "retention_policy": "persistent",
+        "read_write_policy": "local_runtime",
+    }
+    for key, expected in expected_memory_base.items():
+        if memory_policy.get(key) != expected:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_V03_MEMORY_CONTRACT_DRIFT",
+                    f"frozen memory_policy.{key} must remain {expected!r}",
+                    f"payload.memory_policy.{key}",
+                )
+            )
+    extensions = _as_dict(memory_policy.get(_V03_MEMORY_POLICY_EXTENSIONS_KEY))
+    if not extensions:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MEMORY_POLICY_EXTENSIONS_MISSING",
+                "Stage 7.4 memory strategy must be nested under memory_policy_extensions",
+                f"payload.memory_policy.{_V03_MEMORY_POLICY_EXTENSIONS_KEY}",
+            )
+        )
+    for key in ("event_memory", "relationship_memory", "memory_access_control", "namespace_policy"):
+        if key in memory_policy:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MEMORY_STRATEGY_ESCAPED_EXTENSION",
+                    f"new memory strategy {key!r} must exist only inside memory_policy_extensions",
+                    f"payload.memory_policy.{key}",
+                )
+            )
+
+    top_safety = _as_dict(payload.get("safety_policy"))
+    layer_3 = _as_dict(_as_dict(graph_snapshot.get("layer_outputs")).get("layer_3"))
+    modules = {
+        module.get("module_id"): module
+        for module in payload.get("modules", [])
+        if isinstance(module, dict)
+    }
+    output_sources = {output_key: module_id for module_id, output_key in LAYER3_SAFETY_POLICY_MODULES}
+    output_sources.update({output_key: RISK_RESPONSE_MODULE_ID for output_key in LAYER3_RISK_RESPONSE_OUTPUT_KEYS})
+    for output_key, module_id in output_sources.items():
+        module = modules.get(module_id)
+        module_output = _compiled_module_output(module, output_key) if isinstance(module, dict) else {}
+        module_root_output = _as_dict(_as_dict(module.get("outputs")).get(output_key)) if isinstance(module, dict) else {}
+        projected = _as_dict(top_safety.get(output_key))
+        if not module_output or module_output != module_root_output or module_output != projected or projected != _as_dict(layer_3.get(output_key)):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_SAFETY_PROJECTION_INCONSISTENT",
+                    f"Layer 3 module output and safety projection differ for {output_key!r}",
+                    f"payload.safety_policy.{output_key}",
+                )
+            )
+            continue
+        status = module_output.get("compile_validation_status")
+        if status is not None and status not in {"valid", "invalid"}:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_SAFETY_VALIDATION_STATUS_DRIFT",
+                    f"compiled safety status must be final, got {status!r}",
+                    f"payload.modules.{module_id}.outputs.{output_key}.compile_validation_status",
+                )
+            )
+
+    if not any(finding.get("status") == "FAIL" for finding in findings):
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_EXPORT_PROJECTIONS_CONSISTENT",
+                "frozen compatibility aliases, local Runtime storage semantics, and Layer 3 safety projections are consistent",
+                "payload",
+            )
+        )
+    return findings
+
+
 def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     collection = collect_canvas(canvas)
     raw_findings = validate_collection(collection)
@@ -3732,10 +4284,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             )
         )
     ]
+    _synchronize_layer3_module_outputs(collection)
+    _synchronize_stage_7_4_module_scope(collection)
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
-    valid = not any(f["status"] == "FAIL" for f in findings)
     checked_at = _now_iso()
-    audit_report = _build_v03_audit_report(findings, checked_at)
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
     resident = blueprint.get("resident", {})
     if isinstance(resident, dict):
@@ -3747,6 +4299,17 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
     payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    # payload.modules is the sole module authority. The frozen memory surface
+    # remains unchanged; Stage 7.4 policy is attached later as an extension.
+    payload["memory_config"]["storage_backend"] = "local_runtime"
+    payload["fallback_routes"] = [
+        route
+        for route in payload["fallback_routes"]
+        if route.get("capability") in set(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    ]
+    payload["graph_snapshot"].pop("modules", None)
+    payload["memory_config"]["memory_types"] = list(_V03_FROZEN_MEMORY_TYPES)
+    payload["memory_config"]["namespace"] = "default"
     payload["graph_snapshot"]["layer_outputs"] = _assemble_identity_core_outputs(
         collection,
         resident_id,
@@ -3757,15 +4320,8 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _merge_layer3_safety_into_safety_policy(payload)
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer8_behavior_outputs(collection))
     _merge_layer8_behavior_into_payload(payload)
-    memory_policy = _assemble_layer5_memory_policy(collection, resident_id, findings)
-    payload["memory_policy"] = memory_policy
-    payload["graph_snapshot"]["layer_outputs"]["memory_policy"] = memory_policy
-    payload["graph_snapshot"]["layer_outputs"]["layer_5"] = {
-        "memory_policy": memory_policy,
-        "module_ids": [module_id for module_id, _output_key, _policy_key in _LAYER5_MEMORY_POLICY_MODULES],
-        "module_count": sum(1 for _module_id, _output_key, policy_key in _LAYER5_MEMORY_POLICY_MODULES if policy_key in memory_policy),
-        "validation_result": "pass" if all(policy_key in memory_policy for _module_id, _output_key, policy_key in _LAYER5_MEMORY_POLICY_MODULES) else "partial",
-    }
+    memory_policy_extensions = _assemble_layer5_memory_policy(collection, resident_id, findings)
+    payload["memory_policy"] = _build_v03_memory_policy(resident_id, memory_policy_extensions)
     identity_sync = _v3_identity_sync_from_profile(payload)
     if identity_sync.get("resident_id"):
         resident_id = identity_sync["resident_id"]
@@ -3794,10 +4350,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         if isinstance(payload.get(config_key), dict):
             payload[config_key]["resident_id"] = resident_id
     private_namespace = f"private_memory:{resident_id}"
-    if isinstance(payload.get("memory_policy"), dict):
-        payload["memory_policy"]["namespace"] = private_namespace
-    if isinstance(payload.get("memory_config"), dict):
-        payload["memory_config"]["namespace"] = private_namespace
+    extensions = _as_dict(_as_dict(payload.get("memory_policy")).get(_V03_MEMORY_POLICY_EXTENSIONS_KEY))
+    extensions["resident_id"] = resident_id
+    extensions["namespace"] = private_namespace
+    payload["memory_policy"][_V03_MEMORY_POLICY_EXTENSIONS_KEY] = extensions
     if isinstance(resident, dict):
         resident["resident_id"] = resident_id
         resident["name"] = resident_name_final
@@ -3807,17 +4363,18 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             resident["disclosure"] = identity_sync["disclosure"]
     _sync_legacy_blueprint_identity(blueprint, resident_id, resident_name_final)
     _sync_legacy_blueprint_runtime_requirements(blueprint)
-    blueprint["memory_namespace"] = private_namespace
+    blueprint["memory_namespace"] = "default"
     if isinstance(blueprint.get("memory_config"), dict):
-        blueprint["memory_config"]["namespace"] = private_namespace
+        blueprint["memory_config"]["memory_types"] = list(_V03_FROZEN_MEMORY_TYPES)
+        blueprint["memory_config"]["store"] = "local_runtime"
+        blueprint["memory_config"].pop("namespace", None)
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
     findings.extend(_identity_consistency_findings(manifest, payload, resident))
     findings.extend(_environment_mapping_findings(payload))
     findings.extend(_v03_version_findings(resident, manifest, payload, compile_info))
     findings.extend(_identity_hardcode_findings(collection, payload))
     findings.extend(validate_v03_runtime_contract({"manifest": manifest, "payload": payload}))
-    audit_report = _build_v03_audit_report(findings, checked_at)
-    return {
+    dr = {
         "file_type": FILE_TYPE,
         "dr_version": DR_VERSION_V0_3,
         "dr_schema_version": DR_SCHEMA_VERSION_V0_3,
@@ -3830,42 +4387,17 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "manifest": manifest,
         "payload": payload,
         "compile_info": compile_info,
-        "audit_report": audit_report,
-        # Backward-compatible aliases kept so older read-only tests and loaders
-        # can still inspect the legacy compile surface while v0.3 is the source
-        # of truth.
-        "resident": resident,
-        "layers": collection["layers"],
-        "modules": collection["modules"],
-        "slots": collection["slots"],
-        "runtime_requirements": payload.get("runtime_requirements"),
-        "memory_config": payload.get("memory_config"),
-        "memory_namespace": payload.get("memory_policy", {}).get("namespace", payload.get("memory_config", {}).get("namespace", "default")),
-        "memory_policy": payload.get("memory_policy"),
-        "lattice_config": payload.get("lattice_config"),
-        "lattice_state_schema": {
-            "resident_id": resident_id,
-            "emotion": payload.get("lattice_config", {}).get("emotion", "neutral"),
-            "energy": payload.get("lattice_config", {}).get("energy", 0.5),
-            "attention": payload.get("lattice_config", {}).get("attention", "self"),
-            "motion": payload.get("lattice_config", {}).get("motion", "idle_breathing"),
-            "voice_state": payload.get("lattice_config", {}).get("voice_state", "idle"),
-            "particle_density": payload.get("lattice_config", {}).get("particle_density", 0.5),
-            "color_palette": payload.get("lattice_config", {}).get("color_palette", []),
-            "focus_target": payload.get("lattice_config", {}).get("focus_target", "none"),
-        },
-        "voice_config": payload.get("voice_config"),
-        "safety_policy": payload.get("safety_policy"),
-        "behavior_policy": payload.get("behavior_policy"),
-        "screen_capability_declaration": payload.get("screen_capability_declaration"),
-        "multi_resident_lattice_state": {
-            "resident_ids": [resident_id],
-            "states": [],
-        },
-        "voice_state": payload.get("lattice_config", {}).get("voice_state"),
-        "audit": audit_report,
-        "legacy_blueprint": blueprint,
     }
+    dr.update(_v03_compatibility_aliases(payload, resident, blueprint, resident_id))
+    named_check_findings = {
+        "stage_scope_check": _v03_stage_scope_findings(dr),
+        "compatibility_check": _v03_export_projection_findings(dr),
+        "pending_validation_check": _v03_pending_validation_findings(dr),
+        "duplicate_source_check": _v03_duplicate_source_findings(dr),
+        "memory_support_level_check": _v03_memory_support_level_findings(dr),
+    }
+    _attach_v03_audit_report(dr, findings, checked_at, named_check_findings)
+    return dr
 
 
 def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
@@ -3894,7 +4426,7 @@ def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] =
         "valid": valid,
         "errors": errors,
         "warnings": warnings,
-        "module_audit": {"checked": len(v03.get("modules", [])), "findings": errors, "ok": valid},
+        "module_audit": {"checked": len(v03.get("payload", {}).get("modules", [])), "findings": errors, "ok": valid},
         "layer_audit": {"present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")], "missing_layers": [], "findings": warnings, "ok": valid},
         "compile_audit": {"ok": valid, "findings": findings},
         "orchestration_compatibility": True,
@@ -3910,7 +4442,7 @@ def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] =
         "screen_capability_declaration": v03.get("screen_capability_declaration"),
         "voice_config": v03.get("voice_config"),
         "safety_policy": v03.get("safety_policy"),
-        "behavior_policy": v03.get("behavior_policy"),
+        "behavior_policy": v03.get("payload", {}).get("behavior_policy"),
         "filename": filename,
         "metadata": {
             "filename": filename,

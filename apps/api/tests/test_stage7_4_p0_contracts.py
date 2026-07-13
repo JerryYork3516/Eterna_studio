@@ -12,7 +12,7 @@ from app.main import app
 from app.registry.module_catalog import get_module_catalog
 from app.registry.provider_registry import resolve_provider_for_engine
 from app.registry.slot_catalog import get_slot_catalog
-from app.services import provider_adapters, resident_runtime
+from app.services import dr_compiler, provider_adapters, resident_runtime
 from app.services.dr_compiler import compile_dr_result_v0_3
 from app.services.runtime_llm_config import reset_runtime_llm_config
 
@@ -126,6 +126,21 @@ def _memory_router_output(module: dict) -> dict:
     return output_node["outputs"]["memory_provider_route_policy"]
 
 
+def _frozen_aftelle_loader_contract(dr: dict) -> tuple[str, str, str, str]:
+    manifest = dr["manifest"]
+    payload = dr["payload"]
+    identity = payload["resident_identity"]
+    assert dr["not_executable"] is True
+    assert manifest["resident_id"] == identity["resident_id"]
+    assert isinstance(dr["lattice_config"], dict)
+    assert isinstance(dr["runtime_requirements"], dict)
+    assert dr["safety_policy"]["no_secret_in_dr"] is True
+    assert dr["safety_policy"]["no_direct_provider_binding"] is True
+    assert dr["safety_policy"]["user_data_not_embedded"] is True
+    assert dr["safety_policy"]["not_executable"] is True
+    return dr["schema_version"], dr["revision"], manifest["resident_id"], identity["name"]
+
+
 def test_required_reference_resolves_local_node_and_field_path():
     canvas, local_node_id = _reference_canvas(source_field_paths=["profile.name"])
 
@@ -203,10 +218,35 @@ def test_required_capability_contract_is_registry_derived_and_does_not_overclaim
     assert "voice" not in runtime["required_slot_types"]
     assert {key for key, value in providers.items() if value.get("required")} == set(_REQUIRED_CAPABILITIES)
     assert providers["lattice"]["mode"] == "mock_fallback"
-    assert providers["lattice"]["fallback_provider_type"] == "screen"
+    assert "fallback_provider_type" not in providers["lattice"]
+    assert [
+        route for route in dr["payload"]["fallback_routes"] if route["capability"] == "lattice"
+    ] == [{"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}]
     assert "screen" not in runtime["required_provider_types"]
     for engine_id in runtime["required_engines"]:
         assert resolve_provider_for_engine(engine_id) is not None
+
+
+def test_lattice_fallback_is_lattice_mock_across_runtime_slots_and_routes():
+    dr = _valid_dr()
+    payload = dr["payload"]
+
+    assert "lattice_mock" in payload["runtime_requirements"]["required_engines"]
+    assert "fallback_provider_type" not in payload["provider_requirements"]["lattice"]
+    assert {
+        slot["engine_binding"]
+        for slot in payload["slots"]
+        if slot.get("slot_type") == "lattice"
+    } == {"lattice_mock"}
+    assert [
+        route["route"]
+        for route in payload["fallback_routes"]
+        if route.get("capability") == "lattice"
+    ] == ["lattice_mock"]
+    assert not any(
+        route.get("capability") == "lattice" and route.get("route") == "screen"
+        for route in payload["fallback_routes"]
+    )
 
 
 @pytest.mark.parametrize("missing_slot_type", _REQUIRED_CAPABILITIES)
@@ -264,7 +304,10 @@ def test_runtime_rejects_tampered_lattice_fallback_requirement():
     body = resident_runtime.load_digital_resident(dr)
 
     assert body["loaded"] is False
-    assert any(item["code"] == "DR_CAP_PROVIDER_REQUIREMENT_MISMATCH" for item in body["validation_result"]["errors"])
+    assert any(
+        item["code"] == "DR_CAP_LATTICE_FALLBACK_PROVIDER_TYPE_FORBIDDEN"
+        for item in body["validation_result"]["errors"]
+    )
 
 
 def test_runtime_consumes_compiled_policy_summaries_in_fixed_order_and_keeps_dr_read_only(monkeypatch):
@@ -327,7 +370,7 @@ def test_runtime_consumes_compiled_policy_summaries_in_fixed_order_and_keeps_dr_
 
 def test_layer5_all_seven_module_outputs_project_to_authoritative_memory_policy():
     dr = _valid_dr()
-    policy = dr["payload"]["memory_policy"]
+    policy = dr["payload"]["memory_policy"]["memory_policy_extensions"]
     modules = {module["module_id"]: module for module in dr["payload"]["modules"]}
 
     for module_id, output_key, policy_key in _LAYER5_POLICY_OUTPUTS:
@@ -339,6 +382,101 @@ def test_layer5_all_seven_module_outputs_project_to_authoritative_memory_policy(
     assert policy["short_term_memory"]["retention"] == "session"
     assert policy["relationship_memory"]["change_policy"] == "gradual_only"
     assert policy["memory_update"]["no_dr_writeback"] is True
+
+
+def test_frozen_v03_memory_contract_survives_when_extensions_are_ignored():
+    dr = _valid_dr()
+    memory_policy = dr["payload"]["memory_policy"]
+    extensions = memory_policy["memory_policy_extensions"]
+    legacy_view = deepcopy(dr)
+    legacy_view["payload"]["memory_policy"].pop("memory_policy_extensions")
+    legacy_view["memory_policy"].pop("memory_policy_extensions")
+
+    assert memory_policy["retention_policy"] == "persistent"
+    assert memory_policy["read_write_policy"] == "local_runtime"
+    assert memory_policy["memory_types"] == [
+        "short_term_memory",
+        "profile_memory",
+        "preference_memory",
+        "interaction_log",
+    ]
+    assert memory_policy["preference_memory"] == {"type": "kv", "scope": "per_resident"}
+    assert extensions["memory_types"] == [
+        "short_term_memory",
+        "preference_memory",
+        "event_memory",
+        "relationship_memory",
+        "interaction_log",
+    ]
+    assert _frozen_aftelle_loader_contract(legacy_view) == _frozen_aftelle_loader_contract(dr)
+
+
+def test_payload_modules_are_the_only_exported_module_authority_and_required_aliases_match():
+    dr = _valid_dr()
+
+    assert isinstance(dr["payload"]["modules"], list)
+    assert "modules" not in dr
+    assert "modules" not in dr["payload"]["graph_snapshot"]
+    assert "modules" not in dr["legacy_blueprint"]
+    assert "behavior_policy" not in dr
+    for root_key, payload_key in (
+        ("layers", "13_layers_snapshot"),
+        ("slots", "slots"),
+        ("runtime_requirements", "runtime_requirements"),
+        ("memory_config", "memory_config"),
+        ("memory_policy", "memory_policy"),
+        ("lattice_config", "lattice_config"),
+        ("voice_config", "voice_config"),
+        ("safety_policy", "safety_policy"),
+        ("screen_capability_declaration", "screen_capability_declaration"),
+    ):
+        assert dr[root_key] == dr["payload"][payload_key]
+
+
+def test_required_compatibility_projection_drift_blocks_compile_and_export(monkeypatch: pytest.MonkeyPatch):
+    original = dr_compiler._v03_compatibility_aliases
+
+    def drift(*args, **kwargs):
+        aliases = original(*args, **kwargs)
+        aliases["memory_policy"]["retention_policy"] = "drifted"
+        return aliases
+
+    monkeypatch.setattr(dr_compiler, "_v03_compatibility_aliases", drift)
+    result = _compile()
+    response = client.post("/dr/export", json={"workflow": _workflow()})
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert response.status_code == 422
+    assert any(item["code"] == "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT" for item in result["errors"])
+
+
+def test_pending_module_safety_status_cannot_project_as_valid(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(dr_compiler, "_synchronize_layer3_module_outputs", lambda _collection: None)
+
+    result = _compile()
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert any(
+        item["code"] in {"DR_SAFETY_PROJECTION_INCONSISTENT", "DR_SAFETY_VALIDATION_STATUS_DRIFT"}
+        for item in result["errors"]
+    )
+
+
+def test_compiled_safety_modules_and_top_policy_share_final_validation_status():
+    dr = _valid_dr()
+    top_safety = dr["payload"]["safety_policy"]
+    checked = 0
+
+    for module in dr["payload"]["modules"]:
+        for output_key, output in module.get("outputs", {}).items():
+            if not isinstance(output, dict) or "compile_validation_status" not in output:
+                continue
+            checked += 1
+            assert output["compile_validation_status"] in {"valid", "invalid"}
+            assert top_safety[output_key] == output
+    assert checked == 5
 
 
 def test_memory_router_stale_output_is_rebuilt_from_current_node_config_without_mutating_canvas():
@@ -372,8 +510,8 @@ def test_memory_router_stale_output_is_rebuilt_from_current_node_config_without_
     dr = result["compiled_dr"]
     compiled_router = _memory_router_module(dr["payload"]["modules"])
     module_output = _memory_router_output(compiled_router)
-    root_module_output = _memory_router_output(_memory_router_module(dr["modules"]))
-    top_policy = dr["payload"]["memory_policy"]
+    frozen_policy = dr["payload"]["memory_policy"]
+    top_policy = frozen_policy["memory_policy_extensions"]
     expected_types = [
         "short_term_memory",
         "preference_memory",
@@ -384,13 +522,21 @@ def test_memory_router_stale_output_is_rebuilt_from_current_node_config_without_
     expected_operations = ["read", "write", "update", "delete"]
 
     assert module_output == compiled_router["outputs"]["memory_provider_route_policy"]
-    assert module_output == root_module_output
     assert module_output == top_policy["memory_provider_router"]
-    assert top_policy == dr["memory_policy"]
+    assert frozen_policy == dr["memory_policy"]
     assert top_policy["memory_types"] == expected_types
-    assert dr["legacy_blueprint"]["memory_config"]["memory_types"] == expected_types
+    assert frozen_policy["memory_types"] == [
+        "short_term_memory",
+        "profile_memory",
+        "preference_memory",
+        "interaction_log",
+    ]
+    assert dr["legacy_blueprint"]["memory_config"]["memory_types"] == frozen_policy["memory_types"]
     assert module_output["memory_type_policy"]["allowed_memory_types"] == expected_types
-    assert "profile_memory" not in json.dumps(dr, ensure_ascii=False)
+    assert "profile_memory" not in json.dumps(top_policy, ensure_ascii=False)
+    assert "modules" not in dr
+    assert "modules" not in dr["payload"]["graph_snapshot"]
+    assert "modules" not in dr["legacy_blueprint"]
     assert module_output["request_contract"]["operations"] == expected_operations
     assert module_output["request_contract"]["canonical_operations"] == expected_operations
     assert module_output["request_contract"]["accepted_operations"] == [
@@ -477,7 +623,7 @@ def test_preference_requires_explicit_expression_or_confirmation():
     assert allowed["count"] == 1
 
 
-def test_event_memory_strips_raw_content_and_relationship_level_jump_is_denied():
+def test_policy_only_event_memory_degrades_safely_and_relationship_jump_is_denied():
     dr = _valid_dr()
     resident_runtime.create_runtime_state_from_dr(dr)
     resident_id = dr["manifest"]["resident_id"]
@@ -504,8 +650,9 @@ def test_event_memory_strips_raw_content_and_relationship_level_jump_is_denied()
         }
     )
 
-    assert set(event["entry"]) == {"event_summary", "event_meaning", "timestamp"}
-    assert event["entry"]["event_summary"] == "project milestone"
+    assert event["status"] == "denied"
+    assert event["reason"] == "memory_policy_only_not_runtime_supported"
+    assert event["count"] == 0
     assert relationship["status"] == "denied"
     assert relationship["reason"] == "relationship_single_interaction_level_jump_forbidden"
 
@@ -547,7 +694,7 @@ def test_memory_restrictions_deny_before_provider_call(monkeypatch, request_over
 
 def test_compiled_memory_access_policy_can_deny_write_before_provider_call(monkeypatch):
     dr = _valid_dr()
-    dr["payload"]["memory_policy"]["memory_provider_router"]["access_policy"]["write"] = []
+    dr["payload"]["memory_policy"]["memory_policy_extensions"]["memory_provider_router"]["access_policy"]["write"] = []
     resident_runtime.create_runtime_state_from_dr(dr)
     resident_id = dr["manifest"]["resident_id"]
     calls: list[tuple[str, dict]] = []
