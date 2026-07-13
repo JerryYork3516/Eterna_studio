@@ -2018,6 +2018,80 @@ def _behavior_module_policy(module: Dict[str, Any], policy_key: str, default_pre
     }
 
 
+def _synchronize_layer8_validation_results(
+    collection: Dict[str, Any], findings: List[Dict[str, str]]
+) -> None:
+    """Finalize Layer 8 validation nodes from the compiler-owned configuration."""
+    modules = {
+        module.get("module_id"): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict)
+    }
+    valid_count = 0
+    for module_id, policy_key, preset_id in _LAYER8_BEHAVIOR_MODULES:
+        module = modules.get(module_id)
+        reasons: List[str] = []
+        validation_nodes: List[Dict[str, Any]] = []
+        if not isinstance(module, dict):
+            reasons.append("module is missing")
+        else:
+            validation_nodes = [
+                node
+                for node in _module_nodes_by_type(module, "text_config")
+                if _nonempty_str(_as_dict(node.get("params")).get("config_mode")).endswith("_validation")
+            ]
+            if len(validation_nodes) != 1:
+                reasons.append(f"expected one validation node, got {len(validation_nodes)}")
+            else:
+                checkbox_config = _checkbox_config_from_node(validation_nodes[0])
+                selected = set(_string_list(checkbox_config.get("selected_options")))
+                required = set(_string_list(checkbox_config.get("default_selected_options")))
+                if not checkbox_config:
+                    reasons.append("validation checkbox configuration is missing")
+                if not selected:
+                    reasons.append("no validation rules are selected")
+                missing_rules = sorted(required - selected)
+                if missing_rules:
+                    reasons.append(f"required validation rules are not selected: {missing_rules!r}")
+                if any(not rule.startswith("check_") for rule in selected):
+                    reasons.append("validation rule ids must use the check_ prefix")
+
+            policy = _behavior_module_policy(module, policy_key, preset_id)
+            if not _nonempty_str(policy.get("preset_id")):
+                reasons.append("behavior preset is missing")
+            if not _string_list(policy.get("selected_options")):
+                reasons.append("behavior output has no selected options")
+            if not _string_list(policy.get("validation_rules")):
+                reasons.append("behavior output has no validation rules")
+
+        result = "pass" if not reasons else "invalid"
+        for node in validation_nodes:
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            params["validation_result"] = result
+            node["params"] = params
+        if reasons:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_LAYER8_VALIDATION_INCOMPLETE",
+                    f"Layer 8 module {module_id!r} validation could not be finalized: " + "; ".join(reasons),
+                    f"payload.modules.{module_id}.module_graph.validation",
+                )
+            )
+        else:
+            valid_count += 1
+
+    if valid_count == len(_LAYER8_BEHAVIOR_MODULES):
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_LAYER8_VALIDATION_FINALIZED",
+                "all six Layer 8 behavior modules selected their required compile-time validation rules",
+                "payload.modules.layer_8",
+            )
+        )
+
+
 def _assemble_layer8_behavior_outputs(collection: Dict[str, Any]) -> Dict[str, Any]:
     modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
     behavior_modules: Dict[str, Any] = {}
@@ -4286,6 +4360,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     ]
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
+    _synchronize_layer8_validation_results(collection, findings)
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
     checked_at = _now_iso()
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}

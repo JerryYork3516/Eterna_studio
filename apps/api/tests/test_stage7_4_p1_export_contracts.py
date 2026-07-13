@@ -193,9 +193,62 @@ def test_audit_report_executes_all_six_checks_and_reports_real_counts():
     for check_name in _AUDIT_CHECKS:
         counts = [summary[f"{check_name}_{status}"] for status in ("pass", "warning", "fail")]
         assert sum(counts) > 0
-    assert summary["pending_validation_check_warning"] > 0
-    assert summary["warning"] > 0
+    assert summary["pending_validation_check_warning"] == 0
+    assert summary["pending_validation_check_pass"] == 1
+    assert summary["warning"] == 0
     assert summary["memory_support_level_check_pass"] == 5
+
+
+def test_layer8_validation_nodes_are_finalized_without_mutating_canvas():
+    modules = _catalog_modules()
+    before = deepcopy(modules)
+
+    dr = _compiled_dr(modules=modules)
+    behavior_modules = {
+        module["module_id"]: module
+        for module in dr["payload"]["modules"]
+        if module["module_id"]
+        in {
+            "language_habit",
+            "decision_pattern",
+            "emotion_reaction",
+            "interaction_strategy",
+            "emotion_mapper",
+            "behavior_habit",
+        }
+    }
+
+    assert modules == before
+    assert len(behavior_modules) == 6
+    for module in behavior_modules.values():
+        validation_node = next(
+            node
+            for node in module["module_graph"]["nodes"]
+            if str(node.get("params", {}).get("config_mode", "")).endswith("_validation")
+        )
+        assert validation_node["params"]["validation_result"] == "pass"
+    assert not any(
+        finding["code"] == "DR_PENDING_VALIDATION_REPORTED"
+        for finding in dr["audit_report"]["findings"]
+    )
+
+
+def test_missing_required_layer8_validation_rule_blocks_compile():
+    modules = _catalog_modules()
+    language = next(module for module in modules if module["module_id"] == "language_habit")
+    validation_node = next(
+        node
+        for node in language["module_graph"]["nodes"]
+        if str(node.get("params", {}).get("config_mode", "")).endswith("_validation")
+    )
+    selected = validation_node["params"]["checkbox_config"]["selected_options"]
+    validation_node["params"]["checkbox_config"]["selected_options"] = selected[:-1]
+
+    result = compile_dr_result_v0_3(_canvas(modules=modules))
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert any(item["code"] == "DR_LAYER8_VALIDATION_INCOMPLETE" for item in result["errors"])
 
 
 def test_file_size_warning_is_real_but_does_not_block_compile_or_export(monkeypatch):
