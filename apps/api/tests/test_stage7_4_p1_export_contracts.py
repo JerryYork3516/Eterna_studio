@@ -17,7 +17,7 @@ client = TestClient(app)
 
 _REQUIRED_SLOT_TYPES = {"llm", "memory", "lattice"}
 _RESERVED_SLOT_TYPES = {"tts", "speech", "screen", "avatar", "ar", "tool"}
-_STAGE_7_3_FROZEN_MODULE_IDS = {"particle_avatar"}
+_FORCED_RESERVED_MODULE_IDS = {"particle_avatar", "llm_provider_router"}
 _MEMORY_SUPPORT_LEVELS = {
     "short_term_memory": "supported",
     "preference_memory": "supported_minimal_kv",
@@ -28,6 +28,7 @@ _MEMORY_SUPPORT_LEVELS = {
 _AUDIT_CHECKS = (
     "stage_scope_check",
     "compatibility_check",
+    "frozen_root_field_check",
     "pending_validation_check",
     "duplicate_source_check",
     "memory_support_level_check",
@@ -65,7 +66,7 @@ def _compiled_dr(*, modules: list[dict] | None = None) -> dict:
     return result["compiled_dr"]
 
 
-def test_compiler_reserves_future_modules_without_mutating_required_or_stage_7_3_modules():
+def test_compiler_reserves_future_and_forced_placeholder_modules_without_mutating_canvas():
     modules = _catalog_modules()
     before = deepcopy(modules)
     source = {module["module_id"]: module for module in modules}
@@ -76,10 +77,11 @@ def test_compiler_reserves_future_modules_without_mutating_required_or_stage_7_3
         module
         for module in exported.values()
         if module.get("slot_type") in _RESERVED_SLOT_TYPES
-        and module["module_id"] not in _STAGE_7_3_FROZEN_MODULE_IDS
+        or module["module_id"] in _FORCED_RESERVED_MODULE_IDS
     ]
 
     assert reserved
+    assert _FORCED_RESERVED_MODULE_IDS <= {module["module_id"] for module in reserved}
     assert modules == before
     for module in reserved:
         assert module["status"] == "RESERVED"
@@ -90,13 +92,12 @@ def test_compiler_reserves_future_modules_without_mutating_required_or_stage_7_3
         assert not module.get("module_graph", {}).get("runtime_flow")
         assert not module.get("module_graph", {}).get("slot_routes")
 
-    particle = exported["particle_avatar"]
-    particle_source = source["particle_avatar"]
-    for field in ("status", "is_placeholder", "no_execution", "runtime_enabled"):
-        assert particle[field] == particle_source[field]
-
     for module_id, module in exported.items():
-        if module.get("slot_type") in _REQUIRED_SLOT_TYPES and module_id in source:
+        if (
+            module.get("slot_type") in _REQUIRED_SLOT_TYPES
+            and module_id in source
+            and module_id not in _FORCED_RESERVED_MODULE_IDS
+        ):
             for field in ("status", "is_placeholder", "no_execution", "runtime_enabled"):
                 assert module[field] == source[module_id][field]
 
@@ -113,6 +114,28 @@ def test_stage_scope_audit_fails_if_ready_future_module_escapes_normalization(mo
     assert result["valid"] is False
     assert result["compiled_dr"] is None
     assert any(item["code"] == "DR_STAGE_SCOPE_RESERVED_MODULE_EXECUTABLE" for item in result["errors"])
+
+
+@pytest.mark.parametrize("module_id", sorted(_FORCED_RESERVED_MODULE_IDS))
+def test_stage_scope_audit_rejects_forced_placeholder_status_conflict(monkeypatch, module_id: str):
+    original = dr_compiler._synchronize_stage_7_4_module_scope
+
+    def drift(collection: dict) -> None:
+        original(collection)
+        module = next(item for item in collection["modules"] if item["module_id"] == module_id)
+        module["status"] = "READY"
+        module["no_execution"] = False
+
+    monkeypatch.setattr(dr_compiler, "_synchronize_stage_7_4_module_scope", drift)
+    result = compile_dr_result_v0_3(_canvas(modules=_catalog_modules()))
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert any(
+        item["code"] == "DR_STAGE_SCOPE_RESERVED_MODULE_EXECUTABLE"
+        and module_id in item["message"]
+        for item in result["errors"]
+    )
 
 
 def test_memory_support_levels_and_local_runtime_backend_preserve_frozen_v03_policy():
@@ -182,7 +205,7 @@ def test_policy_only_memory_degrades_without_provider_and_interaction_log_uses_d
     assert calls == []
 
 
-def test_audit_report_executes_all_six_checks_and_reports_real_counts():
+def test_audit_report_executes_all_seven_checks_and_reports_real_counts():
     dr = _compiled_dr()
     audit = dr["audit_report"]
     summary = audit["summary"]
@@ -195,7 +218,8 @@ def test_audit_report_executes_all_six_checks_and_reports_real_counts():
         assert sum(counts) > 0
     assert summary["pending_validation_check_warning"] == 0
     assert summary["pending_validation_check_pass"] == 1
-    assert summary["warning"] == 0
+    assert summary["frozen_root_field_check_pass"] == 1
+    assert summary["warning"] == summary["file_size_check_warning"]
     assert summary["memory_support_level_check_pass"] == 5
 
 
@@ -279,9 +303,10 @@ def test_memory_support_level_drift_blocks_compile(monkeypatch):
     assert any(item["code"] == "DR_MEMORY_SUPPORT_LEVEL_INACCURATE" for item in result["errors"])
 
 
-def test_legacy_v03_without_optional_memory_extensions_and_new_dr_both_load():
+def test_legacy_v03_without_root_modules_or_optional_memory_extensions_and_new_dr_both_load():
     current = _compiled_dr()
     legacy = deepcopy(current)
+    legacy.pop("modules")
     legacy["payload"]["memory_policy"].pop("memory_policy_extensions", None)
     legacy["memory_policy"] = deepcopy(legacy["payload"]["memory_policy"])
 

@@ -144,10 +144,11 @@ _V03_MEMORY_SUPPORT_LEVELS = {
     "interaction_log": "display_cache_only",
 }
 _STAGE_7_4_RESERVED_SLOT_TYPES = frozenset({"tts", "speech", "screen", "avatar", "ar", "tool"})
-_STAGE_7_3_FROZEN_MODULE_IDS = frozenset({"particle_avatar"})
+_STAGE_7_4_FORCED_RESERVED_MODULE_IDS = frozenset({"particle_avatar", "llm_provider_router"})
 _V03_AUDIT_CHECK_NAMES = (
     "stage_scope_check",
     "compatibility_check",
+    "frozen_root_field_check",
     "pending_validation_check",
     "duplicate_source_check",
     "memory_support_level_check",
@@ -2593,10 +2594,9 @@ def _synchronize_stage_7_4_module_scope(collection: Dict[str, Any]) -> None:
             continue
         module_id = _nonempty_str(module.get("module_id"))
         slot_type = _nonempty_str(module.get("slot_type"))
-        if (
-            slot_type in required_slot_types
-            or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
-            or module_id in _STAGE_7_3_FROZEN_MODULE_IDS
+        forced_reserved = module_id in _STAGE_7_4_FORCED_RESERVED_MODULE_IDS
+        if not forced_reserved and (
+            slot_type in required_slot_types or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
         ):
             continue
         module["status"] = "RESERVED"
@@ -3903,6 +3903,7 @@ def _v03_compatibility_aliases(
     return {
         "resident": deepcopy(resident),
         "layers": deepcopy(payload.get("13_layers_snapshot") or []),
+        "modules": deepcopy(payload.get("modules") or []),
         "slots": deepcopy(payload.get("slots") or []),
         "runtime_requirements": deepcopy(payload.get("runtime_requirements") or {}),
         "memory_config": deepcopy(payload.get("memory_config") or {}),
@@ -3935,7 +3936,6 @@ def _v03_duplicate_source_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
     graph_snapshot = _as_dict(payload.get("graph_snapshot"))
     legacy_blueprint = _as_dict(dr.get("legacy_blueprint"))
     for path, container in (
-        ("modules", dr),
         ("payload.graph_snapshot.modules", graph_snapshot),
         ("legacy_blueprint.modules", legacy_blueprint),
     ):
@@ -3962,7 +3962,7 @@ def _v03_duplicate_source_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
             _finding(
                 "PASS",
                 "DR_DUPLICATE_SOURCE_CHECK_PASSED",
-                "payload.modules is the sole module authority and no non-contract policy copy exists",
+                "payload.modules is authoritative and no forbidden graph_snapshot/legacy module copy exists",
                 "payload.modules",
             )
         )
@@ -3980,10 +3980,9 @@ def _v03_stage_scope_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
             continue
         module_id = _nonempty_str(module.get("module_id"))
         slot_type = _nonempty_str(module.get("slot_type"))
-        if (
-            slot_type in required_slot_types
-            or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
-            or module_id in _STAGE_7_3_FROZEN_MODULE_IDS
+        forced_reserved = module_id in _STAGE_7_4_FORCED_RESERVED_MODULE_IDS
+        if not forced_reserved and (
+            slot_type in required_slot_types or slot_type not in _STAGE_7_4_RESERVED_SLOT_TYPES
         ):
             continue
         runtime_mapping = _as_dict(module.get("runtime_mapping"))
@@ -4206,6 +4205,7 @@ def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
 
     required_aliases = {
         "layers": "13_layers_snapshot",
+        "modules": "modules",
         "slots": "slots",
         "runtime_requirements": "runtime_requirements",
         "memory_config": "memory_config",
@@ -4341,6 +4341,31 @@ def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
     return findings
 
 
+def _v03_frozen_root_field_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Require the frozen v0.3 root compatibility fields."""
+    findings: List[Dict[str, str]] = []
+    for field in ("layers", "modules", "slots"):
+        if field not in dr:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_V03_FROZEN_ROOT_FIELD_MISSING",
+                    f"frozen DR v0.3 root field {field!r} is missing",
+                    field,
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_V03_FROZEN_ROOT_FIELD_CHECK_PASSED",
+                "frozen DR v0.3 root fields layers/modules/slots are present",
+                "layers",
+            )
+        )
+    return findings
+
+
 def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     collection = collect_canvas(canvas)
     raw_findings = validate_collection(collection)
@@ -4467,6 +4492,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     named_check_findings = {
         "stage_scope_check": _v03_stage_scope_findings(dr),
         "compatibility_check": _v03_export_projection_findings(dr),
+        "frozen_root_field_check": _v03_frozen_root_field_findings(dr),
         "pending_validation_check": _v03_pending_validation_findings(dr),
         "duplicate_source_check": _v03_duplicate_source_findings(dr),
         "memory_support_level_check": _v03_memory_support_level_findings(dr),

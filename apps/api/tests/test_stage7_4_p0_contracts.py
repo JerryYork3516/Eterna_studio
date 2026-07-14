@@ -411,16 +411,18 @@ def test_frozen_v03_memory_contract_survives_when_extensions_are_ignored():
     assert _frozen_aftelle_loader_contract(legacy_view) == _frozen_aftelle_loader_contract(dr)
 
 
-def test_payload_modules_are_the_only_exported_module_authority_and_required_aliases_match():
+def test_payload_modules_are_authoritative_and_required_aliases_match():
     dr = _valid_dr()
 
     assert isinstance(dr["payload"]["modules"], list)
-    assert "modules" not in dr
+    assert dr["modules"] == dr["payload"]["modules"]
+    assert dr["modules"] is not dr["payload"]["modules"]
     assert "modules" not in dr["payload"]["graph_snapshot"]
     assert "modules" not in dr["legacy_blueprint"]
     assert "behavior_policy" not in dr
     for root_key, payload_key in (
         ("layers", "13_layers_snapshot"),
+        ("modules", "modules"),
         ("slots", "slots"),
         ("runtime_requirements", "runtime_requirements"),
         ("memory_config", "memory_config"),
@@ -431,6 +433,53 @@ def test_payload_modules_are_the_only_exported_module_authority_and_required_ali
         ("screen_capability_declaration", "screen_capability_declaration"),
     ):
         assert dr[root_key] == dr["payload"][payload_key]
+
+
+@pytest.mark.parametrize("missing_field", ["layers", "modules", "slots"])
+def test_missing_frozen_root_field_blocks_compile_and_export(
+    monkeypatch: pytest.MonkeyPatch, missing_field: str
+):
+    original = dr_compiler._v03_compatibility_aliases
+
+    def omit_frozen_field(*args, **kwargs):
+        aliases = original(*args, **kwargs)
+        aliases.pop(missing_field)
+        return aliases
+
+    monkeypatch.setattr(dr_compiler, "_v03_compatibility_aliases", omit_frozen_field)
+    result = _compile()
+    response = client.post("/dr/export", json={"workflow": _workflow()})
+    summary = result["metadata"]["v03_audit_report"]["summary"]
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert response.status_code == 422
+    assert summary["frozen_root_field_check_fail"] == 1
+    assert summary["compatibility_check_fail"] >= 1
+    assert summary["compatibility_check_pass"] == 0
+    assert any(item["code"] == "DR_V03_FROZEN_ROOT_FIELD_MISSING" for item in result["errors"])
+    assert any(item["code"] == "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT" for item in result["errors"])
+
+
+def test_top_level_modules_projection_drift_blocks_compile_and_export(monkeypatch: pytest.MonkeyPatch):
+    original = dr_compiler._v03_compatibility_aliases
+
+    def drift_modules(*args, **kwargs):
+        aliases = original(*args, **kwargs)
+        aliases["modules"] = aliases["modules"][:-1]
+        return aliases
+
+    monkeypatch.setattr(dr_compiler, "_v03_compatibility_aliases", drift_modules)
+    result = _compile()
+    response = client.post("/dr/export", json={"workflow": _workflow()})
+    summary = result["metadata"]["v03_audit_report"]["summary"]
+
+    assert result["valid"] is False
+    assert result["compiled_dr"] is None
+    assert response.status_code == 422
+    assert summary["frozen_root_field_check_pass"] == 1
+    assert summary["compatibility_check_fail"] >= 1
+    assert any(item["code"] == "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT" for item in result["errors"])
 
 
 def test_required_compatibility_projection_drift_blocks_compile_and_export(monkeypatch: pytest.MonkeyPatch):
@@ -534,7 +583,7 @@ def test_memory_router_stale_output_is_rebuilt_from_current_node_config_without_
     assert dr["legacy_blueprint"]["memory_config"]["memory_types"] == frozen_policy["memory_types"]
     assert module_output["memory_type_policy"]["allowed_memory_types"] == expected_types
     assert "profile_memory" not in json.dumps(top_policy, ensure_ascii=False)
-    assert "modules" not in dr
+    assert dr["modules"] == dr["payload"]["modules"]
     assert "modules" not in dr["payload"]["graph_snapshot"]
     assert "modules" not in dr["legacy_blueprint"]
     assert module_output["request_contract"]["operations"] == expected_operations
