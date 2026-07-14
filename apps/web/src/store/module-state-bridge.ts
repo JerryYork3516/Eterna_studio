@@ -6,21 +6,36 @@
  */
 
 import { useCanvasStore, type ModuleGraph, type ModuleGraphsState } from "./canvas-store";
-import { attachedModuleIdsFromLayerModules, loadCanvasStateFromLocalStorage, loadModuleGraphState, saveModuleGraphState } from "@/lib/canvas-persistence";
+import {
+  attachedModuleIdsFromLayerModules,
+  hasEditorMigrationMarker,
+  loadCanvasStateFromLocalStorage,
+  loadModuleGraphState,
+  saveEditorMigrationMarker,
+  saveModuleGraphState,
+} from "@/lib/canvas-persistence";
 import type { WorkflowNode, WorkflowEdge } from "@/lib/schema-types";
 import type { ModuleInstance } from "@/lib/canvas-persistence";
 import { translate } from "@/i18n";
 import {
   filterDanglingModuleGraphEdges,
+  mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
   mergeAvailableModuleReferencePointers,
+  LINXUAN_RESIDENT_ID,
+  migrateLinxuanFirstInteractionEnabledValue,
   normalizeCatalogNodeId,
+  normalizeFirstInteractionEnabled,
+  normalizeFirstInteractionMaxActivePrompts,
   preserveStoredModuleEdges,
   preserveStoredModuleNodePosition,
+  STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   type AvailableModuleReferenceSource,
 } from "./module-graph-merge";
 
 const MODULE_INSTANCE_SEPARATOR = "::";
+const LINXUAN_IDENTITY_GRAPH_ID = "layer_1::module_basic_identity";
+const LINXUAN_INTERACTION_GRAPH_ID = "layer_8::interaction_strategy";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
   "memory_access_control",
@@ -33,6 +48,7 @@ const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "reflection_summary",
   "self_evaluation",
   "growth_plan",
+  "visual_style",
 ]);
 const LAYER12_CONTENT_SEED_MODULE_IDS = new Set([
   "self_awareness",
@@ -47,6 +63,7 @@ type Layer12ReferenceModuleConfig = {
   referenceInputNodeId: string;
   referenceOutputNodeId: string;
   sources: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">>;
+  seedAllNodes?: boolean;
 };
 
 const SELF_AWARENESS_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
@@ -158,6 +175,15 @@ const GROWTH_CONTINUITY_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSo
   { source_layer_id: "layer_12", source_module_id: "reflection_summary", reference_type: "references" },
   { source_layer_id: "layer_12", source_module_id: "self_evaluation", reference_type: "references" },
 ];
+const FIRST_PRESENCE_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
+  { source_layer_id: "layer_1", source_module_id: "module_basic_identity", reference_type: "references" },
+  { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
+  { source_layer_id: "layer_3", source_module_id: "humanistic_interaction_boundary_config_v0_1", reference_type: "constrains" },
+  { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
+  { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
+  { source_layer_id: "layer_11", source_module_id: "user_relationship", reference_type: "references" },
+];
 const LAYER12_REFERENCE_MODULE_CONFIGS: Record<string, Layer12ReferenceModuleConfig> = {
   self_awareness: {
     layerId: "layer_12",
@@ -193,6 +219,14 @@ const LAYER12_REFERENCE_MODULE_CONFIGS: Record<string, Layer12ReferenceModuleCon
     referenceInputNodeId: "growth_governance_reference_input",
     referenceOutputNodeId: "growth_governance_reference_output",
     sources: GROWTH_CONTINUITY_REFERENCE_SOURCES,
+  },
+  visual_style: {
+    layerId: "layer_10",
+    moduleId: "visual_style",
+    referenceInputNodeId: "visual_style_reference_input",
+    referenceOutputNodeId: "visual_style_reference_output",
+    sources: FIRST_PRESENCE_REFERENCE_SOURCES,
+    seedAllNodes: true,
   },
 };
 const LAYER12_PREVIOUS_FIELD_VALUES: Record<string, Record<string, unknown>> = {
@@ -478,18 +512,6 @@ function fieldsFromData(data: Record<string, unknown>): Record<string, unknown>[
   }
   const params = isRecord(data.params) ? data.params : {};
   return Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
-}
-
-function mergeCatalogFields(seedFields: Record<string, unknown>[], existingFields: Record<string, unknown>[]) {
-  const existingById = new Map(existingFields.map((field) => [String(field.field_id || ""), field]));
-  return seedFields.map((seedField) => {
-    const fieldId = String(seedField.field_id || "");
-    const existingField = existingById.get(fieldId);
-    return {
-      ...cloneJson(seedField),
-      value: existingField && "value" in existingField ? existingField.value : seedField.value,
-    };
-  });
 }
 
 function safeGenericFieldKey(value: string) {
@@ -938,6 +960,10 @@ function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, Modu
   }));
   const fields = materializeLayer11P2Fields(registryFields, inputParams.fields);
   const fieldKeys = registryFields.map(layer11P2FieldKey).filter(Boolean);
+  const requiredFieldKeys = registryFields
+    .filter((field) => (field as Record<string, unknown>).required !== false)
+    .map(layer11P2FieldKey)
+    .filter(Boolean);
 
   let changed = false;
   const nextNodes = graph.nodes.map((node) => {
@@ -973,7 +999,7 @@ function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, Modu
     } else if (nodeType === "validation") {
       nextParams = {
         input: params.input ?? "",
-        required_fields: fieldKeys,
+        required_fields: requiredFieldKeys,
         validation_rules: layer11P2ValidationRules(identity.moduleId, nodeId, params.validation_rules),
         validation_outputs: LAYER11_P2_VALIDATION_OUTPUTS,
       };
@@ -1386,19 +1412,16 @@ function mergeCatalogFieldSeed(
     return null;
   }
 
-  const seedFieldNode = initialNodes
-    .map(schemaNodeRecord)
-    .find((node) => {
-      const data = node ? (isRecord(node.data) ? node.data : {}) : {};
-      return node && String(data.node_type || node.type) === "field_input";
-    });
-  if (!seedFieldNode) {
-    return null;
+  const seedByCatalogNodeId = new Map<string, Record<string, unknown>>();
+  for (const initialNode of initialNodes) {
+    const seedNode = schemaNodeRecord(initialNode);
+    if (!seedNode) continue;
+    const seedData = schemaDataRecord(seedNode);
+    if (!fieldsFromData(seedData).length) continue;
+    const catalogNodeId = catalogNodeIdFromGraphNode(seedNode);
+    if (catalogNodeId) seedByCatalogNodeId.set(catalogNodeId, seedNode);
   }
-
-  const seedData = schemaDataRecord(seedFieldNode);
-  const seedFields = fieldsFromData(seedData);
-  if (!seedFields.length) {
+  if (!seedByCatalogNodeId.size) {
     return null;
   }
 
@@ -1410,23 +1433,49 @@ function mergeCatalogFieldSeed(
       return nextNode;
     }
     const data = schemaDataRecord(schemaNode);
-    if (data.catalog_preconfigured !== true || String(data.node_type || schemaNode.type) !== "field_input") {
+    if (data.catalog_preconfigured !== true) {
       return nextNode;
     }
-
-    const existingFields = fieldsFromData(data);
-    const existingIds = existingFields.map((field) => String(field.field_id || ""));
-    const seedIds = seedFields.map((field) => String(field.field_id || ""));
-    if (existingIds.join("\u0000") === seedIds.join("\u0000")) {
-      return nextNode;
-    }
-
+    const seedNode = seedByCatalogNodeId.get(catalogNodeIdFromGraphNode(schemaNode));
+    if (!seedNode) return nextNode;
+    const seedData = schemaDataRecord(seedNode);
+    const seedParams = isRecord(seedData.params) ? seedData.params : {};
+    const seedFields = fieldsFromData(seedData);
     const params = isRecord(data.params) ? { ...data.params } : {};
-    const mergedFields = mergeCatalogFields(seedFields, existingFields);
-    params.fields = mergedFields;
-    data.params = params;
-    data.fields = mergedFields;
-    changed = true;
+    const hasFirstInteractionField = seedFields.some(
+      (field) => String(field.field_id || field.field_key || "") === "first_interaction"
+    );
+    const existingFields = hasFirstInteractionField && Array.isArray(params.fields)
+      ? params.fields.filter(isRecord)
+      : fieldsFromData(data);
+    const mergedFields = mergeCatalogFieldsPreservingValues(seedFields, existingFields);
+    const seedRegistry = Array.isArray(seedParams.field_registry) ? seedParams.field_registry.filter(isRecord) : [];
+    const existingRegistry = Array.isArray(params.field_registry) ? params.field_registry.filter(isRecord) : [];
+    const seedRegistryIds = new Set(seedRegistry.map((field) => String(field.field_id || field.field_key || "")));
+    const mergedRegistry = seedRegistry.length
+      ? [
+          ...seedRegistry.map((field) => cloneJson(field)),
+          ...existingRegistry
+            .filter((field) => !seedRegistryIds.has(String(field.field_id || field.field_key || "")))
+            .map((field) => cloneJson(field)),
+        ]
+      : existingRegistry;
+    const hasLegacyFirstInteractionFields = hasFirstInteractionField && Array.isArray(data.fields);
+    if (
+      stableJson(mergedFields) !== stableJson(existingFields) ||
+      (seedRegistry.length && stableJson(mergedRegistry) !== stableJson(existingRegistry)) ||
+      hasLegacyFirstInteractionFields
+    ) {
+      params.fields = mergedFields;
+      if (seedRegistry.length) params.field_registry = mergedRegistry;
+      data.params = params;
+      if (hasLegacyFirstInteractionFields) {
+        delete data.fields;
+      } else if (Array.isArray(data.fields)) {
+        data.fields = cloneJson(mergedFields);
+      }
+      changed = true;
+    }
     return nextNode;
   });
 
@@ -1778,10 +1827,9 @@ function mergeLayer12ReferenceSeed(
     return null;
   }
 
-  const referenceNodeIds = new Set([
-    config.referenceInputNodeId,
-    config.referenceOutputNodeId,
-  ]);
+  const seedNodeIds = config.seedAllNodes
+    ? new Set(initialNodes.map(catalogNodeIdFromGraphNode).filter(Boolean))
+    : new Set([config.referenceInputNodeId, config.referenceOutputNodeId]);
   const nextNodes = [...graph.nodes];
   const catalogIdToGraphId = new Map<string, string>();
   const existingReferenceNodeByType = new Map<string, string>();
@@ -1798,7 +1846,7 @@ function mergeLayer12ReferenceSeed(
   let changed = false;
   for (const seedNode of initialNodes) {
     const catalogNodeId = catalogNodeIdFromGraphNode(seedNode);
-    if (!referenceNodeIds.has(catalogNodeId)) continue;
+    if (!seedNodeIds.has(catalogNodeId)) continue;
     const nodeType = graphNodeTypeFromGraphNode(seedNode);
     const existingNodeId = catalogIdToGraphId.get(catalogNodeId) || existingReferenceNodeByType.get(nodeType);
     if (existingNodeId) {
@@ -1833,7 +1881,7 @@ function mergeLayer12ReferenceSeed(
     const seedTarget = edgeEndpoint(seedEdge, "target");
     const sourceCatalogId = catalogNodeIdFromEndpoint(seedSource, initialNodeIdMap);
     const targetCatalogId = catalogNodeIdFromEndpoint(seedTarget, initialNodeIdMap);
-    if (!referenceNodeIds.has(sourceCatalogId) && !referenceNodeIds.has(targetCatalogId)) continue;
+    if (!seedNodeIds.has(sourceCatalogId) && !seedNodeIds.has(targetCatalogId)) continue;
     const source = catalogIdToGraphId.get(sourceCatalogId);
     const target = catalogIdToGraphId.get(targetCatalogId);
     if (!source || !target || existingPairs.has(`${source}->${target}`)) continue;
@@ -2395,6 +2443,70 @@ function migrateReferencePointersAcrossGraphs(nodeIdMap: Map<string, string>) {
   }
 }
 
+function normalizeFirstInteractionPromptLimitGraph(
+  graph: ModuleGraph,
+  registry: Record<string, ModuleInstance>
+): ModuleGraph | null {
+  const identity = layerModuleIdentity(graph.moduleNodeId, registry);
+  if (
+    identity.moduleId !== "interaction_strategy" ||
+    (identity.layerId && identity.layerId !== "layer_8")
+  ) {
+    return null;
+  }
+
+  let changed = false;
+  const nextNodes = graph.nodes.map((node) => {
+    if (catalogNodeIdFromGraphNode(node) !== "interaction_behavior_core_rules") {
+      return node;
+    }
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return node;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const fields = Array.isArray(params.fields)
+      ? params.fields
+      : Array.isArray(data.fields)
+        ? data.fields
+        : [];
+    let nodeChanged = false;
+    const nextFields = fields.map((field) => {
+      if (!isRecord(field)) {
+        return field;
+      }
+      const fieldId = String(field.field_id || field.field_key || "");
+      if (fieldId !== "first_interaction") {
+        return field;
+      }
+      const valueKey = "value" in field ? "value" : "field_value";
+      const normalized = normalizeFirstInteractionEnabled(
+        normalizeFirstInteractionMaxActivePrompts(field[valueKey])
+      );
+      if (stableJson(normalized) === stableJson(field[valueKey])) {
+        return field;
+      }
+      nodeChanged = true;
+      return { ...field, [valueKey]: normalized };
+    });
+    if (Array.isArray(data.fields)) {
+      delete data.fields;
+      nodeChanged = true;
+    }
+    if (!nodeChanged) {
+      return node;
+    }
+    params.fields = nextFields;
+    data.params = params;
+    changed = true;
+    return nextNode;
+  });
+
+  return changed ? { ...graph, nodes: nextNodes } : null;
+}
+
 function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
   const store = useCanvasStore.getState();
   const edgeIntegrity = filterDanglingModuleGraphEdges(graph.nodes.map(graphNodeId).filter(Boolean), graph.edges);
@@ -2415,7 +2527,33 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     );
   }
 
-  const riskMigration = migrateRiskResponseReferenceGraph(graphAfterEdgeCleanup, store.moduleInstanceRegistry);
+  const firstInteractionPromptLimitMigration = normalizeFirstInteractionPromptLimitGraph(
+    graphAfterEdgeCleanup,
+    store.moduleInstanceRegistry
+  );
+  if (firstInteractionPromptLimitMigration) {
+    store.updateModuleGraph(
+      firstInteractionPromptLimitMigration.moduleNodeId,
+      firstInteractionPromptLimitMigration.nodes,
+      firstInteractionPromptLimitMigration.edges,
+      firstInteractionPromptLimitMigration.viewport
+    );
+    saveModuleGraphState(
+      firstInteractionPromptLimitMigration.moduleNodeId,
+      firstInteractionPromptLimitMigration.nodes,
+      firstInteractionPromptLimitMigration.edges
+    );
+    console.log("[P1-BRIDGE] normalized first interaction prompt limit", {
+      moduleNodeId: firstInteractionPromptLimitMigration.moduleNodeId,
+    });
+  }
+  const graphAfterFirstInteractionPromptLimitMigration =
+    firstInteractionPromptLimitMigration ?? graphAfterEdgeCleanup;
+
+  const riskMigration = migrateRiskResponseReferenceGraph(
+    graphAfterFirstInteractionPromptLimitMigration,
+    store.moduleInstanceRegistry
+  );
   if (riskMigration) {
     store.updateModuleGraph(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges, riskMigration.graph.viewport);
     saveModuleGraphState(riskMigration.graph.moduleNodeId, riskMigration.graph.nodes, riskMigration.graph.edges);
@@ -2431,7 +2569,7 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
       movedIds: riskMigration.nodeIdMap.size,
     });
   }
-  const graphAfterRiskMigration = riskMigration?.graph ?? graphAfterEdgeCleanup;
+  const graphAfterRiskMigration = riskMigration?.graph ?? graphAfterFirstInteractionPromptLimitMigration;
   const memoryRouterMigration = migrateMemoryProviderRouterTypeResolverGraph(graphAfterRiskMigration, store.moduleInstanceRegistry);
   if (memoryRouterMigration) {
     store.updateModuleGraph(memoryRouterMigration.moduleNodeId, memoryRouterMigration.nodes, memoryRouterMigration.edges, memoryRouterMigration.viewport);
@@ -2566,6 +2704,120 @@ function migrateExistingGenericFieldsGraphs() {
   }
 }
 
+function persistedOrHydratedGraph(moduleNodeId: string): ModuleGraph | null {
+  const hydrated = useCanvasStore.getState().moduleGraphs[moduleNodeId];
+  if (hydrated) {
+    return hydrated;
+  }
+  const persisted = loadModuleGraphState(moduleNodeId);
+  if (!persisted) {
+    return null;
+  }
+  return {
+    moduleNodeId,
+    nodes: persisted.nodes as WorkflowNode[],
+    edges: persisted.edges as WorkflowEdge[],
+  };
+}
+
+function graphFieldValue(graph: ModuleGraph, fieldId: string): unknown {
+  for (const node of graph.nodes) {
+    const schemaNode = schemaNodeRecord(node);
+    const data = schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+    const params = isRecord(data.params) ? data.params : {};
+    const fields = Array.isArray(params.fields) ? params.fields : [];
+    const field = fields.find(
+      (candidate) =>
+        isRecord(candidate) && String(candidate.field_id || candidate.field_key || "") === fieldId
+    );
+    if (isRecord(field)) {
+      return "value" in field ? field.value : field.field_value;
+    }
+  }
+  return undefined;
+}
+
+function migrateLinxuanFirstInteractionEnabledOnce() {
+  if (
+    hasEditorMigrationMarker(
+      STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
+      LINXUAN_RESIDENT_ID
+    )
+  ) {
+    return;
+  }
+
+  const identityGraph = persistedOrHydratedGraph(LINXUAN_IDENTITY_GRAPH_ID);
+  if (!identityGraph || graphFieldValue(identityGraph, "resident_id") !== LINXUAN_RESIDENT_ID) {
+    return;
+  }
+  const interactionGraph = persistedOrHydratedGraph(LINXUAN_INTERACTION_GRAPH_ID);
+  if (!interactionGraph) {
+    return;
+  }
+
+  let targetFound = false;
+  let changed = false;
+  const nextNodes = interactionGraph.nodes.map((node) => {
+    if (catalogNodeIdFromGraphNode(node) !== "interaction_behavior_core_rules") {
+      return node;
+    }
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      return node;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (!Array.isArray(params.fields)) {
+      return node;
+    }
+    let nodeChanged = false;
+    const nextFields = params.fields.map((field) => {
+      if (!isRecord(field) || String(field.field_id || field.field_key || "") !== "first_interaction") {
+        return field;
+      }
+      const migration = migrateLinxuanFirstInteractionEnabledValue(
+        LINXUAN_RESIDENT_ID,
+        false,
+        field.value
+      );
+      targetFound ||= migration.markComplete;
+      if (!migration.migrated) {
+        return field;
+      }
+      changed = true;
+      nodeChanged = true;
+      return { ...field, value: migration.value };
+    });
+    if (!targetFound) {
+      return node;
+    }
+    params.fields = nextFields;
+    data.params = params;
+    return nodeChanged ? nextNode : node;
+  });
+
+  if (!targetFound) {
+    return;
+  }
+  const nextGraph = changed ? { ...interactionGraph, nodes: nextNodes } : interactionGraph;
+  const store = useCanvasStore.getState();
+  store.updateModuleGraph(
+    nextGraph.moduleNodeId,
+    nextGraph.nodes,
+    nextGraph.edges,
+    nextGraph.viewport
+  );
+  if (!saveModuleGraphState(nextGraph.moduleNodeId, nextGraph.nodes, nextGraph.edges)) {
+    return;
+  }
+  saveEditorMigrationMarker(
+    STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
+    LINXUAN_RESIDENT_ID
+  );
+}
+
 /**
  * 初始化 module state 水合
  * 
@@ -2624,6 +2876,7 @@ export function initializeModuleState() {
   store.setModuleUiColors(moduleState.moduleUiColors);
   store.setLayerModules(moduleState.layerModules);
   store.setModuleInstanceRegistry(moduleState.moduleInstanceRegistry);
+  migrateLinxuanFirstInteractionEnabledOnce();
   migrateExistingGenericFieldsGraphs();
   
   console.log("[P1-BRIDGE] initializeModuleState: hydration completed", {
@@ -2643,7 +2896,10 @@ export function initializeModuleState() {
  */
 export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: WorkflowNode[], initialEdges?: WorkflowEdge[]) {
   console.log("[P1-BRIDGE] ensureModuleGraphExists:", { moduleNodeId });
-  
+
+  if (moduleNodeId === LINXUAN_IDENTITY_GRAPH_ID || moduleNodeId === LINXUAN_INTERACTION_GRAPH_ID) {
+    migrateLinxuanFirstInteractionEnabledOnce();
+  }
   const store = useCanvasStore.getState();
   const hasInitialGraph = Boolean(initialNodes?.length || initialEdges?.length);
   

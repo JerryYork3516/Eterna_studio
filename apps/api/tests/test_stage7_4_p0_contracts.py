@@ -154,7 +154,11 @@ def test_required_reference_resolves_local_node_and_field_path():
         if item["code"] == "DR_REFERENCE_VALIDATION_COMPLETE"
     )
     assert finding["status"] == "PASS"
-    assert "checked=1" in finding["message"] and "resolved=1" in finding["message"]
+    message = finding["message"]
+    checked = message.split("checked=", 1)[1].split(",", 1)[0]
+    resolved = message.split("resolved=", 1)[1]
+    assert "required=1" in message
+    assert checked == resolved
 
 
 def test_exact_legacy_reference_prefix_is_canonicalized_without_mutating_canvas():

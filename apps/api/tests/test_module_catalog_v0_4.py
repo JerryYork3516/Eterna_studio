@@ -732,6 +732,7 @@ def test_layer11_user_relationship_module_has_independent_confirmed_relationship
     assert "config_version" not in output
     assert not {"updated_at", "change_reason", "intimacy", "trust", "relationship_stage", "interaction_history", "relationship_memory", "user_profile"} & set(output)
     assert output_node["params"]["output_schema"]["fields"] == [
+        "initial_relationship",
         "default_relationship_position",
         "allowed_relationship_modes",
         "forbidden_default_relationships",
@@ -2182,6 +2183,11 @@ def test_layer11_p2_static_configuration_nodes_keep_consistent_params_and_field_
         input_params = input_node["params"]
         assert {"fields", "field_registry", "config_mode", "i18n_keys"} <= set(input_params)
         field_order = [field["field_key"] for field in input_params["fields"]]
+        required_field_order = [
+            field["field_key"]
+            for field in input_params["fields"]
+            if field.get("required") is not False
+        ]
         assert field_order == [field["field_key"] for field in input_params["field_registry"]]
         assert field_order == [field["field_key"] for field in module.config["field_registry"]]
         assert all(field["description"] for field in input_params["fields"])
@@ -2196,7 +2202,7 @@ def test_layer11_p2_static_configuration_nodes_keep_consistent_params_and_field_
                 assert params["outputs"] == field_order
             if node["node_type"] == "validation":
                 assert set(params) == {"input", "required_fields", "validation_rules", "validation_outputs"}
-                assert params["required_fields"] == field_order
+                assert params["required_fields"] == required_field_order
                 assert params["validation_outputs"] == ["validation_status", "risk_items", "correction_suggestions"]
                 assert not any(rule.startswith("forbidden_") and rule != "forbidden_rules_valid" for rule in params["validation_rules"])
                 if node["node_id"].endswith("boundary_validation"):
@@ -3617,10 +3623,13 @@ def test_layer8_behavior_modules_declare_dr_write_keys():
     }
 
     for module_id, policy_key in expected.items():
-        assert catalog_map[module_id].dr_write_keys == [
+        expected_write_keys = [
             f"payload.behavior_policy.modules.{policy_key}",
             f"payload.graph_snapshot.layer_outputs.layer_8.behavior_policy.modules.{policy_key}",
         ]
+        if module_id == INTERACTION_BEHAVIOR_MODULE_ID:
+            expected_write_keys.append("payload.behavior.first_interaction")
+        assert catalog_map[module_id].dr_write_keys == expected_write_keys
     assert catalog_map["behavior_policy_slot"].dr_write_keys == []
 
 

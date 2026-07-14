@@ -2176,6 +2176,10 @@ pre {
   padding: 12px;
 }
 
+.workflow-node.module-visual_style {
+  width: 340px;
+}
+
 .workflow-node__header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

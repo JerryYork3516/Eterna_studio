@@ -48,6 +48,7 @@ const CANVAS_STATE_KEY = "eterna_canvas_v4";
 const EXPORT_FILE_PREFIX = "eterna_canvas_";
 const MODULE_GRAPH_KEY_PREFIX = "module_graph_";
 const MODULE_GRAPH_BACKUP_KEY_PREFIX = "module_graph_backup_";
+const EDITOR_MIGRATION_KEY_PREFIX = "eterna_editor_migration_";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -582,5 +583,25 @@ export function loadModuleGraphState(moduleId: string): ModuleGraphState | null 
   } catch (error) {
     console.error(`Failed to load module graph for ${moduleId}:`, error);
     return null;
+  }
+}
+
+export function hasEditorMigrationMarker(marker: string, residentId: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.localStorage.getItem(`${EDITOR_MIGRATION_KEY_PREFIX}${marker}:${residentId}`) === "true";
+}
+
+export function saveEditorMigrationMarker(marker: string, residentId: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    window.localStorage.setItem(`${EDITOR_MIGRATION_KEY_PREFIX}${marker}:${residentId}`, "true");
+    return true;
+  } catch (error) {
+    console.error(`Failed to save editor migration marker ${marker}:`, error);
+    return false;
   }
 }

@@ -2133,6 +2133,95 @@ def _merge_layer8_behavior_into_payload(payload: Dict[str, Any]) -> None:
     payload["resident_blueprint"] = resident_blueprint
 
 
+def _configured_module_field_value(
+    collection: Dict[str, Any], module_id: str, field_id: str
+) -> tuple[bool, Any]:
+    """Read an optional compile-time field without inventing it for old canvases."""
+
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict) and candidate.get("module_id") == module_id
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return False, None
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            configured_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key"))
+            if configured_id != field_id:
+                continue
+            value = field.get("value") if "value" in field else field.get("field_value")
+            return True, deepcopy(value)
+    return False, None
+
+
+def _assemble_first_greeting_config_extensions(collection: Dict[str, Any]) -> Dict[str, Any]:
+    """Project Stage 7.4.8 optional config groups into the existing payload envelope."""
+
+    extensions: Dict[str, Any] = {}
+    found, first_interaction = _configured_module_field_value(
+        collection, INTERACTION_BEHAVIOR_MODULE_ID, "first_interaction"
+    )
+    if found and isinstance(first_interaction, dict):
+        extensions["behavior"] = {"first_interaction": first_interaction}
+
+    expression: Dict[str, Any] = {}
+    for field_id in ("first_greeting", "first_presence"):
+        found, value = _configured_module_field_value(collection, "visual_style", field_id)
+        if found and isinstance(value, dict):
+            expression[field_id] = value
+    if expression:
+        extensions["expression"] = expression
+
+    found, initial_relationship = _configured_module_field_value(
+        collection, "user_relationship", "initial_relationship"
+    )
+    if found and isinstance(initial_relationship, dict):
+        extensions["relationship"] = {"initial_relationship": initial_relationship}
+    return extensions
+
+
+def _validate_first_interaction_max_active_prompts(
+    collection: Dict[str, Any], findings: List[Dict[str, str]]
+) -> None:
+    """Reject invalid raw values; Canvas compatibility normalization happens before compile."""
+
+    found, first_interaction = _configured_module_field_value(
+        collection, INTERACTION_BEHAVIOR_MODULE_ID, "first_interaction"
+    )
+    if not found:
+        return
+
+    missing = object()
+    value: Any = missing
+    if isinstance(first_interaction, dict):
+        scenes = first_interaction.get("scenes")
+        if isinstance(scenes, dict):
+            user_silence = scenes.get("user_silence")
+            if isinstance(user_silence, dict):
+                value = user_silence.get("max_active_prompts", missing)
+
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1:
+        return
+
+    actual = "missing" if value is missing else repr(value)
+    findings.append(
+        _finding(
+            "FAIL",
+            "DR_FIRST_INTERACTION_MAX_ACTIVE_PROMPTS_INVALID",
+            f"max_active_prompts must be an integer in range 0-1; got {actual}",
+            "payload.behavior.first_interaction.scenes.user_silence.max_active_prompts",
+        )
+    )
+
+
 def _compiled_module_output(module: Dict[str, Any], output_key: str) -> Dict[str, Any]:
     node_output = _module_output_node_value(module, output_key)
     if isinstance(node_output, dict):
@@ -2154,6 +2243,148 @@ def _set_compiled_module_output(module: Dict[str, Any], output_key: str, value: 
         ):
             node_outputs[output_key] = deepcopy(value)
             node["outputs"] = node_outputs
+
+
+def _synchronize_first_presence_module_output(
+    collection: Dict[str, Any], findings: List[Dict[str, str]]
+) -> None:
+    """Compile the optional Layer 10 configuration without adding Runtime behavior."""
+
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict) and candidate.get("module_id") == "visual_style"
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return
+
+    greeting_found, greeting = _configured_module_field_value(
+        collection, "visual_style", "first_greeting"
+    )
+    presence_found, presence = _configured_module_field_value(
+        collection, "visual_style", "first_presence"
+    )
+    greeting_issues: List[str] = []
+    presence_issues: List[str] = []
+
+    if greeting_found and not isinstance(greeting, dict):
+        greeting_issues.append("first_greeting_must_be_object")
+    elif isinstance(greeting, dict):
+        variants = greeting.get("variants")
+        if "variants" in greeting and not isinstance(variants, list):
+            greeting_issues.append("variants_must_be_array")
+        for key, expected, issue in (
+            ("locale", "zh-CN", "locale_must_use_supported_value"),
+            ("content_status", "pending_authoring", "content_status_must_remain_pending_authoring"),
+            ("selection_mode", "contextual", "selection_mode_must_use_supported_value"),
+        ):
+            if key in greeting and greeting.get(key) != expected:
+                greeting_issues.append(issue)
+        for key, minimum, issue in (
+            ("max_sentences", 1, "max_sentences_at_least_one"),
+            ("max_questions", 0, "max_questions_non_negative"),
+        ):
+            value = greeting.get(key)
+            if key in greeting and (
+                not isinstance(value, int) or isinstance(value, bool) or value < minimum
+            ):
+                greeting_issues.append(issue)
+        if greeting.get("repeat_on_return") is True:
+            greeting_issues.append("repeat_on_return_defaults_false")
+        for key in (
+            "wait_for_user_response",
+            "avoid_service_tone",
+            "avoid_forced_intimacy",
+            "avoid_identity_overexplanation",
+            "repeat_on_return",
+        ):
+            if key in greeting and not isinstance(greeting.get(key), bool):
+                greeting_issues.append("greeting_boolean_flags_must_be_boolean")
+
+    if presence_found and not isinstance(presence, dict):
+        presence_issues.append("first_presence_must_be_object")
+    elif isinstance(presence, dict):
+        for key, expected, issue in (
+            ("particle_state", "calm", "particle_state_must_use_supported_value"),
+            ("motion", "slow_breathing", "motion_hint_only_no_animation"),
+            ("energy", "soft", "energy_hint_only"),
+            ("subtitle_mode", "minimal", "subtitle_mode_config_only_no_runtime_capability"),
+        ):
+            if key in presence and presence.get(key) != expected:
+                presence_issues.append(issue)
+
+    reference_input = _module_node_by_type(module, "reference_input")
+    reference_params = (
+        reference_input.get("params")
+        if isinstance(reference_input, dict) and isinstance(reference_input.get("params"), dict)
+        else {}
+    )
+    references = reference_params.get("references") if isinstance(reference_params.get("references"), list) else []
+    source_summary = [
+        {
+            "reference_id": reference.get("reference_id"),
+            "source_layer_id": reference.get("source_layer_id"),
+            "source_module_id": reference.get("source_module_id"),
+            "source_node_id": reference.get("source_node_id"),
+        }
+        for reference in references
+        if isinstance(reference, dict)
+    ]
+    issues = list(dict.fromkeys([*greeting_issues, *presence_issues]))
+    output: Dict[str, Any] = {
+        "output_key": "first_presence_config",
+        "reference_source_summary": source_summary,
+        "validation_result": {
+            "status": "invalid" if issues else "pass",
+            "first_greeting": (
+                "invalid" if greeting_issues else "pass" if greeting_found else "missing_optional"
+            ),
+            "first_presence": (
+                "invalid" if presence_issues else "pass" if presence_found else "missing_optional"
+            ),
+            "risk_items": issues,
+        },
+        "optional_config_status": {
+            "first_greeting": "optional_present" if greeting_found else "missing_optional",
+            "first_presence": "optional_present" if presence_found else "missing_optional",
+            "variants": (
+                "empty_allowed"
+                if isinstance(greeting, dict) and greeting.get("variants") == []
+                else "configured"
+                if isinstance(greeting, dict) and isinstance(greeting.get("variants"), list)
+                else "missing_optional"
+            ),
+        },
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    if greeting_found and isinstance(greeting, dict):
+        output["first_greeting"] = deepcopy(greeting)
+    if presence_found and isinstance(presence, dict):
+        output["first_presence"] = deepcopy(presence)
+    _set_compiled_module_output(module, "first_presence_config", output)
+
+    if issues:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_FIRST_PRESENCE_CONFIG_INVALID",
+                f"Layer 10 optional first-presence configuration is invalid: {issues!r}",
+                "payload.modules.visual_style.outputs.first_presence_config.validation_result",
+            )
+        )
+    else:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_FIRST_PRESENCE_CONFIG_VALID",
+                "Layer 10 optional first-greeting and first-presence configuration compiled without Runtime changes",
+                "payload.modules.visual_style.outputs.first_presence_config",
+            )
+        )
 
 
 def _memory_router_node_params(module: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -4386,6 +4617,8 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
     _synchronize_layer8_validation_results(collection, findings)
+    _validate_first_interaction_max_active_prompts(collection, findings)
+    _synchronize_first_presence_module_output(collection, findings)
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
     checked_at = _now_iso()
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
@@ -4420,6 +4653,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _merge_layer3_safety_into_safety_policy(payload)
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer8_behavior_outputs(collection))
     _merge_layer8_behavior_into_payload(payload)
+    payload.update(_assemble_first_greeting_config_extensions(collection))
     memory_policy_extensions = _assemble_layer5_memory_policy(collection, resident_id, findings)
     payload["memory_policy"] = _build_v03_memory_policy(resident_id, memory_policy_extensions)
     identity_sync = _v3_identity_sync_from_profile(payload)

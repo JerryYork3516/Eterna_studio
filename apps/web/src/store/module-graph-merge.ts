@@ -15,8 +15,107 @@ function cloneJsonValue<T>(value: T): T {
   return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function normalizeFirstInteractionEnabled(value: unknown): unknown {
+  if (!isRecord(value) || Object.prototype.hasOwnProperty.call(value, "enabled")) {
+    return value;
+  }
+  return { ...value, enabled: true };
+}
+
+export function updateFirstInteractionEnabled(value: unknown, enabled: boolean): Record<string, unknown> {
+  return { ...(isRecord(value) ? value : {}), enabled };
+}
+
+export function firstInteractionEnabledValue(value: unknown): boolean {
+  return isRecord(value) && typeof value.enabled === "boolean" ? value.enabled : true;
+}
+
+export const LINXUAN_RESIDENT_ID = "dr_eterna_hum_cn_xian_linxuan_0001";
+export const STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION =
+  "stage7_4_8_first_interaction_enabled_v1";
+
+export function migrateLinxuanFirstInteractionEnabledValue(
+  residentId: string,
+  markerApplied: boolean,
+  value: unknown
+): { value: unknown; migrated: boolean; markComplete: boolean } {
+  if (residentId !== LINXUAN_RESIDENT_ID || markerApplied) {
+    return { value, migrated: false, markComplete: false };
+  }
+  const migratedValue = updateFirstInteractionEnabled(value, true);
+  return {
+    value: migratedValue,
+    migrated: stableComparableValue(migratedValue) !== stableComparableValue(value),
+    markComplete: true,
+  };
+}
+
+function stableComparableValue(value: unknown): string {
+  return JSON.stringify(value ?? null);
+}
+
+export function normalizeFirstInteractionMaxActivePrompts(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const scenes = isRecord(value.scenes) ? value.scenes : {};
+  const userSilence = isRecord(scenes.user_silence) ? scenes.user_silence : {};
+  const current = userSilence.max_active_prompts;
+  const normalized = Number.isInteger(current) && (current === 0 || current === 1) ? current : 1;
+  return {
+    ...value,
+    scenes: {
+      ...scenes,
+      user_silence: {
+        ...userSilence,
+        max_active_prompts: normalized,
+      },
+    },
+  };
+}
+
 export function normalizeCatalogNodeId(value: unknown): string {
   return String(value ?? "").split("::").pop() ?? "";
+}
+
+export function mergeCatalogFieldsPreservingValues(
+  seedFields: Record<string, unknown>[],
+  existingFields: Record<string, unknown>[]
+) {
+  const fieldId = (field: Record<string, unknown>) => String(field.field_id || field.field_key || "");
+  const existingById = new Map(existingFields.map((field) => [fieldId(field), field]));
+  const seededIds = new Set(seedFields.map(fieldId));
+  const merged = seedFields.map((seedField) => {
+    const currentFieldId = fieldId(seedField);
+    const existingField = existingById.get(currentFieldId);
+    const valueKey = "field_value" in seedField ? "field_value" : "value";
+    const existingValue = existingField
+      ? valueKey in existingField
+        ? existingField[valueKey]
+        : valueKey === "field_value"
+          ? existingField.value
+          : existingField.field_value
+      : undefined;
+    const preservedValue = existingField ? existingValue : seedField[valueKey];
+    return {
+      ...cloneJsonValue(seedField),
+      [valueKey]: cloneJsonValue(
+        currentFieldId === "first_interaction"
+          ? normalizeFirstInteractionEnabled(
+              normalizeFirstInteractionMaxActivePrompts(preservedValue)
+            )
+          : preservedValue
+      ),
+    };
+  });
+  return [
+    ...merged,
+    ...existingFields.filter((field) => !seededIds.has(fieldId(field))).map((field) => cloneJsonValue(field)),
+  ];
 }
 
 export function mergeChecklistTemplateDefaults(

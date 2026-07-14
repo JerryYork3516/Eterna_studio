@@ -3417,6 +3417,41 @@ def _detail_behavior_module() -> ModuleV04:
 
 def _interaction_behavior_module() -> ModuleV04:
     module_id = INTERACTION_BEHAVIOR_MODULE_ID
+    first_interaction = {
+        "enabled": True,
+        "tone": "warm_calm_reserved",
+        "interaction_style": "natural_conversational",
+        "initiative_level": "low",
+        "wait_for_user_response": True,
+        "identity_disclosure_mode": "contextual_or_on_request",
+        "scenes": {
+            "first_load": {"enabled": True, "repeat_introduction": False},
+            "return_session": {
+                "enabled": True,
+                "repeat_introduction": False,
+                "continue_previous_context": True,
+            },
+            "identity_question": {
+                "enabled": True,
+                "use_existing_identity": True,
+                "allow_fabrication": False,
+            },
+            "user_silence": {"enabled": True, "max_active_prompts": 1},
+        },
+    }
+    first_interaction_field = {
+        "field_id": "first_interaction",
+        "value": first_interaction,
+        "required": False,
+        "edit_scope": "developer_only",
+        "update_level": "versioned_core",
+        "requires_recompile": True,
+        "i18n_keys": {
+            "label": "stage7_4_8.firstInteraction.field.label",
+            "placeholder": "stage7_4_8.firstInteraction.field.placeholder",
+            "help": "stage7_4_8.firstInteraction.field.help",
+        },
+    }
     core_checkbox_config = _interaction_behavior_checkbox_config(
         [
             _interaction_behavior_option("stable_companion", "stableCompanion"),
@@ -3635,7 +3670,11 @@ def _interaction_behavior_module() -> ModuleV04:
             "module_id": module_id,
             "layer_id": "layer_8",
             "position": {"x": 320, "y": 0},
-            "params": {"config_mode": "checkbox_interaction_core_rules", "checkbox_config": core_checkbox_config},
+            "params": {
+                "config_mode": "checkbox_interaction_core_rules",
+                "checkbox_config": core_checkbox_config,
+                "fields": [first_interaction_field],
+            },
             "i18n_keys": {
                 "name": "layer8.interactionBehavior.node.coreRules.title",
                 "description": "layer8.interactionBehavior.node.coreRules.description",
@@ -3738,7 +3777,7 @@ def _interaction_behavior_module() -> ModuleV04:
             "module_type": "layer8.interactionBehavior.module.type",
         },
         outputs={},
-        dr_write_keys=_behavior_dr_write_keys("interaction_behavior"),
+        dr_write_keys=[*_behavior_dr_write_keys("interaction_behavior"), "payload.behavior.first_interaction"],
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
@@ -3756,6 +3795,462 @@ def _interaction_behavior_module() -> ModuleV04:
         },
         mock_only=True,
         no_execution=True,
+    )
+
+
+def _visual_style_module() -> ModuleV04:
+    """Layer 10's compile-time first-greeting and first-presence configuration."""
+
+    module_id = "visual_style"
+    output_key = "first_presence_config"
+    node_ids = {
+        "input": "visual_style_first_greeting_config",
+        "reference_input": "visual_style_reference_input",
+        "normalize": "visual_style_config_normalize",
+        "greeting_validation": "visual_style_first_greeting_validation",
+        "presence_validation": "visual_style_first_presence_validation",
+        "output": "visual_style_first_presence_output",
+        "reference_output": "visual_style_reference_output",
+    }
+
+    def options(prefix: str, values: list[str]) -> list[Dict[str, str]]:
+        return [
+            {"value": value, "label_key": f"stage7_4_8.expression.enum.{prefix}.{value}"}
+            for value in values
+        ]
+
+    fields = [
+        {
+            "field_key": "first_greeting",
+            "field_name": "First Greeting",
+            "field_value": {
+                "locale": "zh-CN",
+                "content_status": "pending_authoring",
+                "variants": [],
+                "selection_mode": "contextual",
+                "max_sentences": 2,
+                "max_questions": 1,
+                "wait_for_user_response": True,
+                "avoid_service_tone": True,
+                "avoid_forced_intimacy": True,
+                "avoid_identity_overexplanation": True,
+                "repeat_on_return": False,
+            },
+            "field_type": "object",
+            "description": "Optional first-greeting presentation configuration; greeting copy remains unauthored.",
+            "dr_mapping": "payload.expression.first_greeting",
+            "reference_enabled": False,
+            "required": False,
+            "structured_options": {
+                "locale": options("locale", ["zh-CN"]),
+                "content_status": options("contentStatus", ["pending_authoring"]),
+                "selection_mode": options("selectionMode", ["contextual"]),
+            },
+            "i18n_keys": {
+                "label": "stage7_4_8.expression.firstGreeting.label",
+                "description": "stage7_4_8.expression.firstGreeting.description",
+                "placeholder": "stage7_4_8.expression.firstGreeting.placeholder",
+            },
+        },
+        {
+            "field_key": "first_presence",
+            "field_name": "First Presence",
+            "field_value": {
+                "particle_state": "calm",
+                "motion": "slow_breathing",
+                "energy": "soft",
+                "subtitle_mode": "minimal",
+            },
+            "field_type": "object",
+            "description": "Visual hints only; no particle, animation, subtitle, or Runtime behavior is implemented.",
+            "dr_mapping": "payload.expression.first_presence",
+            "reference_enabled": False,
+            "required": False,
+            "structured_options": {
+                "particle_state": options("particleState", ["calm"]),
+                "motion": options("motion", ["slow_breathing"]),
+                "energy": options("energy", ["soft"]),
+                "subtitle_mode": options("subtitleMode", ["minimal"]),
+            },
+            "i18n_keys": {
+                "label": "stage7_4_8.expression.firstPresence.label",
+                "description": "stage7_4_8.expression.firstPresence.description",
+                "placeholder": "stage7_4_8.expression.firstPresence.placeholder",
+            },
+        },
+    ]
+
+    references = [
+        {
+            "reference_id": "first_presence_identity_core",
+            "source_layer_id": "layer_1",
+            "source_module_id": "module_basic_identity",
+            "source_node_id": "basic_identity_output",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.identityCore.usage",
+        },
+        {
+            "reference_id": "first_presence_personality",
+            "source_layer_id": "layer_2",
+            "source_module_id": "personality_traits",
+            "source_node_id": "personality_traits_output_summary",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.personality.usage",
+        },
+        {
+            "reference_id": "first_presence_safety_boundary",
+            "source_layer_id": "layer_3",
+            "source_module_id": "humanistic_interaction_boundary_config_v0_1",
+            "source_node_id": "interaction_boundary_config_output",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.safetyBoundary.usage",
+        },
+        {
+            "reference_id": "first_presence_memory_policy",
+            "source_layer_id": "layer_5",
+            "source_module_id": "memory_access_control",
+            "source_node_id": "memory_access_output",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.memoryPolicy.usage",
+        },
+        {
+            "reference_id": "first_presence_world_context",
+            "source_layer_id": "layer_7",
+            "source_module_id": "world_setting",
+            "source_node_id": "worldview_module_output",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.worldContext.usage",
+        },
+        {
+            "reference_id": "first_presence_interaction_strategy",
+            "source_layer_id": "layer_8",
+            "source_module_id": "interaction_strategy",
+            "source_node_id": "interaction_behavior_core_rules",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.interactionStrategy.usage",
+        },
+        {
+            "reference_id": "first_presence_user_relationship",
+            "source_layer_id": "layer_11",
+            "source_module_id": "user_relationship",
+            "source_node_id": "user_relationship_config_output",
+            "source_scope": "node",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": False,
+            "usage_key": "stage7_4_8.expression.reference.userRelationship.usage",
+        },
+    ]
+    greeting_reference_ids = [str(reference["reference_id"]) for reference in references]
+    presence_reference_ids = ["first_presence_personality", "first_presence_world_context"]
+    output_reference_ids = ["first_presence_interaction_strategy", "first_presence_user_relationship"]
+    greeting_validation_rules = [
+        "variants_must_be_array",
+        "empty_variants_allowed",
+        "max_sentences_at_least_one",
+        "max_questions_non_negative",
+        "repeat_on_return_defaults_false",
+        "no_automatic_greeting_authoring",
+        "no_layer8_behavior_override",
+        "no_layer11_relationship_override",
+        "no_false_shared_history",
+        "no_default_romantic_or_intimate_relationship",
+    ]
+    presence_validation_rules = [
+        "particle_state_must_use_supported_value",
+        "motion_hint_only_no_animation",
+        "energy_hint_only",
+        "subtitle_mode_config_only_no_runtime_capability",
+        "no_required_capability_addition",
+    ]
+    reference_source_summary = [
+        {
+            "reference_id": reference["reference_id"],
+            "source_layer_id": reference["source_layer_id"],
+            "source_module_id": reference["source_module_id"],
+            "source_node_id": reference["source_node_id"],
+        }
+        for reference in references
+    ]
+    output = {
+        "output_key": output_key,
+        "first_greeting": fields[0]["field_value"],
+        "first_presence": fields[1]["field_value"],
+        "reference_source_summary": reference_source_summary,
+        "validation_result": {
+            "status": "pending_compile_validation",
+            "first_greeting": "rules_configured",
+            "first_presence": "rules_configured",
+        },
+        "optional_config_status": {
+            "first_greeting": "optional_present",
+            "first_presence": "optional_present",
+            "variants": "empty_allowed",
+        },
+        "compile_time_only": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        (
+            "input",
+            "text_input",
+            {"mode": "generic_fields", "text": "", "fields": fields, "config_mode": "static_config"},
+            "input",
+        ),
+        (
+            "reference_input",
+            "reference_input",
+            {"references": references},
+            "referenceInput",
+        ),
+        (
+            "normalize",
+            "structure_normalize",
+            {
+                "input": node_ids["input"],
+                "normalize_rules": [
+                    "preserve_optional_configuration",
+                    "preserve_empty_variants_array",
+                    "normalize_integer_limits",
+                    "preserve_stable_internal_ids",
+                    "no_resident_content_authoring",
+                ],
+                "outputs": ["first_greeting", "first_presence"],
+            },
+            "normalize",
+        ),
+        (
+            "greeting_validation",
+            "validation",
+            {
+                "input": node_ids["normalize"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": greeting_reference_ids,
+                "validation_rules": greeting_validation_rules,
+                "outputs": ["first_greeting_validation_status", "first_greeting_risk_items"],
+            },
+            "greetingValidation",
+        ),
+        (
+            "presence_validation",
+            "validation",
+            {
+                "input": node_ids["greeting_validation"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": presence_reference_ids,
+                "validation_rules": presence_validation_rules,
+                "supported_particle_states": ["calm"],
+                "motion_hint_values": ["slow_breathing"],
+                "energy_hint_values": ["soft"],
+                "subtitle_mode_values": ["minimal"],
+                "outputs": ["first_presence_validation_status", "first_presence_risk_items"],
+            },
+            "presenceValidation",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["presence_validation"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": output_reference_ids,
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": False,
+                    "fields": [
+                        "first_greeting",
+                        "first_presence",
+                        "reference_source_summary",
+                        "validation_result",
+                        "optional_config_status",
+                    ],
+                },
+            },
+            "output",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_name_key": "stage7_4_8.expression.referenceOutput.exportName",
+                "export_description": "",
+                "export_description_key": "stage7_4_8.expression.referenceOutput.exportDescription",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [
+                    {
+                        "field_key": "first_greeting",
+                        "field_path": "expression.first_greeting",
+                        "label_key": "stage7_4_8.expression.referenceOutput.field.firstGreeting",
+                        "description_key": "stage7_4_8.expression.referenceOutput.field.firstGreeting.description",
+                        "value_type": "object",
+                        "required": False,
+                    },
+                    {
+                        "field_key": "first_presence",
+                        "field_path": "expression.first_presence",
+                        "label_key": "stage7_4_8.expression.referenceOutput.field.firstPresence",
+                        "description_key": "stage7_4_8.expression.referenceOutput.field.firstPresence.description",
+                        "value_type": "object",
+                        "required": False,
+                    },
+                    {
+                        "field_key": "reference_source_summary",
+                        "field_path": "reference_source_summary",
+                        "label_key": "stage7_4_8.expression.referenceOutput.field.referenceSourceSummary",
+                        "description_key": "stage7_4_8.expression.referenceOutput.field.referenceSourceSummary.description",
+                        "value_type": "array",
+                        "required": False,
+                    },
+                    {
+                        "field_key": "validation_result",
+                        "field_path": "validation_result",
+                        "label_key": "stage7_4_8.expression.referenceOutput.field.validationResult",
+                        "description_key": "stage7_4_8.expression.referenceOutput.field.validationResult.description",
+                        "value_type": "object",
+                        "required": False,
+                    },
+                    {
+                        "field_key": "optional_config_status",
+                        "field_path": "optional_config_status",
+                        "label_key": "stage7_4_8.expression.referenceOutput.field.optionalConfigStatus",
+                        "description_key": "stage7_4_8.expression.referenceOutput.field.optionalConfigStatus.description",
+                        "value_type": "object",
+                        "required": False,
+                    },
+                ],
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "derived_config",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
+    ]
+    positions = {
+        "input": {"x": 120, "y": 120},
+        "reference_input": {"x": 800, "y": 560},
+        "normalize": {"x": 480, "y": 120},
+        "greeting_validation": {"x": 840, "y": 120},
+        "presence_validation": {"x": 1200, "y": 120},
+        "output": {"x": 1560, "y": 120},
+        "reference_output": {"x": 1920, "y": 120},
+    }
+    metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_10",
+            "position": positions[role],
+            "params": params,
+            "i18n_keys": {
+                "name": f"stage7_4_8.expression.node.{suffix}.title",
+                "description": f"stage7_4_8.expression.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {output_key: output, "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for role, node_type, params, suffix in node_specs
+    ]
+    main_chain = ["input", "normalize", "greeting_validation", "presence_validation", "output", "reference_output"]
+    side_targets = ["greeting_validation", "presence_validation", "output"]
+    return _module(
+        module_id,
+        "multimodal",
+        "Visual Style",
+        "layer_10",
+        status=ProtocolStatus.mock,
+        category="multimodal",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["visual_style", "first_greeting", "first_presence", "text_config", "stage7_4_8"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": [
+                {
+                    "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+                    "source": node_ids[source],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for source, target in zip(main_chain, main_chain[1:])
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+                    "source": node_ids["reference_input"],
+                    "source_port": "p_out",
+                    "target": node_ids[target],
+                    "target_port": "p_in",
+                }
+                for target in side_targets
+            ],
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[
+            {"key": "first_greeting", "type": "object", "required": False},
+            {"key": "first_presence", "type": "object", "required": False},
+        ],
+        ui_config={"shell_version": "module_shell_v1", "classification": "config", "node_width": 340},
+        i18n_keys={
+            "display_name": "stage7_4_8.expression.module.title",
+            "description": "stage7_4_8.expression.module.description",
+            "output": "stage7_4_8.expression.module.output",
+        },
+        outputs={output_key: output, "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "config",
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_engine_binding": True,
+            "no_provider_binding": True,
+            "field_registry": [
+                {
+                    **{key: value for key, value in field.items() if key != "field_value"},
+                    "owner_node_id": node_ids["input"],
+                }
+                for field in fields
+            ],
+            "reference_sources": reference_source_summary,
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[
+            "payload.expression.first_greeting",
+            "payload.expression.first_presence",
+            f"payload.modules.{module_id}.outputs.{output_key}",
+        ],
     )
 
 
@@ -6471,6 +6966,28 @@ def _user_relationship_module() -> ModuleV04:
     }
     fields = [
         {
+            "field_key": "initial_relationship",
+            "field_name": "Initial Relationship",
+            "field_value": {
+                "default": "companion",
+                "intimacy_level": "low",
+                "trust_building": "gradual",
+                "romantic_assumption": False,
+                "forced_familiarity": False,
+                "emotional_dependency_prompting": False,
+                "relationship_memory_creation": "disabled_until_explicit_user_authorization",
+            },
+            "field_type": "object",
+            "description": "Optional initial relationship configuration; it does not create Runtime relationship state.",
+            "dr_mapping": "payload.relationship.initial_relationship",
+            "reference_enabled": False,
+            "required": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.initialRelationship.label",
+                "description": "layer11.userRelationship.field.initialRelationship.description",
+            },
+        },
+        {
             "field_key": "default_relationship_position",
             "field_name": "默认关系定位",
             "field_value": "稳定陪伴者",
@@ -6758,7 +7275,10 @@ def _user_relationship_module() -> ModuleV04:
         },
         mock_only=True,
         no_execution=True,
-        dr_write_keys=[f"payload.modules.{module_id}.outputs.{output_key}"],
+        dr_write_keys=[
+            f"payload.modules.{module_id}.outputs.{output_key}",
+            "payload.relationship.initial_relationship",
+        ],
     )
 
 
@@ -10549,6 +11069,11 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
     ]
     field_keys = [_layer11_p2_field_key(field) for field in field_registry]
     field_keys = [field_key for field_key in field_keys if field_key]
+    required_field_keys = [
+        _layer11_p2_field_key(field)
+        for field in field_registry
+        if field.get("required") is not False and _layer11_p2_field_key(field)
+    ]
     node_i18n = input_node.get("i18n_keys", {}) if isinstance(input_node, dict) and isinstance(input_node.get("i18n_keys"), dict) else {}
     field_registry = [
         {
@@ -10592,7 +11117,7 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
         elif node_type == "validation":
             node["params"] = {
                 "input": params.get("input", ""),
-                "required_fields": field_keys,
+                "required_fields": required_field_keys,
                 "validation_rules": _layer11_p2_validation_rules(module.module_id, node_id, params.get("validation_rules", [])),
                 "validation_outputs": LAYER11_P2_VALIDATION_OUTPUTS,
             }
@@ -10807,7 +11332,7 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("ar_avatar_slot", "multimodal_slot", "AR Avatar Slot", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.ar, category="multimodal", is_placeholder=True, color_status="green"),
     _module("appearance_profile", "multimodal", "Appearance Profile", "layer_10", status=ProtocolStatus.mock, category="multimodal", color_status="amber"),
     _module("motion_profile", "multimodal", "Motion Profile", "layer_10", status=ProtocolStatus.mock, category="multimodal", color_status="amber"),
-    _module("visual_style", "multimodal", "Visual Style", "layer_10", status=ProtocolStatus.mock, category="multimodal", color_status="amber"),
+    _visual_style_module(),
     _module("avatar_runtime", "multimodal", "Avatar Runtime", "layer_10", status=ProtocolStatus.mock, slot_type=SlotType.avatar, category="multimodal", color_status="amber"),
     _module("video_expression", "multimodal", "Video Expression", "layer_10", status=ProtocolStatus.later, category="multimodal", color_status="gray"),
     _module("lora_visual_slot", "multimodal_slot", "LoRA Visual Slot", "layer_10", status=ProtocolStatus.later, slot_type=SlotType.ar, category="multimodal", color_status="gray"),

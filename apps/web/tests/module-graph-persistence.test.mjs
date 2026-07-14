@@ -3,17 +3,26 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  firstInteractionEnabledValue,
+  LINXUAN_RESIDENT_ID,
   mergeChecklistTemplateDefaults,
+  mergeCatalogFieldsPreservingValues,
+  migrateLinxuanFirstInteractionEnabledValue,
   normalizeCatalogNodeId,
   preserveStoredModuleEdges,
   preserveStoredModuleNodePosition,
   filterDanglingModuleGraphEdges,
   mergeAvailableModuleReferencePointers,
+  STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
+  updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
 import {
   attachedModuleIdsFromLayerModules,
+  hasEditorMigrationMarker,
   importCanvasState,
   recoverCanvasStateFromDigitalResident,
+  saveEditorMigrationMarker,
+  serializeCanvasState,
 } from "../src/lib/canvas-persistence.ts";
 import { resolveLayerColor, resolveModuleColor } from "../src/components/neural-graph/neuralGraphColors.ts";
 
@@ -159,6 +168,425 @@ test("Canvas import accepts digital_resident files without changing the DR paylo
   assert.deepEqual(RECOVERY_DR_FIXTURE, before);
 });
 
+test("catalog optional config fields are added on reopen without replacing saved values", () => {
+  const merged = mergeCatalogFieldsPreservingValues(
+    [
+      {
+        field_id: "first_interaction",
+        value: {
+          enabled: true,
+          initiative_level: "low",
+          scenes: { user_silence: { enabled: true, max_active_prompts: 1 } },
+        },
+        required: false,
+      },
+      { field_id: "new_optional", value: "catalog-default", required: false },
+    ],
+    [
+      {
+        field_id: "first_interaction",
+        value: {
+          enabled: false,
+          initiative_level: "low",
+          scenes: { user_silence: { enabled: false, max_active_prompts: 0 } },
+        },
+      },
+      { field_id: "user_field", value: "keep-me" },
+    ]
+  );
+
+  assert.deepEqual(merged[0].value, {
+    enabled: false,
+    initiative_level: "low",
+    scenes: { user_silence: { enabled: false, max_active_prompts: 0 } },
+  });
+  assert.equal(merged[1].value, "catalog-default");
+  assert.equal(merged[2].field_id, "user_field");
+  assert.equal(merged[2].value, "keep-me");
+});
+
+test("Stage 7.4.8 preserves explicit first-interaction enabled values and defaults only missing data", () => {
+  const seedField = {
+    field_id: "first_interaction",
+    value: {
+      enabled: true,
+      scenes: {
+        first_load: { enabled: true, repeat_introduction: false },
+        return_session: { enabled: true, repeat_introduction: false, continue_previous_context: true },
+        identity_question: { enabled: true, use_existing_identity: true, allow_fabrication: false },
+        user_silence: { enabled: true, max_active_prompts: 1 },
+      },
+    },
+    required: false,
+  };
+  const savedScenes = {
+    first_load: { enabled: false, repeat_introduction: true },
+    return_session: { enabled: false, repeat_introduction: true, continue_previous_context: false },
+    identity_question: { enabled: false, use_existing_identity: false, allow_fabrication: true },
+    user_silence: { enabled: false, max_active_prompts: 1 },
+  };
+  const valueAfterMerge = (savedValue) => {
+    const [merged] = mergeCatalogFieldsPreservingValues(
+      [seedField],
+      [{ field_id: "first_interaction", value: savedValue }]
+    );
+    return merged.value;
+  };
+
+  for (const enabled of [true, false]) {
+    const value = valueAfterMerge({ enabled, scenes: savedScenes });
+    assert.equal(value.enabled, enabled);
+    assert.deepEqual(value.scenes, savedScenes);
+  }
+  const legacyValue = valueAfterMerge({ scenes: savedScenes });
+  assert.equal(legacyValue.enabled, true);
+  assert.deepEqual(legacyValue.scenes, savedScenes);
+
+  const savedFalse = { enabled: false, tone: "warm_calm_reserved", scenes: savedScenes };
+  const rechecked = updateFirstInteractionEnabled(savedFalse, true);
+  assert.equal(rechecked.enabled, true);
+  assert.equal(rechecked.tone, "warm_calm_reserved");
+  assert.deepEqual(rechecked.scenes, savedScenes);
+  assert.equal(savedFalse.enabled, false);
+});
+
+test("Stage 7.4.8 migrates only the unmarked Linxuan value and then preserves user false", () => {
+  const scenes = {
+    first_load: { enabled: false, repeat_introduction: true },
+    return_session: { enabled: true, repeat_introduction: false, continue_previous_context: true },
+    identity_question: { enabled: true, use_existing_identity: true, allow_fabrication: false },
+    user_silence: { enabled: true, max_active_prompts: 1 },
+  };
+  const stored = {
+    enabled: false,
+    tone: "warm_calm_reserved",
+    interaction_style: "natural_conversational",
+    initiative_level: "low",
+    wait_for_user_response: true,
+    identity_disclosure_mode: "contextual_or_on_request",
+    scenes,
+  };
+
+  const firstLoad = migrateLinxuanFirstInteractionEnabledValue(LINXUAN_RESIDENT_ID, false, stored);
+  assert.equal(firstLoad.migrated, true);
+  assert.equal(firstLoad.markComplete, true);
+  assert.deepEqual(firstLoad.value, { ...stored, enabled: true });
+  assert.equal(stored.enabled, false);
+
+  const reload = migrateLinxuanFirstInteractionEnabledValue(LINXUAN_RESIDENT_ID, true, firstLoad.value);
+  assert.equal(reload.migrated, false);
+  assert.equal(reload.value.enabled, true);
+
+  const userDisabled = { ...firstLoad.value, enabled: false };
+  const afterUserSave = migrateLinxuanFirstInteractionEnabledValue(
+    LINXUAN_RESIDENT_ID,
+    true,
+    userDisabled
+  );
+  assert.equal(afterUserSave.migrated, false);
+  assert.equal(afterUserSave.value.enabled, false);
+  assert.deepEqual(afterUserSave.value.scenes, scenes);
+
+  const otherResident = migrateLinxuanFirstInteractionEnabledValue(
+    "dr_other_resident",
+    false,
+    stored
+  );
+  assert.equal(otherResident.migrated, false);
+  assert.equal(otherResident.markComplete, false);
+  assert.equal(otherResident.value.enabled, false);
+});
+
+test("Stage 7.4.8 checkbox derives true and false from the stored nested value", () => {
+  assert.equal(firstInteractionEnabledValue({ enabled: false }), false);
+  assert.equal(firstInteractionEnabledValue({ enabled: true }), true);
+  assert.equal(firstInteractionEnabledValue({}), true);
+});
+
+test("Stage 7.4.8 editor migration marker is local-only and resident-scoped", () => {
+  const values = new Map();
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  };
+  try {
+    assert.equal(
+      hasEditorMigrationMarker(STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION, LINXUAN_RESIDENT_ID),
+      false
+    );
+    assert.equal(
+      saveEditorMigrationMarker(STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION, LINXUAN_RESIDENT_ID),
+      true
+    );
+    assert.equal(
+      hasEditorMigrationMarker(STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION, LINXUAN_RESIDENT_ID),
+      true
+    );
+    assert.equal(
+      hasEditorMigrationMarker(STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION, "dr_other_resident"),
+      false
+    );
+    assert.doesNotMatch(
+      JSON.stringify(serializeCanvasState({})),
+      /stage7_4_8_first_interaction_enabled_v1/
+    );
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
+test("Stage 7.4.8 first-interaction enabled uses params fields through save and reload", () => {
+  const savedScenes = {
+    first_load: { enabled: false, repeat_introduction: true },
+    return_session: { enabled: true, repeat_introduction: false, continue_previous_context: false },
+    identity_question: { enabled: false, use_existing_identity: true, allow_fabrication: false },
+    user_silence: { enabled: true, max_active_prompts: 1 },
+  };
+  const reopen = (enabled) => {
+    const state = serializeCanvasState({
+      moduleGraphs: {
+        "layer_8::interaction_strategy": {
+          moduleId: "layer_8::interaction_strategy",
+          nodes: [
+            {
+              id: "interaction_behavior_core_rules",
+              data: {
+                schemaNode: {
+                  node_id: "interaction_behavior_core_rules",
+                  data: {
+                    catalog_module_id: "interaction_strategy",
+                    catalog_node_id: "interaction_behavior_core_rules",
+                    params: {
+                      fields: [
+                        {
+                          field_id: "first_interaction",
+                          value: { enabled, tone: "warm_calm_reserved", scenes: savedScenes },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+          edges: [],
+        },
+      },
+    });
+    const imported = importCanvasState(JSON.stringify(state));
+    assert.equal(imported.success, true);
+    return imported.state.moduleGraphs["layer_8::interaction_strategy"].nodes[0]
+      .data.schemaNode.data.params.fields[0].value;
+  };
+
+  const savedFalse = reopen(false);
+  assert.equal(savedFalse.enabled, false);
+  assert.deepEqual(savedFalse.scenes, savedScenes);
+  const savedTrue = reopen(true);
+  assert.equal(savedTrue.enabled, true);
+  assert.deepEqual(savedTrue.scenes, savedScenes);
+});
+
+test("WorkflowNodeCard binds the interaction core toggle to params.fields first_interaction", () => {
+  const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
+  const bridgeSource = readFileSync(new URL("../src/store/module-state-bridge.ts", import.meta.url), "utf8");
+
+  assert.match(cardSource, /schemaModuleId === ["']interaction_strategy["']/);
+  assert.match(cardSource, /catalogNodeId === ["']interaction_behavior_core_rules["']/);
+  assert.match(cardSource, /firstInteractionValue = isRecord\(firstInteractionField\?\.value\)/);
+  assert.match(cardSource, /firstInteractionEnabledValue\(firstInteractionValue\)/);
+  assert.match(
+    cardSource,
+    /if \(usesFirstInteractionEnabled\) \{[\s\S]*?updateFirstInteractionEnabled\([\s\S]*?onInput\?\.\(["']params["'], \{ \.\.\.compileTimeParams, fields: nextFields \}\);[\s\S]*?return;/s
+  );
+  assert.match(cardSource, /checked=\{isEnabled\}/);
+  assert.match(bridgeSource, /hasFirstInteractionField && Array\.isArray\(params\.fields\)/);
+  assert.match(bridgeSource, /hasLegacyFirstInteractionFields[\s\S]*?delete data\.fields;/s);
+  assert.match(bridgeSource, /LINXUAN_IDENTITY_GRAPH_ID = ["']layer_1::module_basic_identity["']/);
+  assert.match(bridgeSource, /LINXUAN_INTERACTION_GRAPH_ID = ["']layer_8::interaction_strategy["']/);
+  assert.match(bridgeSource, /graphFieldValue\(identityGraph, ["']resident_id["']\) !== LINXUAN_RESIDENT_ID/);
+  assert.match(
+    bridgeSource,
+    /migrateLinxuanFirstInteractionEnabledValue\([\s\S]*?LINXUAN_RESIDENT_ID,[\s\S]*?false,[\s\S]*?field\.value[\s\S]*?return \{ \.\.\.field, value: migration\.value \};/s
+  );
+  assert.match(
+    bridgeSource,
+    /saveModuleGraphState\(nextGraph\.moduleNodeId, nextGraph\.nodes, nextGraph\.edges\)[\s\S]*?saveEditorMigrationMarker\(/s
+  );
+  assert.match(
+    bridgeSource,
+    /ensureModuleGraphExists\([\s\S]*?LINXUAN_IDENTITY_GRAPH_ID[\s\S]*?LINXUAN_INTERACTION_GRAPH_ID[\s\S]*?migrateLinxuanFirstInteractionEnabledOnce\(\)/s
+  );
+});
+
+test("Stage 7.4.8 normalizes saved first-interaction prompt limits during catalog graph merge", () => {
+  const seedField = {
+    field_id: "first_interaction",
+    value: {
+      enabled: true,
+      scenes: { user_silence: { enabled: true, max_active_prompts: 1 } },
+    },
+    required: false,
+  };
+  const promptLimitAfterMerge = (firstInteraction) => {
+    const [merged] = mergeCatalogFieldsPreservingValues(
+      [seedField],
+      [{ field_id: "first_interaction", value: firstInteraction }]
+    );
+    return merged.value.scenes.user_silence.max_active_prompts;
+  };
+
+  assert.equal(promptLimitAfterMerge({ scenes: { user_silence: { enabled: true, max_active_prompts: -4 } } }), 1);
+  assert.equal(promptLimitAfterMerge({ scenes: { user_silence: { enabled: true } } }), 1);
+  for (const invalid of ["1", 0.5, -1, 2]) {
+    assert.equal(
+      promptLimitAfterMerge({ scenes: { user_silence: { enabled: true, max_active_prompts: invalid } } }),
+      1
+    );
+  }
+  assert.equal(promptLimitAfterMerge({ scenes: { user_silence: { enabled: true, max_active_prompts: 0 } } }), 0);
+  assert.equal(promptLimitAfterMerge({ scenes: { user_silence: { enabled: true, max_active_prompts: 1 } } }), 1);
+});
+
+test("Stage 7.4.8 first-presence fields, references, and exact edges survive save and reopen", () => {
+  const nodeSpecs = [
+    [
+      "visual_style_first_greeting_config",
+      "text_input",
+      {
+        mode: "generic_fields",
+        fields: [
+          { field_key: "first_greeting", field_value: { variants: [], max_sentences: 1 }, required: false },
+          { field_key: "first_presence", field_value: { particle_state: "calm" }, required: false },
+        ],
+      },
+    ],
+    [
+      "visual_style_reference_input",
+      "reference_input",
+      {
+        references: [
+          {
+            reference_id: "first_presence_interaction_strategy",
+            source_layer_id: "layer_8",
+            source_module_id: "interaction_strategy",
+            source_node_id: "interaction_behavior_core_rules",
+            source_scope: "node",
+            source_field_paths: [],
+            reference_type: "references",
+            required: false,
+            usage_key: "stage7_4_8.expression.reference.interactionStrategy.usage",
+          },
+        ],
+      },
+    ],
+    ["visual_style_config_normalize", "structure_normalize", {}],
+    ["visual_style_first_greeting_validation", "validation", {}],
+    ["visual_style_first_presence_validation", "validation", {}],
+    ["visual_style_first_presence_output", "module_output", { output_key: "first_presence_config" }],
+    [
+      "visual_style_reference_output",
+      "reference_output",
+      {
+        export_scope: "module",
+        export_fields: [
+          {
+            field_key: "first_greeting",
+            field_path: "expression.first_greeting",
+            label_key: "stage7_4_8.expression.referenceOutput.field.firstGreeting",
+            required: false,
+          },
+        ],
+      },
+    ],
+  ];
+  const edgePairs = [
+    ["visual_style_first_greeting_config", "visual_style_config_normalize"],
+    ["visual_style_config_normalize", "visual_style_first_greeting_validation"],
+    ["visual_style_first_greeting_validation", "visual_style_first_presence_validation"],
+    ["visual_style_first_presence_validation", "visual_style_first_presence_output"],
+    ["visual_style_first_presence_output", "visual_style_reference_output"],
+    ["visual_style_reference_input", "visual_style_first_greeting_validation"],
+    ["visual_style_reference_input", "visual_style_first_presence_validation"],
+    ["visual_style_reference_input", "visual_style_first_presence_output"],
+  ];
+  const dr = {
+    file_type: "digital_resident",
+    dr_version: "0.3",
+    payload: {
+      modules: [
+        {
+          module_id: "visual_style",
+          layer_id: "layer_10",
+          module_graph: {
+            nodes: nodeSpecs.map(([node_id, node_type, params], index) => ({
+              node_id,
+              node_type,
+              module_id: "visual_style",
+              layer_id: "layer_10",
+              position: { x: 120 + index * 360, y: 120 },
+              params,
+              outputs: {},
+              metadata: { compile_time_only: true },
+              i18n_keys: {},
+            })),
+            edges: edgePairs.map(([source, target]) => ({
+              edge_id: `${source}_to_${target}`,
+              source,
+              source_port: "p_out",
+              target,
+              target_port: "p_in",
+            })),
+          },
+        },
+      ],
+    },
+  };
+
+  const recovered = recoverCanvasStateFromDigitalResident(dr);
+  assert.ok(recovered);
+  const saved = serializeCanvasState(recovered);
+  const reopened = importCanvasState(JSON.stringify(saved));
+  assert.equal(reopened.success, true);
+
+  const graph = reopened.state.moduleGraphs["layer_10::visual_style"];
+  assert.equal(graph.nodes.length, 7);
+  assert.equal(graph.edges.length, 8);
+  const byCatalogId = new Map(graph.nodes.map((node) => [node.data.catalog_node_id, node]));
+  assert.deepEqual(
+    byCatalogId.get("visual_style_first_greeting_config").data.params.fields[0].field_value.variants,
+    []
+  );
+  assert.equal(
+    byCatalogId.get("visual_style_reference_input").data.params.references[0].source_node_id,
+    "interaction_behavior_core_rules"
+  );
+  assert.equal(
+    byCatalogId.get("visual_style_reference_input").data.params.references[0].usage_key,
+    "stage7_4_8.expression.reference.interactionStrategy.usage"
+  );
+  assert.equal(
+    byCatalogId.get("visual_style_reference_output").data.params.export_fields[0].label_key,
+    "stage7_4_8.expression.referenceOutput.field.firstGreeting"
+  );
+  assert.deepEqual(
+    new Set(
+      graph.edges.map((edge) => [
+        edge.source.split("::").at(-1),
+        edge.target.split("::").at(-1),
+      ].join("->"))
+    ),
+    new Set(edgePairs.map(([source, target]) => `${source}->${target}`))
+  );
+});
+
 test("attached module ids are deduplicated without inventing catalog modules", () => {
   assert.deepEqual(
     attachedModuleIdsFromLayerModules({ layer_1: ["identity", "identity"], layer_2: [], layer_3: ["safety"] }),
@@ -188,6 +616,11 @@ test("Canvas import/export and compile paths retain graphs and consume attached 
     bridgeSource,
     /nodeType === ["']reference_input["'] \|\| nodeType === ["']reference_output["']\)\s*\{\s*return false;/s
   );
+  assert.match(
+    bridgeSource,
+    /visual_style:\s*\{[\s\S]*?layerId:\s*["']layer_10["'][\s\S]*?seedAllNodes:\s*true/s
+  );
+  assert.match(bridgeSource, /CATALOG_GRAPH_REPLACE_MODULE_IDS[\s\S]*?["']visual_style["']/s);
 });
 
 test("a manually connected module edge survives switching modules and project hydration", () => {
