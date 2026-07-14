@@ -154,7 +154,7 @@ _V03_AUDIT_CHECK_NAMES = (
     "memory_support_level_check",
     "file_size_check",
 )
-_V03_FILE_SIZE_WARNING_BYTES = 5 * 1024 * 1024
+_V03_FILE_SIZE_WARNING_BYTES = 10 * 1024 * 1024
 
 # Allowed slot_types this stage (mock-only capability interfaces).
 _ALLOWED_SLOT_TYPES = frozenset(t.value for t in SlotType)
