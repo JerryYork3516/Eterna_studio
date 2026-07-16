@@ -157,7 +157,9 @@ def test_required_reference_resolves_local_node_and_field_path():
     message = finding["message"]
     checked = message.split("checked=", 1)[1].split(",", 1)[0]
     resolved = message.split("resolved=", 1)[1]
-    assert "required=1" in message
+    # The fixture's required reference plus Layer 10's seven static first-presence
+    # module references must all resolve.
+    assert "required=8" in message
     assert checked == resolved
 
 

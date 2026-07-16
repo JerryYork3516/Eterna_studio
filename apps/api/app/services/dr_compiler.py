@@ -2245,6 +2245,174 @@ def _set_compiled_module_output(module: Dict[str, Any], output_key: str, value: 
             node["outputs"] = node_outputs
 
 
+def _valid_first_greeting_variant(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if not isinstance(value, dict):
+        return False
+    text = value.get("text")
+    return isinstance(text, str) and bool(text.strip())
+
+
+def _catalog_visual_style_reference_declarations() -> List[Dict[str, Any]]:
+    catalog_module = next(
+        (
+            candidate.model_dump(mode="json")
+            for candidate in get_module_catalog()
+            if candidate.module_id == "visual_style"
+        ),
+        {},
+    )
+    reference_input = _module_node_by_type(catalog_module, "reference_input")
+    params = (
+        reference_input.get("params")
+        if isinstance(reference_input, dict)
+        and isinstance(reference_input.get("params"), dict)
+        else {}
+    )
+    references = params.get("references")
+    if not isinstance(references, list):
+        return []
+    return [reference for reference in references if isinstance(reference, dict)]
+
+
+def _visual_style_reference_summary(
+    collection: Dict[str, Any], module: Dict[str, Any], references: List[Any]
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    instance_declarations = (
+        config.get("reference_sources")
+        if isinstance(config.get("reference_sources"), list)
+        else []
+    )
+    canonical_declarations = _catalog_visual_style_reference_declarations()
+    declarations = [*instance_declarations, *canonical_declarations]
+    canonical_by_reference_id = {
+        _nonempty_str(declaration.get("reference_id")): declaration
+        for declaration in canonical_declarations
+        if _nonempty_str(declaration.get("reference_id"))
+    }
+    declarations_by_source = {
+        (
+            _nonempty_str(declaration.get("source_module_id")),
+            _nonempty_str(declaration.get("source_node_id")),
+        ): declaration
+        for declaration in declarations
+        if isinstance(declaration, dict)
+        and _nonempty_str(declaration.get("source_module_id"))
+        and _nonempty_str(declaration.get("source_node_id"))
+        and _nonempty_str(declaration.get("reference_id"))
+    }
+    declarations_by_reference_id = {
+        _nonempty_str(declaration.get("reference_id")): declaration
+        for declaration in declarations
+        if isinstance(declaration, dict)
+        and _nonempty_str(declaration.get("reference_id"))
+    }
+    declarations_by_module = {
+        _nonempty_str(declaration.get("source_module_id")): declaration
+        for declaration in declarations
+        if isinstance(declaration, dict)
+        and _nonempty_str(declaration.get("source_module_id"))
+        and _nonempty_str(declaration.get("reference_id"))
+    }
+    modules_by_id = {
+        _nonempty_str(candidate.get("module_id")): candidate
+        for candidate in collection.get("modules", [])
+        if isinstance(candidate, dict) and _nonempty_str(candidate.get("module_id"))
+    }
+    summary: List[Dict[str, Any]] = []
+    issues: List[str] = []
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        source_layer_id = _nonempty_str(reference.get("source_layer_id"))
+        source_module_id = _nonempty_str(reference.get("source_module_id"))
+        source_node_id = _nonempty_str(reference.get("source_node_id"))
+        reference_id = _nonempty_str(reference.get("reference_id"))
+        declaration = (
+            declarations_by_reference_id.get(reference_id)
+            or declarations_by_source.get((source_module_id, source_node_id))
+            or declarations_by_module.get(source_module_id)
+        )
+        declaration_id = reference_id or (
+            _nonempty_str(declaration.get("reference_id")) if declaration else ""
+        )
+        declaration = canonical_by_reference_id.get(declaration_id) or declaration
+        if declaration:
+            for key in (
+                "reference_id",
+                "source_layer_id",
+                "source_module_id",
+                "source_node_id",
+                "source_scope",
+                "source_field_paths",
+                "reference_type",
+                "required",
+                "usage_key",
+            ):
+                if key in declaration:
+                    reference[key] = deepcopy(declaration[key])
+            source_layer_id = _nonempty_str(reference.get("source_layer_id"))
+            source_module_id = _nonempty_str(reference.get("source_module_id"))
+            source_node_id = _nonempty_str(reference.get("source_node_id"))
+        reference_id = _nonempty_str(reference.get("reference_id"))
+        if not reference_id and declaration:
+            reference_id = _nonempty_str(declaration.get("reference_id"))
+        if reference_id and reference.get("reference_id") != reference_id:
+            reference["reference_id"] = reference_id
+        source_module = modules_by_id.get(source_module_id)
+        resolved = bool(
+            source_module is not None
+            and source_module.get("layer_id") == source_layer_id
+            and source_node_id
+            and any(
+                _module_graph_node_id(node) == source_node_id
+                for node in _module_graph_nodes(source_module)
+            )
+        )
+        if not reference_id:
+            issues.append("reference_source_summary_reference_id_required")
+        summary.append(
+            {
+                "reference_id": reference_id or None,
+                "source_layer_id": reference.get("source_layer_id"),
+                "source_module_id": reference.get("source_module_id"),
+                "source_node_id": reference.get("source_node_id"),
+                "resolved": resolved,
+            }
+        )
+    return summary, issues
+
+
+def _normalize_visual_style_reference_sources(collection: Dict[str, Any]) -> None:
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict) and candidate.get("module_id") == "visual_style"
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return
+    reference_input = _module_node_by_type(module, "reference_input")
+    params = (
+        reference_input.get("params")
+        if isinstance(reference_input, dict)
+        and isinstance(reference_input.get("params"), dict)
+        else {}
+    )
+    references = params.get("references")
+    if isinstance(references, list):
+        _visual_style_reference_summary(collection, module, references)
+    canonical_declarations = _catalog_visual_style_reference_declarations()
+    if canonical_declarations:
+        config = module.get("config") if isinstance(module.get("config"), dict) else {}
+        config["reference_sources"] = deepcopy(canonical_declarations)
+        module["config"] = config
+
+
 def _synchronize_first_presence_module_output(
     collection: Dict[str, Any], findings: List[Dict[str, str]]
 ) -> None:
@@ -2274,11 +2442,20 @@ def _synchronize_first_presence_module_output(
         greeting_issues.append("first_greeting_must_be_object")
     elif isinstance(greeting, dict):
         variants = greeting.get("variants")
-        if "variants" in greeting and not isinstance(variants, list):
+        content_status = greeting.get("content_status")
+        if not isinstance(variants, list):
             greeting_issues.append("variants_must_be_array")
+        else:
+            if any(not _valid_first_greeting_variant(variant) for variant in variants):
+                greeting_issues.append("greeting_variants_must_contain_valid_copy")
+            if (not variants and content_status != "pending_authoring") or (
+                variants and content_status != "authored"
+            ):
+                greeting_issues.append("content_status_must_match_variants")
+        if content_status not in {"pending_authoring", "authored"}:
+            greeting_issues.append("content_status_must_use_supported_value")
         for key, expected, issue in (
             ("locale", "zh-CN", "locale_must_use_supported_value"),
-            ("content_status", "pending_authoring", "content_status_must_remain_pending_authoring"),
             ("selection_mode", "contextual", "selection_mode_must_use_supported_value"),
         ):
             if key in greeting and greeting.get(key) != expected:
@@ -2323,16 +2500,10 @@ def _synchronize_first_presence_module_output(
         else {}
     )
     references = reference_params.get("references") if isinstance(reference_params.get("references"), list) else []
-    source_summary = [
-        {
-            "reference_id": reference.get("reference_id"),
-            "source_layer_id": reference.get("source_layer_id"),
-            "source_module_id": reference.get("source_module_id"),
-            "source_node_id": reference.get("source_node_id"),
-        }
-        for reference in references
-        if isinstance(reference, dict)
-    ]
+    source_summary, reference_issues = _visual_style_reference_summary(
+        collection, module, references
+    )
+    greeting_issues.extend(reference_issues)
     issues = list(dict.fromkeys([*greeting_issues, *presence_issues]))
     output: Dict[str, Any] = {
         "output_key": "first_presence_config",
@@ -2373,7 +2544,11 @@ def _synchronize_first_presence_module_output(
                 "FAIL",
                 "DR_FIRST_PRESENCE_CONFIG_INVALID",
                 f"Layer 10 optional first-presence configuration is invalid: {issues!r}",
-                "payload.modules.visual_style.outputs.first_presence_config.validation_result",
+                (
+                    "payload.expression.first_greeting"
+                    if greeting_issues
+                    else "payload.expression.first_presence"
+                ),
             )
         )
     else:
@@ -4599,6 +4774,7 @@ def _v03_frozen_root_field_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     collection = collect_canvas(canvas)
+    _normalize_visual_style_reference_sources(collection)
     raw_findings = validate_collection(collection)
     # Stage 6.11 is protocol-only: ignore provider-boundary findings that belong
     # to execution-layer wiring. The envelope must stay mock-only and declarative.

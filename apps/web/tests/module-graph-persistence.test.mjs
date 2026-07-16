@@ -5,15 +5,19 @@ import test from "node:test";
 import {
   firstInteractionEnabledValue,
   LINXUAN_RESIDENT_ID,
+  mergeCatalogReferenceDeclarations,
   mergeChecklistTemplateDefaults,
   mergeCatalogFieldsPreservingValues,
   migrateLinxuanFirstInteractionEnabledValue,
+  migrateLinxuanFirstGreetingValue,
   normalizeCatalogNodeId,
   preserveStoredModuleEdges,
   preserveStoredModuleNodePosition,
   filterDanglingModuleGraphEdges,
   mergeAvailableModuleReferencePointers,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
+  STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+  REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
 import {
@@ -297,6 +301,47 @@ test("Stage 7.4.8 migrates only the unmarked Linxuan value and then preserves us
   assert.equal(otherResident.value.enabled, false);
 });
 
+test("Stage 7.4.8 migrates only Linxuan greeting content once", () => {
+  const retainedVariants = [
+    "你好，我叫林瑄。刚见面，先认识一下吧。",
+    "你好，我是林瑄。第一次见面，请多关照。",
+    "你好，我是林瑄。你叫什么名字？",
+  ];
+  const stored = {
+    locale: "zh-CN",
+    content_status: "pending_authoring",
+    variants: [...retainedVariants, REMOVED_LINXUAN_FIRST_GREETING_VARIANT],
+    max_sentences: 2,
+  };
+
+  const firstLoad = migrateLinxuanFirstGreetingValue(LINXUAN_RESIDENT_ID, false, stored);
+  assert.equal(firstLoad.migrated, true);
+  assert.equal(firstLoad.markComplete, true);
+  assert.equal(firstLoad.value.content_status, "authored");
+  assert.deepEqual(firstLoad.value.variants, retainedVariants);
+  assert.equal(firstLoad.value.max_sentences, 2);
+  assert.equal(stored.variants.length, 4);
+
+  const reload = migrateLinxuanFirstGreetingValue(LINXUAN_RESIDENT_ID, true, firstLoad.value);
+  assert.equal(reload.migrated, false);
+  assert.deepEqual(reload.value, firstLoad.value);
+
+  const empty = migrateLinxuanFirstGreetingValue(
+    LINXUAN_RESIDENT_ID,
+    false,
+    { content_status: "pending_authoring", variants: [] }
+  );
+  assert.equal(empty.migrated, false);
+  assert.equal(empty.markComplete, true);
+  assert.equal(empty.value.content_status, "pending_authoring");
+  assert.deepEqual(empty.value.variants, []);
+
+  const otherResident = migrateLinxuanFirstGreetingValue("dr_other_resident", false, stored);
+  assert.equal(otherResident.migrated, false);
+  assert.equal(otherResident.markComplete, false);
+  assert.deepEqual(otherResident.value, stored);
+});
+
 test("Stage 7.4.8 checkbox derives true and false from the stored nested value", () => {
   assert.equal(firstInteractionEnabledValue({ enabled: false }), false);
   assert.equal(firstInteractionEnabledValue({ enabled: true }), true);
@@ -329,9 +374,17 @@ test("Stage 7.4.8 editor migration marker is local-only and resident-scoped", ()
       hasEditorMigrationMarker(STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION, "dr_other_resident"),
       false
     );
+    assert.equal(
+      saveEditorMigrationMarker(STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION, LINXUAN_RESIDENT_ID),
+      true
+    );
+    assert.equal(
+      hasEditorMigrationMarker(STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION, LINXUAN_RESIDENT_ID),
+      true
+    );
     assert.doesNotMatch(
       JSON.stringify(serializeCanvasState({})),
-      /stage7_4_8_first_interaction_enabled_v1/
+      /stage7_4_8_first_(interaction_enabled|greeting_integrity)_v1/
     );
   } finally {
     if (previousWindow === undefined) {
@@ -340,6 +393,17 @@ test("Stage 7.4.8 editor migration marker is local-only and resident-scoped", ()
       globalThis.window = previousWindow;
     }
   }
+});
+
+test("Stage 7.4.8 greeting content migration writes the exact visual-style field", () => {
+  const bridgeSource = readFileSync(new URL("../src/store/module-state-bridge.ts", import.meta.url), "utf8");
+  assert.match(bridgeSource, /VISUAL_STYLE_GRAPH_ID = ["']layer_10::visual_style["']/);
+  assert.match(bridgeSource, /catalogNodeIdFromGraphNode\(node\) !== ["']visual_style_first_greeting_config["']/);
+  assert.match(bridgeSource, /String\(field\.field_id \|\| field\.field_key \|\| ["']["']\) !== ["']first_greeting["']/);
+  assert.match(bridgeSource, /migrateLinxuanFirstGreetingValue\([\s\S]*?field\[valueKey\][\s\S]*?\{ \.\.\.field, \[valueKey\]: migration\.value \}/s);
+  assert.match(bridgeSource, /STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION/);
+  assert.match(bridgeSource, /hasFirstGreetingConfigField[\s\S]*?Array\.isArray\(params\.fields\)/s);
+  assert.match(bridgeSource, /moduleNodeId === VISUAL_STYLE_GRAPH_ID[\s\S]*?saveModuleGraphState\(moduleNodeId, mergedGraph\.nodes, mergedGraph\.edges\)/s);
 });
 
 test("Stage 7.4.8 first-interaction enabled uses params fields through save and reload", () => {
@@ -407,7 +471,10 @@ test("WorkflowNodeCard binds the interaction core toggle to params.fields first_
     /if \(usesFirstInteractionEnabled\) \{[\s\S]*?updateFirstInteractionEnabled\([\s\S]*?onInput\?\.\(["']params["'], \{ \.\.\.compileTimeParams, fields: nextFields \}\);[\s\S]*?return;/s
   );
   assert.match(cardSource, /checked=\{isEnabled\}/);
-  assert.match(bridgeSource, /hasFirstInteractionField && Array\.isArray\(params\.fields\)/);
+  assert.match(
+    bridgeSource,
+    /\(hasFirstInteractionField \|\| hasFirstGreetingConfigField\) && Array\.isArray\(params\.fields\)/
+  );
   assert.match(bridgeSource, /hasLegacyFirstInteractionFields[\s\S]*?delete data\.fields;/s);
   assert.match(bridgeSource, /LINXUAN_IDENTITY_GRAPH_ID = ["']layer_1::module_basic_identity["']/);
   assert.match(bridgeSource, /LINXUAN_INTERACTION_GRAPH_ID = ["']layer_8::interaction_strategy["']/);
@@ -463,7 +530,15 @@ test("Stage 7.4.8 first-presence fields, references, and exact edges survive sav
       {
         mode: "generic_fields",
         fields: [
-          { field_key: "first_greeting", field_value: { variants: [], max_sentences: 1 }, required: false },
+          {
+            field_key: "first_greeting",
+            field_value: {
+              content_status: "authored",
+              variants: ["fixture greeting"],
+              max_sentences: 1,
+            },
+            required: false,
+          },
           { field_key: "first_presence", field_value: { particle_state: "calm" }, required: false },
         ],
       },
@@ -474,15 +549,75 @@ test("Stage 7.4.8 first-presence fields, references, and exact edges survive sav
       {
         references: [
           {
+            reference_id: "first_presence_identity_core",
+            source_layer_id: "layer_1",
+            source_module_id: "module_basic_identity",
+            source_node_id: "basic_identity_output",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "references",
+            required: true,
+          },
+          {
+            reference_id: "first_presence_personality",
+            source_layer_id: "layer_2",
+            source_module_id: "personality_traits",
+            source_node_id: "personality_traits_output_summary",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "references",
+            required: true,
+          },
+          {
+            reference_id: "first_presence_safety_boundary",
+            source_layer_id: "layer_3",
+            source_module_id: "humanistic_interaction_boundary_config_v0_1",
+            source_node_id: "interaction_boundary_config_output",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "constrains",
+            required: true,
+          },
+          {
+            reference_id: "first_presence_memory_policy",
+            source_layer_id: "layer_5",
+            source_module_id: "memory_access_control",
+            source_node_id: "memory_access_output",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "references",
+            required: true,
+          },
+          {
+            reference_id: "first_presence_world_context",
+            source_layer_id: "layer_7",
+            source_module_id: "world_setting",
+            source_node_id: "worldview_module_output",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "references",
+            required: true,
+          },
+          {
             reference_id: "first_presence_interaction_strategy",
             source_layer_id: "layer_8",
             source_module_id: "interaction_strategy",
             source_node_id: "interaction_behavior_core_rules",
-            source_scope: "node",
+            source_scope: "module",
             source_field_paths: [],
             reference_type: "references",
-            required: false,
+            required: true,
             usage_key: "stage7_4_8.expression.reference.interactionStrategy.usage",
+          },
+          {
+            reference_id: "first_presence_user_relationship",
+            source_layer_id: "layer_11",
+            source_module_id: "user_relationship",
+            source_node_id: "user_relationship_config_output",
+            source_scope: "module",
+            source_field_paths: [],
+            reference_type: "references",
+            required: true,
           },
         ],
       },
@@ -561,15 +696,27 @@ test("Stage 7.4.8 first-presence fields, references, and exact edges survive sav
   assert.equal(graph.edges.length, 8);
   const byCatalogId = new Map(graph.nodes.map((node) => [node.data.catalog_node_id, node]));
   assert.deepEqual(
-    byCatalogId.get("visual_style_first_greeting_config").data.params.fields[0].field_value.variants,
-    []
+    byCatalogId.get("visual_style_first_greeting_config").data.params.fields[0].field_value,
+    { content_status: "authored", variants: ["fixture greeting"], max_sentences: 1 }
+  );
+  const references = byCatalogId.get("visual_style_reference_input").data.params.references;
+  assert.equal(references.length, 7);
+  assert.ok(references.every((reference) => reference.reference_id));
+  assert.ok(references.every((reference) => reference.source_scope === "module" && reference.required === true));
+  assert.equal(
+    references.find((reference) => reference.reference_id === "first_presence_safety_boundary").source_module_id,
+    "humanistic_interaction_boundary_config_v0_1"
   );
   assert.equal(
-    byCatalogId.get("visual_style_reference_input").data.params.references[0].source_node_id,
-    "interaction_behavior_core_rules"
+    references.find((reference) => reference.reference_id === "first_presence_safety_boundary").source_node_id,
+    "interaction_boundary_config_output"
   );
   assert.equal(
-    byCatalogId.get("visual_style_reference_input").data.params.references[0].usage_key,
+    references.some((reference) => reference.source_module_id === "humanistic_behavior_boundary_config_v0_1"),
+    false
+  );
+  assert.equal(
+    references.find((reference) => reference.reference_id === "first_presence_interaction_strategy").usage_key,
     "stage7_4_8.expression.reference.interactionStrategy.usage"
   );
   assert.equal(
@@ -585,6 +732,20 @@ test("Stage 7.4.8 first-presence fields, references, and exact edges survive sav
     ),
     new Set(edgePairs.map(([source, target]) => `${source}->${target}`))
   );
+});
+
+test("Stage 7.4.8 content-status selector has localized pending and authored options", () => {
+  const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
+  const en = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
+  const zh = JSON.parse(readFileSync(new URL("../locales/zh.json", import.meta.url), "utf8"));
+  assert.match(cardSource, /field\.enum_options\.map/);
+  for (const messages of [en, zh]) {
+    assert.ok(messages["stage7_4_8.expression.enum.contentStatus.pending_authoring"]);
+    assert.ok(messages["stage7_4_8.expression.enum.contentStatus.authored"]);
+    assert.ok(messages["stage7_4_8.expression.value.content_status_must_match_variants"]);
+    assert.ok(messages["stage7_4_8.expression.value.greeting_variants_must_contain_valid_copy"]);
+    assert.equal(messages["stage7_4_8.expression.value.content_status_must_remain_pending_authoring"], undefined);
+  }
 });
 
 test("attached module ids are deduplicated without inventing catalog modules", () => {
@@ -861,6 +1022,68 @@ test("Layer 12 references use available output node ids without duplicating exis
   ]);
   assert.equal(reopened.changed, false);
   assert.deepEqual(reopened.references, result.references);
+});
+
+test("Stage 7.4.8 visual-style seed repairs reference ids and the Layer 3 interaction boundary", () => {
+  const seedReferences = [
+    ["first_presence_identity_core", "layer_1", "module_basic_identity", "basic_identity_output", "references"],
+    ["first_presence_personality", "layer_2", "personality_traits", "personality_traits_output_summary", "references"],
+    ["first_presence_safety_boundary", "layer_3", "humanistic_interaction_boundary_config_v0_1", "interaction_boundary_config_output", "constrains"],
+    ["first_presence_memory_policy", "layer_5", "memory_access_control", "memory_access_output", "references"],
+    ["first_presence_world_context", "layer_7", "world_setting", "worldview_module_output", "references"],
+    ["first_presence_interaction_strategy", "layer_8", "interaction_strategy", "interaction_behavior_core_rules", "references"],
+    ["first_presence_user_relationship", "layer_11", "user_relationship", "user_relationship_config_output", "references"],
+  ].map(([reference_id, source_layer_id, source_module_id, source_node_id, reference_type]) => ({
+    reference_id,
+    source_layer_id,
+    source_module_id,
+    source_node_id,
+    source_scope: "module",
+    source_field_paths: [],
+    reference_type,
+    required: true,
+  }));
+  const oldReferences = seedReferences.map(({ reference_id: _referenceId, ...reference }) => ({ ...reference }));
+  oldReferences[2] = {
+    ...oldReferences[2],
+    source_module_id: "humanistic_behavior_boundary_config_v0_1",
+    source_node_id: "reference_output",
+  };
+
+  const repaired = mergeCatalogReferenceDeclarations(
+    oldReferences,
+    seedReferences,
+    ["humanistic_behavior_boundary_config_v0_1"]
+  );
+  assert.equal(repaired.changed, true);
+  assert.equal(repaired.references.length, 7);
+  assert.deepEqual(
+    repaired.references.map((reference) => reference.reference_id),
+    seedReferences.map((reference) => reference.reference_id)
+  );
+  assert.ok(repaired.references.every((reference) => reference.source_scope === "module"));
+  assert.ok(repaired.references.every((reference) => reference.required === true));
+  assert.ok(repaired.references.every((reference) => typeof reference.reference_id === "string"));
+  assert.equal(
+    repaired.references.find((reference) => reference.reference_id === "first_presence_safety_boundary").source_module_id,
+    "humanistic_interaction_boundary_config_v0_1"
+  );
+  assert.equal(
+    repaired.references.find((reference) => reference.reference_id === "first_presence_safety_boundary").source_node_id,
+    "interaction_boundary_config_output"
+  );
+  assert.equal(
+    repaired.references.some((reference) => reference.source_module_id === "humanistic_behavior_boundary_config_v0_1"),
+    false
+  );
+
+  const reopened = mergeCatalogReferenceDeclarations(
+    JSON.parse(JSON.stringify(repaired.references)),
+    seedReferences,
+    ["humanistic_behavior_boundary_config_v0_1"]
+  );
+  assert.equal(reopened.changed, false);
+  assert.deepEqual(reopened.references, repaired.references);
 });
 
 test("growth governance references keep available predecessors and skip sources without outputs", () => {

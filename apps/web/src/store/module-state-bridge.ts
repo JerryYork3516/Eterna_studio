@@ -19,10 +19,12 @@ import type { ModuleInstance } from "@/lib/canvas-persistence";
 import { translate } from "@/i18n";
 import {
   filterDanglingModuleGraphEdges,
+  mergeCatalogReferenceDeclarations,
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
   mergeAvailableModuleReferencePointers,
   LINXUAN_RESIDENT_ID,
+  migrateLinxuanFirstGreetingValue,
   migrateLinxuanFirstInteractionEnabledValue,
   normalizeCatalogNodeId,
   normalizeFirstInteractionEnabled,
@@ -30,12 +32,14 @@ import {
   preserveStoredModuleEdges,
   preserveStoredModuleNodePosition,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
+  STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
   type AvailableModuleReferenceSource,
 } from "./module-graph-merge";
 
 const MODULE_INSTANCE_SEPARATOR = "::";
 const LINXUAN_IDENTITY_GRAPH_ID = "layer_1::module_basic_identity";
 const LINXUAN_INTERACTION_GRAPH_ID = "layer_8::interaction_strategy";
+const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
   "memory_access_control",
@@ -1445,7 +1449,13 @@ function mergeCatalogFieldSeed(
     const hasFirstInteractionField = seedFields.some(
       (field) => String(field.field_id || field.field_key || "") === "first_interaction"
     );
-    const existingFields = hasFirstInteractionField && Array.isArray(params.fields)
+    const hasFirstGreetingConfigField = seedFields.some((field) =>
+      ["first_greeting", "first_presence"].includes(
+        String(field.field_id || field.field_key || "")
+      )
+    );
+    const existingFields =
+      (hasFirstInteractionField || hasFirstGreetingConfigField) && Array.isArray(params.fields)
       ? params.fields.filter(isRecord)
       : fieldsFromData(data);
     const mergedFields = mergeCatalogFieldsPreservingValues(seedFields, existingFields);
@@ -1851,6 +1861,42 @@ function mergeLayer12ReferenceSeed(
     const existingNodeId = catalogIdToGraphId.get(catalogNodeId) || existingReferenceNodeByType.get(nodeType);
     if (existingNodeId) {
       catalogIdToGraphId.set(catalogNodeId, existingNodeId);
+      if (
+        config.moduleId === "visual_style" &&
+        catalogNodeId === config.referenceInputNodeId
+      ) {
+        const existingIndex = nextNodes.findIndex((node) => graphNodeId(node) === existingNodeId);
+        if (existingIndex >= 0) {
+          const nextNode = cloneJson(nextNodes[existingIndex]) as WorkflowNode;
+          const schemaNode = schemaNodeRecord(nextNode);
+          const seedSchemaNode = schemaNodeRecord(seedNode);
+          if (schemaNode && seedSchemaNode) {
+            const data = schemaDataRecord(schemaNode);
+            const seedData = schemaDataRecord(seedSchemaNode);
+            const params = isRecord(data.params) ? { ...data.params } : {};
+            const seedParams = isRecord(seedData.params) ? seedData.params : {};
+            const seedReferences = Array.isArray(seedParams.references)
+              ? seedParams.references
+              : seedData.references;
+            const hasInteractionBoundary = Array.isArray(seedReferences) && seedReferences.some(
+              (reference) =>
+                isRecord(reference) &&
+                reference.source_module_id === "humanistic_interaction_boundary_config_v0_1"
+            );
+            const merged = mergeCatalogReferenceDeclarations(
+              Array.isArray(params.references) ? params.references : data.references,
+              seedReferences,
+              hasInteractionBoundary ? ["humanistic_behavior_boundary_config_v0_1"] : []
+            );
+            if (merged.changed) {
+              data.params = { ...params, references: merged.references };
+              data.references = cloneJson(merged.references);
+              nextNodes[existingIndex] = nextNode;
+              changed = true;
+            }
+          }
+        }
+      }
       continue;
     }
     const nextNode = cloneJson(seedNode) as WorkflowNode;
@@ -2818,6 +2864,71 @@ function migrateLinxuanFirstInteractionEnabledOnce() {
   );
 }
 
+function migrateLinxuanFirstGreetingContentOnce() {
+  if (
+    hasEditorMigrationMarker(
+      STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+      LINXUAN_RESIDENT_ID
+    )
+  ) {
+    return;
+  }
+
+  const identityGraph = persistedOrHydratedGraph(LINXUAN_IDENTITY_GRAPH_ID);
+  if (!identityGraph || graphFieldValue(identityGraph, "resident_id") !== LINXUAN_RESIDENT_ID) {
+    return;
+  }
+  const visualStyleGraph = persistedOrHydratedGraph(VISUAL_STYLE_GRAPH_ID);
+  if (!visualStyleGraph) {
+    return;
+  }
+
+  let targetFound = false;
+  let changed = false;
+  const nextNodes = visualStyleGraph.nodes.map((node) => {
+    if (catalogNodeIdFromGraphNode(node) !== "visual_style_first_greeting_config") {
+      return node;
+    }
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) return node;
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (!Array.isArray(params.fields)) return node;
+    let nodeChanged = false;
+    const nextFields = params.fields.map((field) => {
+      if (!isRecord(field) || String(field.field_id || field.field_key || "") !== "first_greeting") {
+        return field;
+      }
+      const valueKey = "field_value" in field ? "field_value" : "value";
+      const migration = migrateLinxuanFirstGreetingValue(
+        LINXUAN_RESIDENT_ID,
+        false,
+        field[valueKey]
+      );
+      targetFound ||= migration.markComplete;
+      if (!migration.migrated) return field;
+      changed = true;
+      nodeChanged = true;
+      return { ...field, [valueKey]: migration.value };
+    });
+    if (!targetFound) return node;
+    params.fields = nextFields;
+    data.params = params;
+    return nodeChanged ? nextNode : node;
+  });
+
+  if (!targetFound) return;
+  const nextGraph = changed ? { ...visualStyleGraph, nodes: nextNodes } : visualStyleGraph;
+  const store = useCanvasStore.getState();
+  store.updateModuleGraph(nextGraph.moduleNodeId, nextGraph.nodes, nextGraph.edges, nextGraph.viewport);
+  if (!saveModuleGraphState(nextGraph.moduleNodeId, nextGraph.nodes, nextGraph.edges)) return;
+  saveEditorMigrationMarker(
+    STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+    LINXUAN_RESIDENT_ID
+  );
+}
+
 /**
  * 初始化 module state 水合
  * 
@@ -2877,6 +2988,7 @@ export function initializeModuleState() {
   store.setLayerModules(moduleState.layerModules);
   store.setModuleInstanceRegistry(moduleState.moduleInstanceRegistry);
   migrateLinxuanFirstInteractionEnabledOnce();
+  migrateLinxuanFirstGreetingContentOnce();
   migrateExistingGenericFieldsGraphs();
   
   console.log("[P1-BRIDGE] initializeModuleState: hydration completed", {
@@ -2899,6 +3011,9 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
 
   if (moduleNodeId === LINXUAN_IDENTITY_GRAPH_ID || moduleNodeId === LINXUAN_INTERACTION_GRAPH_ID) {
     migrateLinxuanFirstInteractionEnabledOnce();
+  }
+  if (moduleNodeId === LINXUAN_IDENTITY_GRAPH_ID || moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
+    migrateLinxuanFirstGreetingContentOnce();
   }
   const store = useCanvasStore.getState();
   const hasInitialGraph = Boolean(initialNodes?.length || initialEdges?.length);
@@ -2933,6 +3048,9 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(existingGraph, initialNodes, initialEdges);
     if (mergedGraph) {
       store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
+      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
+        saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
+      }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
       return applyGenericFieldsMigration(mergedGraph);
     }
@@ -2963,6 +3081,9 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
+      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
+        saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
+      }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");
     }
     return applyGenericFieldsMigration(mergedGraph);

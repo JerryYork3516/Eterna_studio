@@ -37,6 +37,10 @@ export function firstInteractionEnabledValue(value: unknown): boolean {
 export const LINXUAN_RESIDENT_ID = "dr_eterna_hum_cn_xian_linxuan_0001";
 export const STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION =
   "stage7_4_8_first_interaction_enabled_v1";
+export const STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION =
+  "stage7_4_8_first_greeting_integrity_v1";
+export const REMOVED_LINXUAN_FIRST_GREETING_VARIANT =
+  "你好，我是林瑄。今天开始，我们可以慢慢熟悉。";
 
 export function migrateLinxuanFirstInteractionEnabledValue(
   residentId: string,
@@ -47,6 +51,34 @@ export function migrateLinxuanFirstInteractionEnabledValue(
     return { value, migrated: false, markComplete: false };
   }
   const migratedValue = updateFirstInteractionEnabled(value, true);
+  return {
+    value: migratedValue,
+    migrated: stableComparableValue(migratedValue) !== stableComparableValue(value),
+    markComplete: true,
+  };
+}
+
+export function migrateLinxuanFirstGreetingValue(
+  residentId: string,
+  markerApplied: boolean,
+  value: unknown
+): { value: unknown; migrated: boolean; markComplete: boolean } {
+  if (
+    residentId !== LINXUAN_RESIDENT_ID ||
+    markerApplied ||
+    !isRecord(value) ||
+    !Array.isArray(value.variants)
+  ) {
+    return { value, migrated: false, markComplete: false };
+  }
+  const variants = value.variants.filter(
+    (variant) => variant !== REMOVED_LINXUAN_FIRST_GREETING_VARIANT
+  );
+  const migratedValue = {
+    ...value,
+    content_status: variants.length > 0 ? "authored" : "pending_authoring",
+    variants,
+  };
   return {
     value: migratedValue,
     migrated: stableComparableValue(migratedValue) !== stableComparableValue(value),
@@ -176,6 +208,55 @@ function referenceRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function referenceDeclarationKey(reference: Record<string, unknown>) {
+  const referenceId = typeof reference.reference_id === "string" ? reference.reference_id : "";
+  return referenceId || `${reference.source_layer_id ?? ""}/${reference.source_module_id ?? ""}`;
+}
+
+export function mergeCatalogReferenceDeclarations(
+  currentReferences: unknown,
+  seedReferences: unknown,
+  obsoleteSourceModuleIds: string[] = []
+) {
+  const current = Array.isArray(currentReferences)
+    ? currentReferences.map(referenceRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  const seeds = Array.isArray(seedReferences)
+    ? seedReferences.map(referenceRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  const obsoleteModules = new Set(obsoleteSourceModuleIds);
+  const matchedCurrent = new Set<number>();
+  const references = seeds.map((seed) => {
+    const seedId = typeof seed.reference_id === "string" ? seed.reference_id : "";
+    const currentIndex = current.findIndex((reference, index) => {
+      if (matchedCurrent.has(index)) return false;
+      const currentId = typeof reference.reference_id === "string" ? reference.reference_id : "";
+      if (seedId && currentId === seedId) return true;
+      return (
+        reference.source_layer_id === seed.source_layer_id &&
+        reference.source_module_id === seed.source_module_id
+      );
+    });
+    if (currentIndex < 0) return cloneJsonValue(seed);
+    matchedCurrent.add(currentIndex);
+    return { ...cloneJsonValue(current[currentIndex]), ...cloneJsonValue(seed) };
+  });
+  references.push(
+    ...current
+      .filter(
+        (reference, index) =>
+          !matchedCurrent.has(index) &&
+          !obsoleteModules.has(String(reference.source_module_id ?? "")) &&
+          !seeds.some((seed) => referenceDeclarationKey(seed) === referenceDeclarationKey(reference))
+      )
+      .map((reference) => cloneJsonValue(reference))
+  );
+  return {
+    references,
+    changed: stableComparableValue(references) !== stableComparableValue(current),
+  };
 }
 
 export function mergeAvailableModuleReferencePointers(

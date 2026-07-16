@@ -3059,6 +3059,72 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
         assert node["i18n_keys"]["name"].startswith("layer8.interactionBehavior.node.")
 
 
+def test_layer10_visual_style_first_greeting_catalog_status_and_required_module_references():
+    catalog_map = {module.module_id: module for module in get_module_catalog()}
+    module = catalog_map["visual_style"]
+    nodes = {node["node_id"]: node for node in module.module_graph["nodes"]}
+
+    assert len(nodes) == 7
+    assert len(module.module_graph["edges"]) == 8
+
+    greeting_field = next(
+        field
+        for field in nodes["visual_style_first_greeting_config"]["params"]["fields"]
+        if field["field_key"] == "first_greeting"
+    )
+    assert greeting_field["field_value"]["content_status"] == "pending_authoring"
+    assert greeting_field["field_value"]["variants"] == []
+    assert [
+        option["value"] for option in greeting_field["structured_options"]["content_status"]
+    ] == ["pending_authoring", "authored"]
+
+    validation_rules = nodes["visual_style_first_greeting_validation"]["params"]["validation_rules"]
+    assert "content_status_must_match_variants" in validation_rules
+    assert "greeting_variants_must_contain_valid_copy" in validation_rules
+    assert "empty_variants_allowed" not in validation_rules
+
+    references = nodes["visual_style_reference_input"]["params"]["references"]
+    expected_sources = {
+        "first_presence_identity_core": ("module_basic_identity", "basic_identity_output"),
+        "first_presence_personality": ("personality_traits", "personality_traits_output_summary"),
+        "first_presence_safety_boundary": (
+            "humanistic_interaction_boundary_config_v0_1",
+            "interaction_boundary_config_output",
+        ),
+        "first_presence_memory_policy": ("memory_access_control", "memory_access_output"),
+        "first_presence_world_context": ("world_setting", "worldview_module_output"),
+        "first_presence_interaction_strategy": ("interaction_strategy", "interaction_behavior_core_rules"),
+        "first_presence_user_relationship": ("user_relationship", "user_relationship_config_output"),
+    }
+    assert len(references) == 7
+    assert {reference["reference_id"] for reference in references} == set(expected_sources)
+    assert all(reference["source_scope"] == "module" for reference in references)
+    assert all(reference["required"] is True for reference in references)
+    assert not any(
+        reference["source_module_id"] == "humanistic_behavior_boundary_config_v0_1"
+        for reference in references
+    )
+    for reference in references:
+        source_module_id, source_node_id = expected_sources[reference["reference_id"]]
+        assert reference["source_module_id"] == source_module_id
+        assert reference["source_node_id"] == source_node_id
+        assert source_node_id in {
+            node["node_id"] for node in catalog_map[source_module_id].module_graph["nodes"]
+        }
+
+    summary = nodes["visual_style_first_presence_output"]["outputs"]["first_presence_config"][
+        "reference_source_summary"
+    ]
+    assert all(item["reference_id"] for item in summary)
+    assert {
+        (item["reference_id"], item["source_module_id"], item["source_node_id"])
+        for item in summary
+    } == {
+        (reference["reference_id"], reference["source_module_id"], reference["source_node_id"])
+        for reference in references
+    }
+
+
 def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
     catalog_map = {module.module_id: module for module in get_module_catalog()}
     module = catalog_map["behavior_habit"]

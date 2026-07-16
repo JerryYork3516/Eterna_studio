@@ -110,8 +110,11 @@ def test_visual_style_fields_references_validation_and_exports_are_optional_and_
     greeting = _field(module, "visual_style_first_greeting_config", "first_greeting")
     presence = _field(module, "visual_style_first_greeting_config", "first_presence")
     assert greeting["required"] is False
+    assert greeting["field_value"]["content_status"] == "pending_authoring"
     assert greeting["field_value"]["variants"] == []
-    assert greeting["structured_options"]["content_status"][0]["value"] == "pending_authoring"
+    assert [
+        option["value"] for option in greeting["structured_options"]["content_status"]
+    ] == ["pending_authoring", "authored"]
     assert presence["required"] is False
     assert presence["field_value"] == {
         "particle_state": "calm",
@@ -134,7 +137,12 @@ def test_visual_style_fields_references_validation_and_exports_are_optional_and_
         ("layer_8", "interaction_strategy", "interaction_behavior_core_rules"),
         ("layer_11", "user_relationship", "user_relationship_config_output"),
     ]
-    assert all(reference["required"] is False for reference in references)
+    assert all(reference["required"] is True for reference in references)
+    assert all(reference["source_scope"] == "module" for reference in references)
+    assert not any(
+        reference["source_module_id"] == "humanistic_behavior_boundary_config_v0_1"
+        for reference in references
+    )
     for reference in references:
         source = catalog[reference["source_module_id"]]
         assert source["layer_id"] == reference["source_layer_id"]
@@ -189,7 +197,7 @@ def test_config_values_survive_module_snapshot_compile_and_export():
         "max_active_prompts": 1,
     }
     assert dr["payload"]["expression"]["first_greeting"]["max_sentences"] == 1
-    assert dr["payload"]["expression"]["first_greeting"]["variants"] == []
+    assert dr["payload"]["expression"]["first_greeting"]["variants"] == greeting["field_value"]["variants"]
     assert dr["payload"]["expression"]["first_presence"]["particle_state"] == "calm"
     assert dr["payload"]["relationship"]["initial_relationship"]["trust_building"] == "explicit_and_gradual"
     assert dr["payload"]["relationship"]["initial_relationship"]["relationship_memory_creation"] == "disabled_until_explicit_user_authorization"
@@ -204,6 +212,8 @@ def test_config_values_survive_module_snapshot_compile_and_export():
         "risk_items": [],
     }
     assert len(output["reference_source_summary"]) == 7
+    assert all(item["reference_id"] for item in output["reference_source_summary"])
+    assert all(item["resolved"] is True for item in output["reference_source_summary"])
     assert output["optional_config_status"]["variants"] == "empty_allowed"
     assert dr["dr_schema_version"] == "0.3.0"
     assert dr["manifest"]["required_capabilities"] == ["llm", "memory", "lattice"]
@@ -243,6 +253,35 @@ def test_current_linxuan_first_interaction_enabled_compiles_true():
 
     dr = _compile(list(catalog.values()))
     assert dr["payload"]["behavior"]["first_interaction"]["enabled"] is True
+
+
+def test_current_linxuan_authored_greeting_exports_only_the_three_retained_variants():
+    catalog = _catalog()
+    identity = catalog["module_basic_identity"]
+    _field(identity, "basic_identity_field_input", "name")["value"] = "林瑄"
+    _field(identity, "basic_identity_field_input", "codename")["value"] = (
+        "linxuan_hum_cn_xian_01"
+    )
+    _field(identity, "basic_identity_field_input", "resident_id")["value"] = (
+        "dr_eterna_hum_cn_xian_linxuan_0001"
+    )
+    retained_variants = [
+        "你好，我叫林瑄。刚见面，先认识一下吧。",
+        "你好，我是林瑄。第一次见面，请多关照。",
+        "你好，我是林瑄。你叫什么名字？",
+    ]
+    greeting = _field(
+        catalog["visual_style"], "visual_style_first_greeting_config", "first_greeting"
+    )
+    greeting["field_value"]["content_status"] = "authored"
+    greeting["field_value"]["variants"] = retained_variants
+
+    dr = _compile(list(catalog.values()))
+    compiled = dr["payload"]["expression"]["first_greeting"]
+    assert compiled["content_status"] == "authored"
+    assert compiled["variants"] == retained_variants
+    assert "你好，我是林瑄。今天开始，我们可以慢慢熟悉。" not in compiled["variants"]
+    assert _compiled_visual_output(dr)["first_greeting"] == compiled
 
 
 @pytest.mark.parametrize("value", [0, 1])
@@ -309,6 +348,146 @@ def test_empty_variants_and_missing_optional_expression_groups_compile():
     assert output["validation_result"]["status"] == "pass"
     assert "first_greeting" not in output
     assert "first_presence" not in output
+
+
+@pytest.mark.parametrize(
+    ("content_status", "variants", "valid"),
+    [
+        ("pending_authoring", [], True),
+        ("authored", [], False),
+        ("authored", ["你好。"], True),
+        ("pending_authoring", ["你好。"], False),
+        ("authored", [{"text": "你好。", "variant_id": "existing-metadata"}], True),
+    ],
+)
+def test_first_greeting_content_status_matches_variants(
+    content_status: str, variants: list[object], valid: bool
+):
+    catalog = _catalog()
+    greeting = _field(
+        catalog["visual_style"], "visual_style_first_greeting_config", "first_greeting"
+    )
+    greeting["field_value"]["content_status"] = content_status
+    greeting["field_value"]["variants"] = variants
+
+    result = _compile_result(list(catalog.values()))
+    assert result["valid"] is valid
+    if valid:
+        compiled = result["compiled_dr"]["payload"]["expression"]["first_greeting"]
+        assert compiled["content_status"] == content_status
+        assert compiled["variants"] == variants
+    else:
+        error = next(
+            error
+            for error in result["errors"]
+            if error["code"] == "DR_FIRST_PRESENCE_CONFIG_INVALID"
+        )
+        assert error["path"] == "payload.expression.first_greeting"
+        assert "content_status_must_match_variants" in error["message"]
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["", "   ", {}, {"text": ""}, {"text": "   "}, {"content": "你好。"}, 1, None],
+)
+def test_first_greeting_rejects_invalid_variant_items(variant: object):
+    catalog = _catalog()
+    greeting = _field(
+        catalog["visual_style"], "visual_style_first_greeting_config", "first_greeting"
+    )
+    greeting["field_value"]["content_status"] = "authored"
+    greeting["field_value"]["variants"] = [variant]
+
+    result = _compile_result(list(catalog.values()))
+    assert result["valid"] is False
+    error = next(
+        error
+        for error in result["errors"]
+        if error["code"] == "DR_FIRST_PRESENCE_CONFIG_INVALID"
+    )
+    assert error["path"] == "payload.expression.first_greeting"
+    assert "greeting_variants_must_contain_valid_copy" in error["message"]
+
+
+def test_reference_summary_inherits_static_ids_repairs_legacy_boundary_and_resolves():
+    catalog = _catalog()
+    visual_style = catalog["visual_style"]
+    references = _node(visual_style, "visual_style_reference_input")["params"]["references"]
+    expected_ids = [reference["reference_id"] for reference in references]
+    for reference in references:
+        if reference["reference_id"] != "first_presence_safety_boundary":
+            reference["reference_id"] = None
+    legacy_boundary_reference = next(
+        reference
+        for reference in references
+        if reference["reference_id"] == "first_presence_safety_boundary"
+    )
+    legacy_boundary_reference["source_module_id"] = "humanistic_behavior_boundary_config_v0_1"
+    legacy_boundary_reference["source_node_id"] = "reference_output"
+    legacy_boundary_reference["source_scope"] = "node"
+    legacy_boundary_reference["required"] = False
+    legacy_config_reference = next(
+        reference
+        for reference in visual_style["config"]["reference_sources"]
+        if reference["reference_id"] == "first_presence_safety_boundary"
+    )
+    legacy_config_reference["source_module_id"] = "humanistic_behavior_boundary_config_v0_1"
+    legacy_config_reference["source_node_id"] = "reference_output"
+
+    dr = _compile(list(catalog.values()))
+    summary = _compiled_visual_output(dr)["reference_source_summary"]
+    assert [item["reference_id"] for item in summary] == expected_ids
+    assert all(item["reference_id"] for item in summary)
+    assert all(item["resolved"] is True for item in summary)
+    compiled_visual_style = next(
+        module for module in dr["payload"]["modules"] if module["module_id"] == "visual_style"
+    )
+    compiled_config_reference = next(
+        reference
+        for reference in compiled_visual_style["config"]["reference_sources"]
+        if reference["reference_id"] == "first_presence_safety_boundary"
+    )
+    assert compiled_config_reference["source_module_id"] == "humanistic_interaction_boundary_config_v0_1"
+    assert compiled_config_reference["source_node_id"] == "interaction_boundary_config_output"
+    assert compiled_config_reference["source_scope"] == "module"
+    assert compiled_config_reference["required"] is True
+    compiled_reference_input = _node(compiled_visual_style, "visual_style_reference_input")
+    compiled_references = compiled_reference_input["params"]["references"]
+    assert [reference["reference_id"] for reference in compiled_references] == expected_ids
+    compiled_layer3_reference = next(
+        reference
+        for reference in compiled_references
+        if reference["source_module_id"] == "humanistic_interaction_boundary_config_v0_1"
+    )
+    assert compiled_layer3_reference["source_node_id"] == "interaction_boundary_config_output"
+    assert compiled_layer3_reference["source_scope"] == "module"
+    assert compiled_layer3_reference["required"] is True
+    assert [item["reference_id"] for item in summary] == [
+        reference["reference_id"] for reference in compiled_references
+    ]
+    assert not any(
+        item["source_module_id"] == "humanistic_behavior_boundary_config_v0_1"
+        for item in summary
+    )
+
+
+def test_expression_payload_is_authoritative_over_stale_module_output_mirror():
+    catalog = _catalog()
+    visual_style = catalog["visual_style"]
+    greeting = _field(visual_style, "visual_style_first_greeting_config", "first_greeting")
+    greeting["field_value"]["content_status"] = "authored"
+    greeting["field_value"]["variants"] = ["真实模块字段文案。"]
+    visual_style["outputs"]["first_presence_config"]["first_greeting"] = {
+        "content_status": "authored",
+        "variants": ["过期镜像文案。"],
+    }
+
+    dr = _compile(list(catalog.values()))
+    payload_greeting = dr["payload"]["expression"]["first_greeting"]
+    output_greeting = _compiled_visual_output(dr)["first_greeting"]
+    assert payload_greeting == greeting["field_value"]
+    assert output_greeting == payload_greeting
+    assert "过期镜像文案。" not in output_greeting["variants"]
 
 
 def test_invalid_first_presence_configuration_is_rejected_at_compile_time():
