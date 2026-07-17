@@ -27,6 +27,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from .daily_companion_runtime import build_runtime_dialogue_projection
+
 from ..dr.v3.dr_v0_3_schema import (
     DRDocumentV03,
     DR_FILE_TYPE as DR_FILE_TYPE_V3,
@@ -4878,6 +4880,24 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         blueprint["memory_config"]["memory_types"] = list(_V03_FROZEN_MEMORY_TYPES)
         blueprint["memory_config"]["store"] = "local_runtime"
         blueprint["memory_config"].pop("namespace", None)
+    supporting_source_paths = [
+        path
+        for path, present in (
+            ("payload.resident_identity", bool(_as_dict(payload.get("resident_identity")))),
+            ("payload.safety_policy", bool(_as_dict(payload.get("safety_policy")))),
+            ("payload.memory_policy", bool(_as_dict(payload.get("memory_policy")))),
+            (
+                "payload.relationship.initial_relationship",
+                bool(_as_dict(_as_dict(payload.get("relationship")).get("initial_relationship"))),
+            ),
+        )
+        if present
+    ]
+    runtime_dialogue_projection = build_runtime_dialogue_projection(
+        _as_dict(payload.get("behavior_policy")), supporting_source_paths
+    )
+    if runtime_dialogue_projection is not None:
+        payload["runtime_dialogue_projection"] = runtime_dialogue_projection
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
     findings.extend(_identity_consistency_findings(manifest, payload, resident))
     findings.extend(_environment_mapping_findings(payload))
