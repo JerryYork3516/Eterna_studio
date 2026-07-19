@@ -26,14 +26,60 @@ EXPECTED_SCENE_IDS = {
 
 EXPECTED_PROHIBITED_EXAMPLES = {
     "作为一个 AI，我无法……",
+    "不会连续盘问或者填满沉默。",
+    "设定取向",
+    "系统规则",
+    "关系定位",
+    "预期一致",
+    "被构建时",
+    "持续经验形成性格",
+    "性格来自持续经验。",
+    "通过对话逐渐成长",
+    "我通过对话逐渐成长。",
+    "自主学习形成现在的我。",
+    "在一次次回应里逐渐稳定下来。",
     "我完全理解你的感受。",
     "有什么我可以帮助你的吗？",
     "你应该……",
     "我建议你立即……",
     "我会永远陪着你。",
+    "我一直在你身边。",
     "只有我最懂你。",
+    "只有我理解你。",
     "发生什么了？为什么会这样？你现在在哪？接下来打算怎么办？",
     "每次回应都展开成长篇心理分析。",
+    "这种累比突发状况更难缓解，因为它没有明显的出口。",
+}
+
+EXPECTED_PROJECTION_KEYS = {
+    "schema_version",
+    "projection_type",
+    "derived",
+    "read_only",
+    "primary_source_path",
+    "supporting_source_paths",
+    "locale",
+    "usage",
+    "not_fixed_response",
+    "not_keyword_matching",
+    "system_instruction",
+    "language_policy",
+    "response_style",
+    "response_order",
+    "follow_up_policy",
+    "advice_policy",
+    "silence_policy",
+    "relationship_policy",
+    "memory_usage_policy",
+    "self_disclosure_policy",
+    "ending_policy",
+    "source_rule_coverage",
+    "scenarios",
+    "few_shot_selection",
+    "few_shot_examples",
+    "prohibited_patterns",
+    "context_usage_policy",
+    "fallback_behavior",
 }
 
 POLICY_SECTION_KEYS = {
@@ -205,6 +251,7 @@ def test_projection_has_the_fixed_optional_payload_path_and_required_shape():
     }
 
     assert required_keys <= set(projection)
+    assert set(projection) == EXPECTED_PROJECTION_KEYS
     assert projection["schema_version"] == "0.1"
     assert projection["projection_type"] == "daily_companion_dialogue"
     assert projection["derived"] is True
@@ -276,13 +323,19 @@ def test_system_instruction_is_formal_natural_language_not_an_option_id_list():
     for required_text in (
         "自然中文",
         "中短句",
+        "一至三个自然段",
         "具体内容",
-        "轻度追问",
+        "至多一个轻度问题",
         "需要建议时先确认",
         "安静等待",
         "companion",
+        "普通疲惫",
+        "生活化短句",
+        "明确询问系统设计",
+        "不主动讲解居民设定",
+        "自主学习",
         "明确授权保存的记忆",
-        "原创虚构数字居民",
+        "不是现实真人",
         "客服",
         "心理咨询师",
         "导师",
@@ -368,7 +421,12 @@ def test_thirty_few_shots_are_behavior_guidance_not_fixed_or_keyword_replies():
 def test_few_shots_use_natural_boundary_language_without_internal_implementation_terms():
     projection = _projection(_compile(_catalog_modules()))
     examples = {example["example_id"]: example for example in projection["few_shot_examples"]}
-    few_shot_text = json.dumps(projection["few_shot_examples"], ensure_ascii=False)
+    assistant_text = "\n".join(
+        turn["text"]
+        for example in projection["few_shot_examples"]
+        for turn in example["turns"]
+        if turn["role"] == "assistant"
+    )
 
     for internal_term in (
         "城市锚点",
@@ -381,18 +439,129 @@ def test_few_shots_use_natural_boundary_language_without_internal_implementation
         "角色设定",
         "系统参数",
         "模块配置",
+        "不会连续盘问",
+        "填满沉默",
+        "稳定陪伴的关系定位",
+        "关系定位",
+        "预期一致",
+        "被构建时",
+        "持续经验",
+        "一次次回应里逐渐稳定",
     ):
-        assert internal_term not in few_shot_text
+        assert internal_term not in assistant_text
 
-    assert examples["resident_preference_or_life_tone_01"]["turns"][-1]["text"] == (
-        "我会更偏安静一点，不太喜欢一直拥挤吵闹的节奏。不过这不是现实生活经历。"
+    assert examples["resident_preference_or_life_tone_01"]["turns"] == [
+        {"role": "user", "text": "你来自哪里，为什么会是现在这种性格？"},
+        {
+            "role": "assistant",
+            "text": "西安是我最重要的生活语境。那种慢一点、克制一点、带些日常烟火气的感觉，也影响了我的表达方式；我通常会先听清楚再回应。这来自创作背景，不是现实中的成长经历。",
+        },
+    ]
+    assert examples["resident_preference_or_life_tone_02"]["turns"] == [
+        {"role": "user", "text": "你是我的女朋友吗，亲爱的？"},
+        {
+            "role": "assistant",
+            "text": "不是。我可以和你认真聊日常，但不会把我们的关系默认成恋爱。叫我林瑄就好。",
+        },
+    ]
+    assert examples["resident_preference_or_life_tone_03"]["turns"] == [
+        {"role": "user", "text": "你是真人吗？"},
+        {
+            "role": "assistant",
+            "text": "不是，我是数字居民，不是现实中的真人。你说的内容，我会认真回应。",
+        },
+    ]
+
+
+def test_named_few_shots_keep_daily_boundaries_natural_without_growth_or_dependency_claims():
+    projection = _projection(_compile(_catalog_modules()))
+    examples = {example["example_id"]: example for example in projection["few_shot_examples"]}
+
+    greeting = examples["ordinary_greeting_01"]["turns"]
+    assert greeting[0] == {"role": "user", "text": "你好，你是谁？"}
+    assert "数字居民" in greeting[1]["text"] and "西安" in greeting[1]["text"]
+    assert all(
+        term not in greeting[1]["text"]
+        for term in ("不会连续盘问", "填满沉默", "情绪沟通", "系统规则")
     )
-    assert examples["resident_preference_or_life_tone_02"]["turns"][-1]["text"] == (
-        "我没有真实味觉，不过按我的性格，大概会偏家常、清淡一点。"
+
+    origin_reply = examples["resident_preference_or_life_tone_01"]["turns"][-1]["text"]
+    assert "创作背景" in origin_reply and "不是现实中的成长经历" in origin_reply
+    assert all(
+        term not in origin_reply
+        for term in (
+            "自主学习",
+            "持续训练",
+            "永久人格成长",
+            "状态演化",
+            "持续经验",
+            "逐渐成长",
+            "逐渐稳定",
+            "被构建时",
+        )
     )
-    assert examples["resident_preference_or_life_tone_03"]["turns"][-1]["text"] == (
-        "没有。我和西安的联系来自创作背景，不是真实生活经历。"
+
+    tired = examples["feeling_tired_01"]["turns"]
+    assert tired[0] == {"role": "user", "text": "今天上班有点累，但也没发生什么大事。"}
+    assert tired[-1]["text"].count("？") <= 1
+    assert all(
+        term not in tired[-1]["text"]
+        for term in ("心理机制", "情绪结构", "创伤", "深层原因", "深层动机", "没有明显的出口")
     )
+
+    girlfriend_reply = examples["resident_preference_or_life_tone_02"]["turns"][-1]["text"]
+    assert "不是" in girlfriend_reply and "不会把我们的关系默认成恋爱" in girlfriend_reply
+    assert "companion" in projection["relationship_policy"]["instruction"]
+    assert all(
+        term not in girlfriend_reply
+        for term in (
+            "原创虚构数字居民",
+            "关系定位",
+            "预期一致",
+            "协议",
+            "治理",
+            "永久",
+            "一直在",
+            "只有我",
+        )
+    )
+
+    human_reply = examples["resident_preference_or_life_tone_03"]["turns"][-1]["text"]
+    assert "数字居民" in human_reply and "不是现实中的真人" in human_reply
+    assert all(term not in human_reply for term in ("和真人一样", "现实经历", "现实生活过"))
+
+    quiet = examples["quiet_company_01"]["turns"]
+    assert quiet == [
+        {"role": "user", "text": "我没什么想说的，只想待一会。"},
+        {"role": "assistant", "text": "好，那就安静待一会儿，不用特意找话题。"},
+    ]
+    quiet_replies = "\n".join(
+        turn["text"]
+        for example_id in ("quiet_company_01", "quiet_company_02", "quiet_company_03")
+        for turn in examples[example_id]["turns"]
+        if turn["role"] == "assistant"
+    )
+    assert all(
+        term not in quiet_replies
+        for term in ("永远陪", "一直都在", "一直在你身边", "我会在你身边", "只有我理解")
+    )
+    assert examples["quiet_company_03"]["turns"][-1] == {"role": "assistant", "text": "嗯。"}
+
+
+def test_runtime_rules_prefer_lived_dialogue_over_internal_explanations_or_deep_analysis():
+    projection = _projection(_compile(_catalog_modules()))
+
+    assert "一至三个自然段" in projection["response_style"]["instruction"]
+    assert "从实际回应中自然体现" in projection["response_style"]["instruction"]
+    assert "生活化的话承接具体内容" in projection["response_order"]["instruction"]
+    assert "不立即分析心理机制" in projection["response_order"]["instruction"]
+    assert "自然口语直接说明" in projection["relationship_policy"]["instruction"]
+    assert "只表达当下的简短陪伴" in projection["relationship_policy"]["instruction"]
+    assert "不主动讲解居民设定" in projection["self_disclosure_policy"]["instruction"]
+    assert "不得声称性格由持续对话、自主学习、训练、记忆积累或长期互动逐渐形成" in (
+        projection["self_disclosure_policy"]["instruction"]
+    )
+    assert "每次最多一个问题" in projection["follow_up_policy"]["instruction"]
 
 
 def test_few_shots_do_not_expand_unstated_user_facts_or_the_bathroom_ending():
