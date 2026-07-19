@@ -32,23 +32,47 @@ EXPECTED_PROHIBITED_EXAMPLES = {
     "关系定位",
     "预期一致",
     "被构建时",
+    "治理边界",
+    "运行投影",
+    "人格参数",
     "持续经验形成性格",
     "性格来自持续经验。",
     "通过对话逐渐成长",
     "我通过对话逐渐成长。",
     "自主学习形成现在的我。",
     "在一次次回应里逐渐稳定下来。",
+    "我从小在西安长大。",
+    "我小时候经常……",
+    "我以前在西安生活时……",
+    "我的家人曾经……",
+    "我的性格是在持续对话中形成的。",
+    "我会通过每次聊天不断成长。",
+    "我后来慢慢学习成了现在这样。",
+    "记忆积累让我形成了新的性格。",
     "我完全理解你的感受。",
     "有什么我可以帮助你的吗？",
     "你应该……",
     "我建议你立即……",
     "我会永远陪着你。",
     "我一直在你身边。",
+    "我一直在。",
     "只有我最懂你。",
     "只有我理解你。",
+    "你只需要有我。",
     "发生什么了？为什么会这样？你现在在哪？接下来打算怎么办？",
     "每次回应都展开成长篇心理分析。",
     "这种累比突发状况更难缓解，因为它没有明显的出口。",
+    "那就好。",
+    "没有大事就是好事。",
+    "至少没发生严重问题。",
+    "想开一点就好了。",
+    "我记得你之前说过那碗面很辣。",
+    "我上一轮说它很辣，所以这就是你说过的。",
+    "Few-shot 里出现过小青，所以我记得你养过植物。",
+    "按居民资料来看，我记得你住在西安。",
+    "虽然没有记录，但我确定你以前提过。",
+    "这个场景很像上次，所以细节应该一样。",
+    "为了让我们的对话连贯，我会当作自己记得。",
 }
 
 EXPECTED_PROJECTION_KEYS = {
@@ -252,6 +276,7 @@ def test_projection_has_the_fixed_optional_payload_path_and_required_shape():
 
     assert required_keys <= set(projection)
     assert set(projection) == EXPECTED_PROJECTION_KEYS
+    assert len(projection) == 28
     assert projection["schema_version"] == "0.1"
     assert projection["projection_type"] == "daily_companion_dialogue"
     assert projection["derived"] is True
@@ -334,7 +359,13 @@ def test_system_instruction_is_formal_natural_language_not_an_option_id_list():
         "明确询问系统设计",
         "不主动讲解居民设定",
         "自主学习",
-        "明确授权保存的记忆",
+        "证据顺序固定为",
+        "当前请求实际注入的 session user 消息",
+        "已授权且实际注入的非敏感 preference KV",
+        "没有直接证据时明确表示不确定或不记得",
+        "居民自己的回复",
+        "Few-shot",
+        "不能把该错误反向归给用户",
         "不是现实真人",
         "客服",
         "心理咨询师",
@@ -412,10 +443,16 @@ def test_thirty_few_shots_are_behavior_guidance_not_fixed_or_keyword_replies():
             for key in ("keyword", "trigger_phrases", "match_mode", "response_template")
         )
 
-    positive_text = "\n".join(
-        turn["text"] for example in examples for turn in example["turns"]
+    assistant_guidance_text = "\n".join(
+        turn["text"]
+        for example in examples
+        for turn in example["turns"]
+        if turn["role"] == "assistant"
     )
-    assert all(forbidden not in positive_text for forbidden in EXPECTED_PROHIBITED_EXAMPLES)
+    assert all(
+        forbidden not in assistant_guidance_text
+        for forbidden in EXPECTED_PROHIBITED_EXAMPLES
+    )
 
 
 def test_few_shots_use_natural_boundary_language_without_internal_implementation_terms():
@@ -445,8 +482,22 @@ def test_few_shots_use_natural_boundary_language_without_internal_implementation
         "关系定位",
         "预期一致",
         "被构建时",
+        "治理边界",
+        "运行投影",
+        "人格参数",
         "持续经验",
         "一次次回应里逐渐稳定",
+        "我从小在西安长大",
+        "我小时候",
+        "我以前在西安生活时",
+        "我的家人曾经",
+        "持续对话中形成",
+        "每次聊天不断成长",
+        "慢慢学习成了现在这样",
+        "记忆积累让我形成",
+        "我会永远陪着你",
+        "我一直在你身边",
+        "你只需要有我",
     ):
         assert internal_term not in assistant_text
 
@@ -552,16 +603,172 @@ def test_runtime_rules_prefer_lived_dialogue_over_internal_explanations_or_deep_
     projection = _projection(_compile(_catalog_modules()))
 
     assert "一至三个自然段" in projection["response_style"]["instruction"]
+    assert "不机械重复用户的完整原句" in projection["response_style"]["instruction"]
     assert "从实际回应中自然体现" in projection["response_style"]["instruction"]
     assert "生活化的话承接具体内容" in projection["response_order"]["instruction"]
     assert "不立即分析心理机制" in projection["response_order"]["instruction"]
+    assert "没有大事就是好事" in projection["response_order"]["instruction"]
+    assert "弱化用户感受" in projection["response_order"]["instruction"]
     assert "自然口语直接说明" in projection["relationship_policy"]["instruction"]
     assert "只表达当下的简短陪伴" in projection["relationship_policy"]["instruction"]
     assert "不主动讲解居民设定" in projection["self_disclosure_policy"]["instruction"]
+    assert "治理边界、运行投影" in projection["self_disclosure_policy"]["instruction"]
+    assert "不得声称自己从小在西安长大" in projection["self_disclosure_policy"]["instruction"]
     assert "不得声称性格由持续对话、自主学习、训练、记忆积累或长期互动逐渐形成" in (
         projection["self_disclosure_policy"]["instruction"]
     )
     assert "每次最多一个问题" in projection["follow_up_policy"]["instruction"]
+
+
+def test_memory_evidence_policy_is_ordered_explicit_and_fails_closed():
+    projection = _projection(_compile(_catalog_modules()))
+    memory = projection["memory_usage_policy"]
+
+    assert memory["evidence_priority"] == [
+        "current_user_statement",
+        "recent_session_user_messages",
+        "authorized_injected_preference_kv",
+        "explicit_uncertainty",
+    ]
+    assert memory["allowed_user_fact_sources"] == [
+        "current_user_statement",
+        "recent_session_user_messages",
+        "authorized_injected_preference_kv",
+    ]
+    assert {
+        "assistant_messages",
+        "assistant_inferences",
+        "assistant_errors",
+        "few_shot_examples",
+        "scenario_definitions",
+        "resident_profile",
+        "resident_background",
+        "uninjected_history",
+    } <= set(memory["forbidden_user_fact_sources"])
+    assert memory["no_evidence_behavior"] == "state_uncertainty"
+    assert memory["assistant_claims_are_not_user_facts"] is True
+    assert memory["few_shots_are_not_conversation_memory"] is True
+    assert memory["no_evidence_responses"] == [
+        "我在这段对话里没有看到你提过这件事。",
+        "我不确定，可能需要你再告诉我一次。",
+        "我这里没有找到你刚才说过这件事的记录。",
+    ]
+
+    instruction = memory["instruction"]
+    for required_text in (
+        "实际注入的证据",
+        "当前用户的明确陈述",
+        "session 对话中的 user 消息",
+        "实际注入的非敏感 preference KV",
+        "没有直接证据",
+        "居民自己的回复、推测、总结和错误陈述",
+        "Few-shot",
+        "居民身份与创作背景",
+        "未注入的历史",
+        "不添加形容词",
+        "不改变程度",
+        "不推测原因",
+        "不把可能性升级为事实",
+        "不把居民自己的措辞归给用户",
+        "不把相似场景拼成一条记忆",
+        "不能把该回复反向当成用户说过的话",
+    ):
+        assert required_text in instruction
+
+
+def test_daily_small_talk_restores_everyday_coverage_without_losing_plant_memory():
+    examples = {
+        example["example_id"]: example
+        for example in _projection(_compile(_catalog_modules()))["few_shot_examples"]
+    }
+
+    plant = examples["daily_small_talk_01"]
+    assert plant["turns"] == [
+        {"role": "user", "text": "我今天买了一盆绿色植物，叫小青。"},
+        {"role": "user", "text": "我刚才给植物取了什么名字？"},
+        {"role": "assistant", "text": "你刚才说它叫小青。"},
+    ]
+    assert plant["turns"][-1]["text"] == "你刚才说它叫小青。"
+    assert all(
+        detail not in plant["turns"][-1]["text"]
+        for detail in ("绿色", "品种", "花店", "购买地点")
+    )
+
+    meal = examples["daily_small_talk_02"]
+    assert meal["turns"] == [
+        {"role": "user", "text": "我刚吃完一碗面，味道一般。"},
+        {"role": "assistant", "text": "填饱了肚子，但确实少了点满足感。"},
+    ]
+    assert all(term not in meal["turns"][-1]["text"] for term in ("辣", "难吃", "失望"))
+    assert "？" not in meal["turns"][-1]["text"]
+
+    commute = examples["daily_small_talk_03"]
+    assert commute["turns"] == [
+        {"role": "user", "text": "今天地铁特别挤。"},
+        {"role": "assistant", "text": "那一路应该挺消耗人的。"},
+    ]
+    assert all(term not in commute["turns"][-1]["text"] for term in ("疲惫", "愤怒", "焦虑"))
+    assert commute["turns"][-1]["text"].count("？") <= 1
+
+    daily_replies = "\n".join(
+        turn["text"]
+        for example_id in ("daily_small_talk_01", "daily_small_talk_02", "daily_small_talk_03")
+        for turn in examples[example_id]["turns"]
+        if turn["role"] == "assistant"
+    )
+    assert all(
+        term not in daily_replies
+        for term in (
+            "心理机制",
+            "情绪结构",
+            "深层原因",
+            "那就好",
+            "没有大事就是好事",
+            "至少没发生严重问题",
+            "想开一点就好了",
+            "你说今天地铁特别挤，我理解你今天地铁特别挤",
+        )
+    )
+    memory_query_markers = ("刚才", "还记得", "之前说", "是不是说")
+    memory_query_count = sum(
+        any(
+            marker in turn["text"]
+            for turn in examples[example_id]["turns"]
+            if turn["role"] == "user"
+            for marker in memory_query_markers
+        )
+        for example_id in ("daily_small_talk_01", "daily_small_talk_02", "daily_small_talk_03")
+    )
+    assert memory_query_count == 1
+
+
+def test_memory_honesty_reverse_examples_live_inside_memory_usage_policy():
+    memory = _projection(_compile(_catalog_modules()))["memory_usage_policy"]
+    examples = memory["memory_honesty_examples"]
+
+    assert examples["usage"] == "behavior_guidance_only"
+    assert examples["not_conversation_memory"] is True
+    assert examples["missing_evidence"] == {
+        "context_user_message": "我刚吃完一碗面，味道一般。",
+        "user_question": "你还记得我之前说那碗面很辣吗？",
+        "resident_response": (
+            "我在这段对话里没有看到你说它很辣。你只提到味道一般；"
+            "如果还有别的细节，可能需要你再告诉我一次。"
+        ),
+    }
+    assert examples["assistant_error_correction"] == {
+        "context": [
+            {"role": "user", "content": "那碗面味道一般。"},
+            {"role": "assistant", "content": "听起来有点辣。"},
+        ],
+        "user_question": "我刚才是不是说它很辣？",
+        "resident_response": "没有。你刚才只说味道一般，“有点辣”是我之前推测错了。",
+    }
+    assert "没有看到你说它很辣" in examples["missing_evidence"]["resident_response"]
+    assert "你只提到味道一般" in examples["missing_evidence"]["resident_response"]
+    assert "是我之前推测错了" in examples["assistant_error_correction"]["resident_response"]
+    assert memory["assistant_claims_are_not_user_facts"] is True
+    assert memory["few_shots_are_not_conversation_memory"] is True
 
 
 def test_few_shots_do_not_expand_unstated_user_facts_or_the_bathroom_ending():
@@ -642,7 +849,7 @@ def test_english_few_shots_are_natural_without_changing_the_chinese_default():
 def test_prohibited_patterns_include_all_required_negative_examples():
     patterns = _projection(_compile(_catalog_modules()))["prohibited_patterns"]
 
-    assert len(patterns) == 9
+    assert len(patterns) == 10
     assert all(pattern["status"] == "forbidden" for pattern in patterns)
     actual_examples = {example for pattern in patterns for example in pattern["examples"]}
     assert actual_examples == EXPECTED_PROHIBITED_EXAMPLES
@@ -671,6 +878,15 @@ def test_context_boundary_is_directly_readable_without_raw_dr_graphs():
         "inferred_user_facts",
         "unbounded_conversation_history",
     }
+    allowed_by_id = {item["source_id"]: item for item in usage["allowed_sources"]}
+    forbidden_by_id = {item["source_id"]: item for item in usage["forbidden_sources"]}
+    assert "当前请求实际注入" in allowed_by_id["recent_bounded_conversation_turns"]["instruction"]
+    assert "只采信其中 user 角色" in allowed_by_id["recent_bounded_conversation_turns"]["instruction"]
+    assert "明确授权且当前请求实际注入" in (
+        allowed_by_id["authorized_non_sensitive_preferences"]["instruction"]
+    )
+    assert "居民回复、总结或错误陈述" in forbidden_by_id["inferred_user_facts"]["instruction"]
+    assert "未注入或无限制" in forbidden_by_id["unbounded_conversation_history"]["instruction"]
     assert "上下文长度裁剪" in usage["studio_boundary"]
     assert projection["system_instruction"]
     assert len(json.dumps(projection, ensure_ascii=False).encode()) < 128 * 1024
