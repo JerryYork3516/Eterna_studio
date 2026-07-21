@@ -1227,6 +1227,26 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
   assert.deepEqual(reopenedReferences.references, mergedReferences.references);
 });
 
+test("compile-time reference normalization preserves stable declaration ids", () => {
+  const source = readFileSync(new URL("../src/components/CanvasShell.tsx", import.meta.url), "utf8");
+  const bridgeSource = readFileSync(new URL("../src/store/module-state-bridge.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /REFERENCE_INPUT_POINTER_KEYS\s*=\s*new Set\(\[\s*["']reference_id["']/s
+  );
+  assert.match(source, /const referenceId = referenceInputString\(item\.reference_id\)/);
+  assert.match(source, /\.\.\.\(referenceId \? \{ reference_id: referenceId \} : \{\}\)/);
+  assert.match(
+    source,
+    /module\.module_id === ["']dialogue_runtime_profile["'][\s\S]*mergeCatalogReferenceDeclarations\([\s\S]*seedParams\.references/
+  );
+  assert.match(
+    bridgeSource,
+    /DIALOGUE_RUNTIME_PROFILE_GRAPH_ID = ["']layer_8::dialogue_runtime_profile["'][\s\S]*mergeDialogueRuntimeProfileReferenceSeed/
+  );
+});
+
 test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids are localized", () => {
   const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
   const catalogSource = readFileSync(new URL("../../api/app/registry/module_catalog.py", import.meta.url), "utf8");

@@ -32,7 +32,7 @@ import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
 import { StudioAssistantPanel } from "@/components/assistant/StudioAssistantPanel";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
-import { filterDanglingModuleGraphEdges } from "@/store/module-graph-merge";
+import { filterDanglingModuleGraphEdges, mergeCatalogReferenceDeclarations } from "@/store/module-graph-merge";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
 import { ResidentNeuralGraphPanel } from "@/components/neural-graph/ResidentNeuralGraphPanel";
@@ -1555,6 +1555,7 @@ type ReferenceInputScope = (typeof REFERENCE_INPUT_SCOPES)[number];
 const REFERENCE_INPUT_TYPES = ["references", "outputs_to", "constrains", "conflicts_with", "overrides_forbidden"] as const;
 type ReferenceInputType = (typeof REFERENCE_INPUT_TYPES)[number];
 const REFERENCE_INPUT_POINTER_KEYS = new Set([
+  "reference_id",
   "source_layer_id",
   "source_module_id",
   "source_node_id",
@@ -1649,8 +1650,10 @@ function normalizeReferenceInputItem(item: unknown): Record<string, unknown> | n
   if (!isRecord(item)) {
     return null;
   }
+  const referenceId = referenceInputString(item.reference_id);
   const sourceFieldPaths = referenceInputStringArray(item.source_field_paths);
   return {
+    ...(referenceId ? { reference_id: referenceId } : {}),
     source_layer_id: referenceInputString(item.source_layer_id),
     source_module_id: referenceInputString(item.source_module_id),
     source_node_id: referenceInputString(item.source_node_id),
@@ -2335,6 +2338,17 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
     params = normalizeReferenceOutputParams(params, compileLayerId);
   }
   if (compileNodeType === "reference_input") {
+    if (module.module_id === "dialogue_runtime_profile") {
+      const seedNode = moduleGraphNodes(module).find(
+        (node) =>
+          String(node.node_id || node.id || "") === "dialogue_runtime_profile_reference_input"
+      );
+      const seedParams = isRecord(seedNode?.params) ? seedNode.params : {};
+      params.references = mergeCatalogReferenceDeclarations(
+        params.references,
+        seedParams.references
+      ).references;
+    }
     params = normalizeReferenceInputParams(params);
   }
   params = normalizeLayer11SemanticParamsForCompile(params, module, catalogNodeId);

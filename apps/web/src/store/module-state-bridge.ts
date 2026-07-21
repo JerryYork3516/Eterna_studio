@@ -39,6 +39,8 @@ import {
 const MODULE_INSTANCE_SEPARATOR = "::";
 const LINXUAN_IDENTITY_GRAPH_ID = "layer_1::module_basic_identity";
 const LINXUAN_INTERACTION_GRAPH_ID = "layer_8::interaction_strategy";
+const DIALOGUE_RUNTIME_PROFILE_GRAPH_ID = "layer_8::dialogue_runtime_profile";
+const DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID = "dialogue_runtime_profile_reference_input";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
@@ -1955,16 +1957,58 @@ function mergeLayer12ReferenceSeed(
   return changed ? { ...graph, nodes: nextNodes, edges: nextEdges } : null;
 }
 
+function mergeDialogueRuntimeProfileReferenceSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[]
+): ModuleGraph | null {
+  if (graph.moduleNodeId !== DIALOGUE_RUNTIME_PROFILE_GRAPH_ID || !initialNodes?.length) {
+    return null;
+  }
+  const seedNode = initialNodes.find(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID
+  );
+  const currentIndex = graph.nodes.findIndex(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID
+  );
+  if (!seedNode || currentIndex < 0) {
+    return null;
+  }
+  const seedSchemaNode = schemaNodeRecord(seedNode);
+  const currentNode = cloneJson(graph.nodes[currentIndex]) as WorkflowNode;
+  const currentSchemaNode = schemaNodeRecord(currentNode);
+  if (!seedSchemaNode || !currentSchemaNode) {
+    return null;
+  }
+  const seedData = schemaDataRecord(seedSchemaNode);
+  const currentData = schemaDataRecord(currentSchemaNode);
+  const seedParams = isRecord(seedData.params) ? seedData.params : {};
+  const currentParams = isRecord(currentData.params) ? { ...currentData.params } : {};
+  const merged = mergeCatalogReferenceDeclarations(
+    currentParams.references,
+    seedParams.references
+  );
+  if (!merged.changed) {
+    return null;
+  }
+  currentData.params = { ...currentParams, references: merged.references };
+  currentData.references = cloneJson(merged.references);
+  const nodes = [...graph.nodes];
+  nodes[currentIndex] = currentNode;
+  return { ...graph, nodes };
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ): ModuleGraph | null {
-  const referenceMerged = mergeLayer12ReferenceSeed(graph, initialNodes, initialEdges);
-  const fieldMerged = mergeCatalogFieldSeed(referenceMerged ?? graph, initialNodes, initialEdges);
-  const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? referenceMerged ?? graph, initialNodes);
-  const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? referenceMerged ?? graph, initialNodes, initialEdges);
-  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged;
+  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(graph, initialNodes);
+  const referenceMerged = mergeLayer12ReferenceSeed(dialogueReferenceMerged ?? graph, initialNodes, initialEdges);
+  const graphAfterReferenceMerge = referenceMerged ?? dialogueReferenceMerged ?? graph;
+  const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
+  const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graphAfterReferenceMerge, initialNodes);
+  const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graphAfterReferenceMerge, initialNodes, initialEdges);
+  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueReferenceMerged;
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {
@@ -3048,7 +3092,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(existingGraph, initialNodes, initialEdges);
     if (mergedGraph) {
       store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
-      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
+      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID || moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
@@ -3081,7 +3125,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
-      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
+      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID || moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");
