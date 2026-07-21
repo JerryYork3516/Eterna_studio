@@ -7,7 +7,9 @@ planned placeholders are registered here only — no real logic this stage.
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Dict, List
 
 from ..models.v0_4 import (
@@ -1976,6 +1978,52 @@ SOCIAL_BEHAVIOR_NODE_IDS = {
     "validation": "social_behavior_validation",
 }
 SOCIAL_BEHAVIOR_PRESET_ID = "human_empathy_social_v0_1"
+DIALOGUE_RUNTIME_PROFILE_MODULE_ID = "dialogue_runtime_profile"
+DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config"
+DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH = Path(__file__).with_name("dialogue_runtime_profile_linxuan.json")
+DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS = (
+    "profile_id",
+    "resident_type",
+    "template_id",
+    "response_style",
+    "scenario_overrides",
+    "few_shot_examples",
+    "self_disclosure_style",
+    "prohibited_language_overrides",
+    "fallback_behavior",
+    "memory_policy_reference",
+    "relationship_policy_reference",
+    "source_trace",
+)
+DIALOGUE_RUNTIME_PROFILE_NODE_IDS = {
+    "config_input": "dialogue_runtime_profile_config_input",
+    "reference_input": "dialogue_runtime_profile_reference_input",
+    "template_binding": "dialogue_runtime_profile_template_binding",
+    "resident_override": "dialogue_runtime_profile_resident_override",
+    "scenario_config": "dialogue_runtime_profile_scenario_config",
+    "few_shot_config": "dialogue_runtime_profile_few_shot_config",
+    "authority_validation": "dialogue_runtime_profile_authority_validation",
+    "output": "dialogue_runtime_profile_output",
+    "reference_output": "dialogue_runtime_profile_reference_output",
+}
+DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER = [
+    "public_rules",
+    "type_template",
+    "resident_profile",
+    "layer_5_memory_authority",
+    "layer_11_relationship_authority",
+    "runtime_projection",
+]
+
+
+def _load_dialogue_runtime_profile_config() -> Dict[str, object]:
+    loaded = json.loads(DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError("dialogue_runtime_profile_linxuan.json must contain an object")
+    return loaded
+
+
+DIALOGUE_RUNTIME_PROFILE_CONFIG = _load_dialogue_runtime_profile_config()
 
 
 def _behavior_dr_write_keys(policy_key: str) -> List[str]:
@@ -4940,6 +4988,394 @@ def _social_behavior_module() -> ModuleV04:
         },
         mock_only=True,
         no_execution=True,
+    )
+
+
+def _dialogue_runtime_profile_module() -> ModuleV04:
+    module_id = DIALOGUE_RUNTIME_PROFILE_MODULE_ID
+    output_key = DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY
+    node_ids = DIALOGUE_RUNTIME_PROFILE_NODE_IDS
+    profile = deepcopy(DIALOGUE_RUNTIME_PROFILE_CONFIG)
+
+    def i18n_suffix(field_key: str) -> str:
+        head, *tail = field_key.split("_")
+        return head + "".join(part.title() for part in tail)
+
+    def field_type(value: object) -> str:
+        if isinstance(value, list):
+            return "list"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        return "text"
+
+    field_dr_mappings = {
+        "profile_id": f"payload.modules.{module_id}.outputs.{output_key}.profile_id",
+        "resident_type": f"payload.modules.{module_id}.outputs.{output_key}.resident_type",
+        "template_id": f"payload.modules.{module_id}.outputs.{output_key}.template_id",
+        "response_style": "payload.runtime_dialogue_projection.response_style",
+        "scenario_overrides": "payload.runtime_dialogue_projection.scenarios",
+        "few_shot_examples": "payload.runtime_dialogue_projection.few_shot_examples",
+        "self_disclosure_style": "payload.runtime_dialogue_projection.self_disclosure_policy",
+        "prohibited_language_overrides": "payload.runtime_dialogue_projection.prohibited_patterns",
+        "fallback_behavior": "payload.runtime_dialogue_projection.fallback_behavior",
+        "memory_policy_reference": "payload.runtime_dialogue_projection.memory_usage_policy",
+        "relationship_policy_reference": "payload.runtime_dialogue_projection.relationship_policy",
+        "source_trace": f"payload.modules.{module_id}.outputs.{output_key}.source_trace",
+    }
+    fields = []
+    for field_key in DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS:
+        suffix = i18n_suffix(field_key)
+        fields.append(
+            {
+                "field_key": field_key,
+                "field_name": field_key.replace("_", " ").title(),
+                "field_value": deepcopy(profile[field_key]),
+                "field_type": field_type(profile[field_key]),
+                "description": "",
+                "dr_mapping": field_dr_mappings[field_key],
+                "reference_enabled": False,
+                "required": False,
+                "edit_scope": "developer_only",
+                "update_level": "versioned_core",
+                "requires_recompile": True,
+                "i18n_keys": {
+                    "label": f"stage7_4_9.dialogueRuntime.field.{suffix}.label",
+                    "description": f"stage7_4_9.dialogueRuntime.field.{suffix}.description",
+                    "placeholder": f"stage7_4_9.dialogueRuntime.field.{suffix}.placeholder",
+                },
+            }
+        )
+
+    reference_specs = [
+        ("memory_policy_reference", "memoryPolicy"),
+        ("relationship_policy_reference", "relationshipPolicy"),
+    ]
+    references = []
+    for field_key, suffix in reference_specs:
+        source = profile[field_key]
+        if not isinstance(source, dict):
+            raise ValueError(f"dialogue runtime profile {field_key} must be an object")
+        references.append(
+            {
+                **deepcopy(source),
+                "source_scope": "module",
+                "source_field_paths": [],
+                "reference_type": "constrains",
+                "required": True,
+                "usage_key": f"stage7_4_9.dialogueRuntime.reference.{suffix}.usage",
+                "i18n_keys": {
+                    "label": f"stage7_4_9.dialogueRuntime.reference.{suffix}.label",
+                    "description": f"stage7_4_9.dialogueRuntime.reference.{suffix}.description",
+                },
+            }
+        )
+    reference_ids = [str(reference["reference_id"]) for reference in references]
+
+    export_fields = []
+    for field in fields:
+        field_key = str(field["field_key"])
+        suffix = i18n_suffix(field_key)
+        value_type = {
+            "text": "string",
+            "list": "array",
+            "object": "object",
+            "boolean": "boolean",
+            "number": "number",
+        }[str(field["field_type"])]
+        export_fields.append(
+            {
+                "field_key": field_key,
+                "field_path": f"{output_key}.{field_key}",
+                "label_key": f"stage7_4_9.dialogueRuntime.referenceOutput.field.{suffix}",
+                "description_key": f"stage7_4_9.dialogueRuntime.referenceOutput.field.{suffix}.description",
+                "value_type": value_type,
+                "required": False,
+            }
+        )
+
+    metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "mock_only": True,
+        "no_execution": True,
+        "no_slot_binding": True,
+        "no_provider_binding": True,
+        "no_engine_binding": True,
+        "no_runtime_capability": True,
+    }
+    node_specs = [
+        (
+            "config_input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "config_mode": "optional_resident_profile",
+            },
+            "configInput",
+        ),
+        (
+            "reference_input",
+            "reference_input",
+            {"references": references},
+            "referenceInput",
+        ),
+        (
+            "template_binding",
+            "text_config",
+            {
+                "input": node_ids["config_input"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": reference_ids,
+                "config_mode": "template_binding",
+                "field_keys": ["resident_type", "template_id"],
+                "merge_stage": "type_template",
+            },
+            "templateBinding",
+        ),
+        (
+            "resident_override",
+            "text_config",
+            {
+                "input": node_ids["template_binding"],
+                "config_mode": "resident_override",
+                "field_keys": [
+                    "profile_id",
+                    "response_style",
+                    "self_disclosure_style",
+                    "prohibited_language_overrides",
+                    "fallback_behavior",
+                    "source_trace",
+                ],
+                "merge_stage": "resident_profile",
+                "no_authority_override": True,
+            },
+            "residentOverride",
+        ),
+        (
+            "scenario_config",
+            "text_config",
+            {
+                "input": node_ids["resident_override"],
+                "config_mode": "scenario_config",
+                "field_keys": ["scenario_overrides"],
+                "scenario_count": len(profile["scenario_overrides"]),
+                "merge_stage": "resident_profile",
+            },
+            "scenarioConfig",
+        ),
+        (
+            "few_shot_config",
+            "text_config",
+            {
+                "input": node_ids["scenario_config"],
+                "config_mode": "few_shot_config",
+                "field_keys": ["few_shot_examples"],
+                "few_shot_count": len(profile["few_shot_examples"]),
+                "merge_stage": "resident_profile",
+            },
+            "fewShotConfig",
+        ),
+        (
+            "authority_validation",
+            "validation",
+            {
+                "input": node_ids["few_shot_config"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": reference_ids,
+                "authority_field_keys": ["memory_policy_reference", "relationship_policy_reference"],
+                "merge_order": DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER,
+                "validation_rules": [
+                    "public_rules_remain_authoritative",
+                    "type_template_precedes_resident_profile",
+                    "resident_profile_cannot_override_layer_5_memory_authority",
+                    "resident_profile_cannot_override_layer_11_relationship_authority",
+                    "runtime_projection_is_derived",
+                    "no_behavior_policy_write",
+                    "no_authority_override",
+                ],
+                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
+            },
+            "authorityValidation",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": node_ids["authority_validation"],
+                "reference_input": node_ids["reference_input"],
+                "reference_ids": reference_ids,
+                "output_key": output_key,
+                "output_schema": {
+                    "type": "object",
+                    "required": False,
+                    "fields": list(DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS),
+                },
+                "merge_order": DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER,
+                "no_authority_override": True,
+            },
+            "output",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "export_name": "",
+                "export_name_key": "stage7_4_9.dialogueRuntime.referenceOutput.exportName",
+                "export_description": "",
+                "export_description_key": "stage7_4_9.dialogueRuntime.referenceOutput.exportDescription",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": export_fields,
+                "allow_layers": [],
+                "forbidden_layers": [],
+                "authority_source_type": "derived_config",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
+    ]
+    positions = {
+        "config_input": {"x": 120, "y": 120},
+        "reference_input": {"x": 480, "y": 520},
+        "template_binding": {"x": 480, "y": 120},
+        "resident_override": {"x": 840, "y": 120},
+        "scenario_config": {"x": 1200, "y": 120},
+        "few_shot_config": {"x": 1560, "y": 120},
+        "authority_validation": {"x": 1920, "y": 120},
+        "output": {"x": 2280, "y": 120},
+        "reference_output": {"x": 2640, "y": 120},
+    }
+    nodes = [
+        {
+            "node_id": node_ids[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_8",
+            "position": positions[role],
+            "params": params,
+            "i18n_keys": {
+                "name": f"stage7_4_9.dialogueRuntime.node.{suffix}.title",
+                "description": f"stage7_4_9.dialogueRuntime.node.{suffix}.description",
+                "type_name": f"stage7_4_9.dialogueRuntime.nodeType.{node_type}",
+            },
+            "outputs": {output_key: deepcopy(profile), "module_output": output_key} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for role, node_type, params, suffix in node_specs
+    ]
+    main_chain = [
+        "config_input",
+        "template_binding",
+        "resident_override",
+        "scenario_config",
+        "few_shot_config",
+        "authority_validation",
+        "output",
+        "reference_output",
+    ]
+    side_targets = ["template_binding", "authority_validation", "output"]
+    edges = [
+        {
+            "edge_id": f"{node_ids[source]}_to_{node_ids[target]}",
+            "source": node_ids[source],
+            "source_port": "p_out",
+            "target": node_ids[target],
+            "target_port": "p_in",
+        }
+        for source, target in zip(main_chain, main_chain[1:])
+    ] + [
+        {
+            "edge_id": f"{node_ids['reference_input']}_to_{node_ids[target]}",
+            "source": node_ids["reference_input"],
+            "source_port": "p_out",
+            "target": node_ids[target],
+            "target_port": "p_in",
+        }
+        for target in side_targets
+    ]
+
+    return _module(
+        module_id,
+        "text_config",
+        "Dialogue Runtime Profile",
+        "layer_8",
+        status=ProtocolStatus.mock,
+        category="behavior",
+        is_placeholder=False,
+        color_status="amber",
+        tags=["behavior", "dialogue_runtime", "resident_profile", "optional", "stage7_4_9"],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "nodes": nodes,
+            "edges": edges,
+            "output_key": output_key,
+            "compile_time_only": True,
+        },
+        output_schema=[
+            {
+                "key": output_key,
+                "type": "object",
+                "required": False,
+                "description": "stage7_4_9.dialogueRuntime.module.output",
+            }
+        ],
+        ui_config={"shell_version": "module_shell_v1", "classification": "optional", "node_width": 340},
+        i18n_keys={
+            "display_name": "stage7_4_9.dialogueRuntime.module.title",
+            "description": "stage7_4_9.dialogueRuntime.module.description",
+            "output": "stage7_4_9.dialogueRuntime.module.output",
+            "module_type": "stage7_4_9.dialogueRuntime.module.type",
+        },
+        outputs={output_key: deepcopy(profile), "module_output": output_key},
+        config={
+            "shell_version": "module_shell_v1",
+            "module_class": "optional",
+            "optional_module": True,
+            "source_config_file": DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH.name,
+            "field_registry": [
+                {
+                    **{key: value for key, value in field.items() if key != "field_value"},
+                    "owner_node_id": node_ids["config_input"],
+                }
+                for field in fields
+            ],
+            "reference_sources": [
+                {
+                    "reference_id": reference["reference_id"],
+                    "source_layer_id": reference["source_layer_id"],
+                    "source_module_id": reference["source_module_id"],
+                    "source_node_id": reference["source_node_id"],
+                }
+                for reference in references
+            ],
+            "merge_order": DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER,
+            "no_authority_override": True,
+            "edit_scope": "developer_only",
+            "update_level": "versioned_core",
+            "requires_recompile": True,
+            "compile_time_only": True,
+            "text_config_only": True,
+            "no_runtime_capability": True,
+            "no_capability_binding": True,
+            "no_provider_binding": True,
+            "no_engine_binding": True,
+            "no_slot_binding": True,
+        },
+        mock_only=True,
+        no_execution=True,
+        dr_write_keys=[
+            "payload.runtime_dialogue_projection",
+            f"payload.modules.{module_id}.outputs.{output_key}",
+        ],
     )
 
 
@@ -11242,6 +11678,7 @@ MODULE_CATALOG: List[ModuleV04] = [
     _interaction_behavior_module(),
     _social_behavior_module(),
     _task_behavior_module(),
+    _dialogue_runtime_profile_module(),
     _module("behavior_policy_slot", "behavior_slot", "Behavior Policy Slot", "layer_8", status=ProtocolStatus.mock, slot_type=SlotType.tool, category="behavior", color_status="amber"),
 
     # L9 Capability / Tools

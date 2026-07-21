@@ -84,7 +84,7 @@ def _assert_stable_checkbox_storage(module_id: str):
 
 # Stage 7.4 replaces the old seven Layer 1 identity modules plus the former
 # identity anchor module with five blueprint-led identity core modules.
-EXPECTED_TOTAL = 142
+EXPECTED_TOTAL = 143
 IDENTITY_CORE_MODULE_IDS = {
     "module_basic_identity": "basic_identity",
     "module_growth_background": "growth_background",
@@ -3697,6 +3697,86 @@ def test_layer8_behavior_modules_declare_dr_write_keys():
             expected_write_keys.append("payload.behavior.first_interaction")
         assert catalog_map[module_id].dr_write_keys == expected_write_keys
     assert catalog_map["behavior_policy_slot"].dr_write_keys == []
+
+
+def test_layer8_dialogue_runtime_profile_reuses_optional_reference_shell():
+    modules = [module for module in get_module_catalog() if module.module_id == "dialogue_runtime_profile"]
+    assert len(modules) == 1
+    module = modules[0]
+    graph = module.module_graph
+    nodes = {node["node_id"]: node for node in graph["nodes"]}
+
+    assert module.layer_id == "layer_8"
+    assert module.module_type == "text_config"
+    assert module.config["optional_module"] is True
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.slot_type is None
+    assert module.slot_bindings == []
+    assert module.config["no_provider_binding"] is True
+    assert module.config["no_engine_binding"] is True
+    assert module.config["no_slot_binding"] is True
+    assert len(nodes) == 9
+    assert len(graph["edges"]) == 10
+    assert {node["node_type"] for node in nodes.values()} >= {
+        "text_input",
+        "text_config",
+        "validation",
+        "module_output",
+        "reference_input",
+        "reference_output",
+    }
+
+    fields = nodes["dialogue_runtime_profile_config_input"]["params"]["fields"]
+    assert [field["field_key"] for field in fields] == [
+        "profile_id",
+        "resident_type",
+        "template_id",
+        "response_style",
+        "scenario_overrides",
+        "few_shot_examples",
+        "self_disclosure_style",
+        "prohibited_language_overrides",
+        "fallback_behavior",
+        "memory_policy_reference",
+        "relationship_policy_reference",
+        "source_trace",
+    ]
+    assert all(field["required"] is False for field in fields)
+
+    references = nodes["dialogue_runtime_profile_reference_input"]["params"]["references"]
+    assert [
+        (
+            reference["source_layer_id"],
+            reference["source_module_id"],
+            reference["source_node_id"],
+            reference["source_scope"],
+            reference["reference_type"],
+            reference["required"],
+        )
+        for reference in references
+    ] == [
+        ("layer_5", "memory_access_control", "memory_access_output", "module", "constrains", True),
+        (
+            "layer_11",
+            "relationship_rule",
+            "relationship_behavior_config_output",
+            "module",
+            "constrains",
+            True,
+        ),
+    ]
+    assert nodes["dialogue_runtime_profile_reference_output"]["params"]["authority_source_type"] == "derived_config"
+    assert nodes["dialogue_runtime_profile_reference_output"]["params"]["override_allowed"] is False
+    assert module.config["merge_order"] == [
+        "public_rules",
+        "type_template",
+        "resident_profile",
+        "layer_5_memory_authority",
+        "layer_11_relationship_authority",
+        "runtime_projection",
+    ]
+    assert not any("behavior_policy.modules" in path for path in module.dr_write_keys)
 
 
 def test_screen_ui_anchor_module_catalog_and_config():

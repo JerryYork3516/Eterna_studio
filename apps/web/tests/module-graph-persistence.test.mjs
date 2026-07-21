@@ -1137,3 +1137,249 @@ test("growth governance references keep available predecessors and skip sources 
   assert.equal(reloaded.changed, false);
   assert.deepEqual(reloaded.references, result.references);
 });
+
+test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and authority references", () => {
+  const fieldKeys = [
+    "profile_id",
+    "resident_type",
+    "template_id",
+    "response_style",
+    "scenario_overrides",
+    "few_shot_examples",
+    "self_disclosure_style",
+    "prohibited_language_overrides",
+    "fallback_behavior",
+    "memory_policy_reference",
+    "relationship_policy_reference",
+    "source_trace",
+  ];
+  const seedFields = fieldKeys.map((fieldKey, index) => ({
+    field_key: fieldKey,
+    field_value: { source: "catalog", index },
+    field_type: index < 3 ? "text" : "object",
+    required: false,
+    i18n_keys: {
+      label: `stage7_4_9.dialogueRuntime.field.${fieldKey}.label`,
+    },
+  }));
+  const savedFields = fieldKeys.map((fieldKey, index) => ({
+    field_key: fieldKey,
+    field_value: { source: "saved", index, nested: { enabled: index % 2 === 0 } },
+  }));
+
+  const mergedFields = mergeCatalogFieldsPreservingValues(seedFields, savedFields);
+  assert.equal(mergedFields.length, 12);
+  for (const [index, field] of mergedFields.entries()) {
+    assert.equal(field.field_key, fieldKeys[index]);
+    assert.deepEqual(field.field_value, {
+      source: "saved",
+      index,
+      nested: { enabled: index % 2 === 0 },
+    });
+    assert.equal(field.required, false);
+  }
+  assert.deepEqual(
+    mergeCatalogFieldsPreservingValues(seedFields, JSON.parse(JSON.stringify(mergedFields))),
+    mergedFields
+  );
+
+  const seedReferences = [
+    {
+      reference_id: "dialogue_runtime_memory_policy",
+      source_layer_id: "layer_5",
+      source_module_id: "memory_access_control",
+      source_node_id: "memory_access_output",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
+    {
+      reference_id: "dialogue_runtime_relationship_policy",
+      source_layer_id: "layer_11",
+      source_module_id: "relationship_rule",
+      source_node_id: "relationship_behavior_config_output",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
+  ];
+  const savedReferences = seedReferences.map(({ reference_id: _referenceId, ...reference }) => ({
+    ...reference,
+    saved_editor_note: "keep",
+  }));
+  const mergedReferences = mergeCatalogReferenceDeclarations(savedReferences, seedReferences);
+  assert.equal(mergedReferences.changed, true);
+  assert.deepEqual(
+    mergedReferences.references.map((reference) => reference.reference_id),
+    ["dialogue_runtime_memory_policy", "dialogue_runtime_relationship_policy"]
+  );
+  assert.ok(mergedReferences.references.every((reference) => reference.source_scope === "module"));
+  assert.ok(mergedReferences.references.every((reference) => reference.required === true));
+  assert.ok(mergedReferences.references.every((reference) => reference.saved_editor_note === "keep"));
+
+  const reopenedReferences = mergeCatalogReferenceDeclarations(
+    JSON.parse(JSON.stringify(mergedReferences.references)),
+    seedReferences
+  );
+  assert.equal(reopenedReferences.changed, false);
+  assert.deepEqual(reopenedReferences.references, mergedReferences.references);
+});
+
+test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids are localized", () => {
+  const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
+  const catalogSource = readFileSync(new URL("../../api/app/registry/module_catalog.py", import.meta.url), "utf8");
+  const profile = JSON.parse(
+    readFileSync(
+      new URL("../../api/app/registry/dialogue_runtime_profile_linxuan.json", import.meta.url),
+      "utf8"
+    )
+  );
+  const en = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
+  const zh = JSON.parse(readFileSync(new URL("../locales/zh.json", import.meta.url), "utf8"));
+
+  assert.match(cardSource, /moduleId === ["']dialogue_runtime_profile["']/);
+  assert.match(cardSource, /return ["']stage7_4_9\.dialogueRuntime["']/);
+  assert.match(cardSource, /A-Za-z0-9_:-/);
+  assert.match(catalogSource, /DIALOGUE_RUNTIME_PROFILE_MODULE_ID = ["']dialogue_runtime_profile["']/);
+
+  const fieldSuffixes = [
+    "profileId",
+    "residentType",
+    "templateId",
+    "responseStyle",
+    "scenarioOverrides",
+    "fewShotExamples",
+    "selfDisclosureStyle",
+    "prohibitedLanguageOverrides",
+    "fallbackBehavior",
+    "memoryPolicyReference",
+    "relationshipPolicyReference",
+    "sourceTrace",
+  ];
+  const expectedCatalogKeys = [
+    "module.title",
+    "module.description",
+    "module.output",
+    "module.type",
+    ...[
+      "configInput",
+      "referenceInput",
+      "templateBinding",
+      "residentOverride",
+      "scenarioConfig",
+      "fewShotConfig",
+      "authorityValidation",
+      "output",
+      "referenceOutput",
+    ].flatMap((node) => [`node.${node}.title`, `node.${node}.description`]),
+    ...["text_input", "reference_input", "text_config", "validation", "module_output", "reference_output"].map(
+      (nodeType) => `nodeType.${nodeType}`
+    ),
+    ...fieldSuffixes.flatMap((field) => [
+      `field.${field}.label`,
+      `field.${field}.description`,
+      `field.${field}.placeholder`,
+    ]),
+    ...["memoryPolicy", "relationshipPolicy"].flatMap((reference) => [
+      `reference.${reference}.label`,
+      `reference.${reference}.description`,
+      `reference.${reference}.usage`,
+    ]),
+    "referenceOutput.exportName",
+    "referenceOutput.exportDescription",
+    ...fieldSuffixes.flatMap((field) => [
+      `referenceOutput.field.${field}`,
+      `referenceOutput.field.${field}.description`,
+    ]),
+  ].map((suffix) => `stage7_4_9.dialogueRuntime.${suffix}`);
+
+  const sceneIds = [
+    "ordinary_greeting",
+    "daily_small_talk",
+    "work_or_study_wrap_up",
+    "feeling_tired",
+    "quiet_company",
+    "small_joy",
+    "mild_frustration",
+    "resident_preference_or_life_tone",
+    "conversation_ending",
+    "language_switch_or_mixed_input",
+  ];
+  const exampleIds = sceneIds.flatMap((sceneId) =>
+    [1, 2, 3].map((index) => `${sceneId}_${String(index).padStart(2, "0")}`)
+  );
+  const structuredKeys = [
+    "resident_type",
+    "template_id",
+    "scene_id",
+    "example_id",
+    "usage",
+    "recommended_length",
+    "source_scope",
+    "source_layer",
+    "override_source",
+    "merge_stage",
+    "merge_order",
+    "validation_rules",
+    "validation_status",
+    "source_id",
+    "system_instruction_override",
+  ];
+  const sourceRuleRefs = new Set();
+  const collectSourceRuleRefs = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(collectSourceRuleRefs);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "source_rule_refs" && Array.isArray(item)) {
+        item.forEach((reference) => sourceRuleRefs.add(reference));
+      } else {
+        collectSourceRuleRefs(item);
+      }
+    }
+  };
+  collectSourceRuleRefs(profile);
+  const structuredValues = [
+    "linxuan_daily_companion_v0_1",
+    "humanistic_companion",
+    "humanistic_companion_v0_1",
+    "behavior_guidance_only",
+    "public_rules",
+    "type_template",
+    "resident_profile",
+    "layer_5_memory_authority",
+    "layer_11_relationship_authority",
+    "runtime_projection",
+    "public_rules_remain_authoritative",
+    "type_template_precedes_resident_profile",
+    "resident_profile_cannot_override_layer_5_memory_authority",
+    "resident_profile_cannot_override_layer_11_relationship_authority",
+    "runtime_projection_is_derived",
+    "no_behavior_policy_write",
+    "no_authority_override",
+    ...sceneIds,
+    ...exampleIds,
+    ...sourceRuleRefs,
+  ];
+
+  for (const messages of [en, zh]) {
+    for (const key of expectedCatalogKeys) {
+      assert.equal(typeof messages[key], "string", `missing locale key ${key}`);
+      assert.ok(messages[key].trim(), `empty locale key ${key}`);
+    }
+    for (const rawKey of structuredKeys) {
+      const key = `stage7_4_9.dialogueRuntime.key.${rawKey}`;
+      assert.equal(typeof messages[key], "string", `missing structured key ${key}`);
+      assert.notEqual(messages[key], rawKey);
+    }
+    for (const rawValue of structuredValues) {
+      const key = `stage7_4_9.dialogueRuntime.value.${rawValue}`;
+      assert.equal(typeof messages[key], "string", `missing structured value ${key}`);
+      assert.notEqual(messages[key], rawValue);
+    }
+  }
+});

@@ -5,9 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 
 from app.registry.module_catalog import get_module_catalog
-from app.services import dr_compiler
+from app.services import daily_companion_runtime, dr_compiler
 from app.services.dr_compiler import compile_dr_result_v0_3, mock_load_dr_v0_3
 
 
@@ -119,6 +120,39 @@ POLICY_SECTION_KEYS = {
     "ending_policy",
 }
 
+EXPECTED_PROFILE_FIELD_KEYS = {
+    "profile_id",
+    "resident_type",
+    "template_id",
+    "response_style",
+    "scenario_overrides",
+    "few_shot_examples",
+    "self_disclosure_style",
+    "prohibited_language_overrides",
+    "fallback_behavior",
+    "memory_policy_reference",
+    "relationship_policy_reference",
+    "source_trace",
+}
+
+EXPECTED_PROFILE_MERGE_ORDER = [
+    "public_rules",
+    "type_template",
+    "resident_profile",
+    "layer_5_memory_authority",
+    "layer_11_relationship_authority",
+    "runtime_projection",
+]
+
+SOURCE_METADATA_KEYS = {
+    "source_trace",
+    "source_scope",
+    "source_id",
+    "source_layer",
+    "template_id",
+    "override_source",
+}
+
 
 def _catalog_modules() -> list[dict]:
     return [module.model_dump(mode="json") for module in get_module_catalog()]
@@ -144,6 +178,66 @@ def _compile(modules: list[dict] | None = None) -> dict:
 
 def _projection(dr: dict) -> dict:
     return dr["payload"]["runtime_dialogue_projection"]
+
+
+def _catalog_module(modules: list[dict], module_id: str) -> dict:
+    return next(module for module in modules if module["module_id"] == module_id)
+
+
+def _profile_input_fields(module: dict) -> dict[str, dict]:
+    node = next(
+        node
+        for node in module["module_graph"]["nodes"]
+        if node["node_id"] == "dialogue_runtime_profile_config_input"
+    )
+    fields = node["params"]["fields"]
+    return {str(field.get("field_key") or field.get("field_id")): field for field in fields}
+
+
+def _set_profile_field(modules: list[dict], field_key: str, value: object) -> None:
+    module = _catalog_module(modules, "dialogue_runtime_profile")
+    field = _profile_input_fields(module)[field_key]
+    value_key = "field_value" if "field_value" in field else "value"
+    field[value_key] = deepcopy(value)
+
+
+def _without_source_metadata(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_source_metadata(item)
+            for key, item in value.items()
+            if key not in SOURCE_METADATA_KEYS
+        }
+    if isinstance(value, list):
+        return [_without_source_metadata(item) for item in value]
+    return value
+
+
+def _replace_text(value: object, replacements: dict[str, str]) -> object:
+    if isinstance(value, str):
+        for old, new in replacements.items():
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, dict):
+        return {key: _replace_text(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_text(item, replacements) for item in value]
+    return value
+
+
+def _assert_source_attribution(value: object) -> None:
+    assert isinstance(value, dict)
+    trace = value.get("source_trace")
+    if trace is not None:
+        traces = trace if isinstance(trace, list) else [trace]
+        assert traces
+        assert all(
+            isinstance(item, dict)
+            and (SOURCE_METADATA_KEYS - {"source_trace"}) <= set(item)
+            for item in traces
+        )
+        return
+    assert (SOURCE_METADATA_KEYS - {"source_trace"}) <= set(value)
 
 
 def _remove_option(modules: list[dict], module_id: str, option_id: str) -> None:
@@ -246,6 +340,507 @@ def _resolve_payload_path(payload: dict, path: str) -> object:
         assert isinstance(value, dict) and part in value, path
         value = value[part]
     return value
+
+
+def test_dialogue_runtime_profile_is_optional_declarative_and_runtime_unbound():
+    module = _catalog_module(_catalog_modules(), "dialogue_runtime_profile")
+    graph = module["module_graph"]
+    config = module["config"]
+
+    assert module["layer_id"] == "layer_8"
+    assert module["module_type"] == "text_config"
+    assert module["is_placeholder"] is False
+    assert module["mock_only"] is True
+    assert module["no_execution"] is True
+    assert module["runtime_enabled"] is False
+    assert module["slot_type"] is None
+    assert module["slot_bindings"] == []
+    assert module["runtime_mapping"] == {}
+    assert config["module_class"] == "optional"
+    assert config["optional_module"] is True
+    assert config["compile_time_only"] is True
+    assert config["text_config_only"] is True
+    assert config["no_runtime_capability"] is True
+    assert config["no_capability_binding"] is True
+    assert config["no_slot_binding"] is True
+    assert config["no_provider_binding"] is True
+    assert config["no_engine_binding"] is True
+    assert len(graph["nodes"]) == 9
+    assert len(graph["edges"]) == 10
+    assert all(
+        node["metadata"][key] is True
+        for node in graph["nodes"]
+        for key in (
+            "compile_time_only",
+            "mock_only",
+            "no_execution",
+            "no_slot_binding",
+            "no_provider_binding",
+            "no_engine_binding",
+            "no_runtime_capability",
+        )
+    )
+    assert all(node["metadata"]["runtime_enabled"] is False for node in graph["nodes"])
+
+
+def test_dialogue_runtime_profile_references_exact_required_authority_modules():
+    module = _catalog_module(_catalog_modules(), "dialogue_runtime_profile")
+    reference_node = next(
+        node
+        for node in module["module_graph"]["nodes"]
+        if node["node_id"] == "dialogue_runtime_profile_reference_input"
+    )
+    references = {
+        reference["reference_id"]: reference
+        for reference in reference_node["params"]["references"]
+    }
+
+    assert set(references) == {
+        "dialogue_runtime_memory_policy",
+        "dialogue_runtime_relationship_policy",
+    }
+    assert {
+        key: references["dialogue_runtime_memory_policy"][key]
+        for key in (
+            "source_layer_id",
+            "source_module_id",
+            "source_node_id",
+            "source_scope",
+            "source_field_paths",
+            "reference_type",
+            "required",
+        )
+    } == {
+        "source_layer_id": "layer_5",
+        "source_module_id": "memory_access_control",
+        "source_node_id": "memory_access_output",
+        "source_scope": "module",
+        "source_field_paths": [],
+        "reference_type": "constrains",
+        "required": True,
+    }
+    assert {
+        key: references["dialogue_runtime_relationship_policy"][key]
+        for key in (
+            "source_layer_id",
+            "source_module_id",
+            "source_node_id",
+            "source_scope",
+            "source_field_paths",
+            "reference_type",
+            "required",
+        )
+    } == {
+        "source_layer_id": "layer_11",
+        "source_module_id": "relationship_rule",
+        "source_node_id": "relationship_behavior_config_output",
+        "source_scope": "module",
+        "source_field_paths": [],
+        "reference_type": "constrains",
+        "required": True,
+    }
+
+
+def test_profile_has_twelve_fields_without_copied_authority_and_declares_merge_order():
+    module = _catalog_module(_catalog_modules(), "dialogue_runtime_profile")
+    fields = _profile_input_fields(module)
+    profile = {
+        field_key: deepcopy(field.get("field_value", field.get("value")))
+        for field_key, field in fields.items()
+    }
+    graph_nodes = {
+        node["node_id"]: node for node in module["module_graph"]["nodes"]
+    }
+
+    assert len(fields) == 12
+    assert set(fields) == EXPECTED_PROFILE_FIELD_KEYS
+    assert set(profile) == EXPECTED_PROFILE_FIELD_KEYS
+    authority_named_keys = {
+        key
+        for key in _all_keys(profile)
+        if "memory" in key or "relationship" in key
+    }
+    assert authority_named_keys == {
+        "memory_policy_reference",
+        "relationship_policy_reference",
+    }
+    assert profile["memory_policy_reference"] == {
+        "reference_id": "dialogue_runtime_memory_policy",
+        "source_layer_id": "layer_5",
+        "source_module_id": "memory_access_control",
+        "source_node_id": "memory_access_output",
+        "source_scope": "module",
+    }
+    assert profile["relationship_policy_reference"] == {
+        "reference_id": "dialogue_runtime_relationship_policy",
+        "source_layer_id": "layer_11",
+        "source_module_id": "relationship_rule",
+        "source_node_id": "relationship_behavior_config_output",
+        "source_scope": "module",
+    }
+    assert module["config"]["merge_order"] == EXPECTED_PROFILE_MERGE_ORDER
+    assert graph_nodes["dialogue_runtime_profile_authority_validation"]["params"][
+        "merge_order"
+    ] == EXPECTED_PROFILE_MERGE_ORDER
+    assert graph_nodes["dialogue_runtime_profile_output"]["params"][
+        "merge_order"
+    ] == EXPECTED_PROFILE_MERGE_ORDER
+
+
+def test_runtime_builder_source_is_resident_agnostic_and_has_no_profile_few_shots():
+    runtime_source = Path(daily_companion_runtime.__file__).read_text(encoding="utf-8")
+
+    for resident_literal in ("林瑄", "西安", "小青"):
+        assert resident_literal not in runtime_source
+    for profiled_example_id in (
+        "ordinary_greeting_01",
+        "daily_small_talk_01",
+        "resident_preference_or_life_tone_01",
+    ):
+        assert profiled_example_id not in runtime_source
+    assert "_FEW_SHOT_EXAMPLES" not in runtime_source
+
+
+def test_source_metadata_is_additive_to_the_frozen_projection_digest():
+    projection = _projection(_compile(_catalog_modules()))
+
+    assert _digest(_without_source_metadata(projection)) == (
+        "ab7c694093ff03b46fe43b2a02ee1dffd5c67c888702283a25f4404b7e8625ea"
+    )
+
+
+def test_every_runtime_section_is_source_attributed_except_system_instruction():
+    projection = _projection(_compile(_catalog_modules()))
+
+    for policy_key in POLICY_SECTION_KEYS:
+        _assert_source_attribution(projection[policy_key])
+    _assert_source_attribution(projection["context_usage_policy"])
+    for scenario in projection["scenarios"]:
+        _assert_source_attribution(scenario)
+    for example in projection["few_shot_examples"]:
+        _assert_source_attribution(example)
+    for pattern in projection["prohibited_patterns"]:
+        _assert_source_attribution(pattern)
+    _assert_source_attribution(projection["fallback_behavior"])
+
+    instruction = projection["system_instruction"]
+    assert isinstance(instruction, str)
+    assert all(metadata_key not in instruction for metadata_key in SOURCE_METADATA_KEYS)
+
+    assert projection["response_order"]["source_trace"]["source_scope"] == "public_rule"
+    assert projection["context_usage_policy"]["source_trace"]["source_id"] == (
+        "daily_companion_context_boundary_v0_1"
+    )
+    for policy_key in ("language_policy", "response_style", "self_disclosure_policy"):
+        assert projection[policy_key]["source_trace"]["source_scope"] == "resident_profile"
+        assert projection[policy_key]["source_trace"]["override_source"] == (
+            "dialogue_runtime_profile"
+        )
+    assert all(
+        scenario["source_trace"]["source_scope"] == "resident_profile"
+        for scenario in projection["scenarios"]
+    )
+    assert all(
+        example["source_scope"] == "resident_profile"
+        and example["override_source"] == "dialogue_runtime_profile"
+        for example in projection["few_shot_examples"]
+    )
+    assert projection["fallback_behavior"]["source_trace"]["source_scope"] == (
+        "resident_profile"
+    )
+    assert projection["memory_usage_policy"]["source_trace"][1]["override_source"] == (
+        "layer_5_memory_authority"
+    )
+    assert projection["memory_usage_policy"]["source_trace"][1]["source_layer"] == "layer_5"
+    assert projection["relationship_policy"]["source_trace"][1]["override_source"] == (
+        "layer_11_relationship_authority"
+    )
+    assert projection["relationship_policy"]["source_trace"][1]["source_layer"] == (
+        "layer_11"
+    )
+
+
+def test_second_resident_profile_projects_by_data_change_only():
+    modules = deepcopy(_catalog_modules())
+    module = _catalog_module(modules, "dialogue_runtime_profile")
+    fields = _profile_input_fields(module)
+    runtime_path = Path(daily_companion_runtime.__file__)
+    runtime_digest = hashlib.sha256(runtime_path.read_bytes()).hexdigest()
+    replacements = {
+        "林瑄": "苏澜",
+        "西安": "杭州",
+        "小青": "小蓝",
+        "linxuan": "sulan",
+        "Linxuan": "Sulan",
+    }
+    for field in fields.values():
+        value_key = "field_value" if "field_value" in field else "value"
+        field[value_key] = _replace_text(field[value_key], replacements)
+
+    projection = _projection(_compile(modules))
+    projection_text = json.dumps(projection, ensure_ascii=False)
+
+    assert set(projection) == EXPECTED_PROJECTION_KEYS
+    assert len(projection["scenarios"]) == 10
+    assert len(projection["few_shot_examples"]) == 30
+    assert all(
+        sum(example["scene_id"] == scene_id for example in projection["few_shot_examples"])
+        == 3
+        for scene_id in EXPECTED_SCENE_IDS
+    )
+    assert all(marker in projection_text for marker in ("苏澜", "杭州", "小蓝"))
+    assert all(marker not in projection_text for marker in ("林瑄", "西安", "小青"))
+    assert hashlib.sha256(runtime_path.read_bytes()).hexdigest() == runtime_digest
+
+
+def test_saved_profile_fields_are_the_single_source_for_module_output_and_projection():
+    modules = deepcopy(_catalog_modules())
+    profile_module = _catalog_module(modules, "dialogue_runtime_profile")
+    fallback = deepcopy(_profile_input_fields(profile_module)["fallback_behavior"]["field_value"])
+    fallback["text"] = "Temporary neutral fallback."
+    _set_profile_field(modules, "fallback_behavior", fallback)
+
+    dr = _compile(modules)
+    module = _catalog_module(dr["payload"]["modules"], "dialogue_runtime_profile")
+    output = module["outputs"]["dialogue_runtime_profile_config"]
+    output_node = next(
+        node
+        for node in module["module_graph"]["nodes"]
+        if node["node_id"] == "dialogue_runtime_profile_output"
+    )
+
+    assert output["fallback_behavior"]["text"] == "Temporary neutral fallback."
+    assert output_node["outputs"]["dialogue_runtime_profile_config"] == output
+    assert dr["payload"]["runtime_dialogue_projection"]["fallback_behavior"]["text"] == (
+        "Temporary neutral fallback."
+    )
+
+
+def test_unknown_profile_template_fails_closed_without_default_template_substitution():
+    modules = deepcopy(_catalog_modules())
+    _set_profile_field(modules, "template_id", "missing_template")
+
+    result = compile_dr_result_v0_3(_canvas(modules))
+
+    assert result["valid"] is False
+    assert {error["code"] for error in result["errors"]} >= {
+        "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+    }
+    assert "runtime_dialogue_projection" not in result["dr_payload"]
+    profile_module = _catalog_module(result["dr_payload"]["modules"], "dialogue_runtime_profile")
+    assert profile_module["outputs"]["dialogue_runtime_profile_config"]["template_id"] == (
+        "missing_template"
+    )
+
+
+def test_missing_required_authority_reference_fails_closed():
+    modules = deepcopy(_catalog_modules())
+    module = _catalog_module(modules, "dialogue_runtime_profile")
+    reference_input = next(
+        node
+        for node in module["module_graph"]["nodes"]
+        if node["node_id"] == "dialogue_runtime_profile_reference_input"
+    )
+    reference_input["params"]["references"] = []
+
+    result = compile_dr_result_v0_3(_canvas(modules))
+
+    assert result["valid"] is False
+    assert {error["code"] for error in result["errors"]} >= {
+        "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+    }
+    assert "runtime_dialogue_projection" not in result["dr_payload"]
+
+
+def test_canvas_without_optional_profile_keeps_generic_28_10_30_3_projection():
+    modules = [
+        module
+        for module in _catalog_modules()
+        if module["module_id"] != "dialogue_runtime_profile"
+    ]
+    dr = _compile(modules)
+    projection = _projection(dr)
+    examples = projection["few_shot_examples"]
+
+    assert set(projection) == EXPECTED_PROJECTION_KEYS
+    assert len(projection) == 28
+    assert len(projection["scenarios"]) == 10
+    assert {scenario["scene_id"] for scenario in projection["scenarios"]} == EXPECTED_SCENE_IDS
+    assert len(examples) == 30
+    assert all(
+        sum(example["scene_id"] == scene_id for example in examples) == 3
+        for scene_id in EXPECTED_SCENE_IDS
+    )
+    assert mock_load_dr_v0_3(dr)["loaded"] is True
+
+
+def test_legacy_canvas_catalog_fallback_does_not_inject_resident_profile():
+    dr = _compile()
+    projection = _projection(dr)
+    projection_text = json.dumps(projection, ensure_ascii=False)
+
+    assert all(
+        module["module_id"] != "dialogue_runtime_profile"
+        for module in dr["payload"]["modules"]
+    )
+    assert len(projection) == 28
+    assert len(projection["scenarios"]) == 10
+    assert len(projection["few_shot_examples"]) == 30
+    assert all(marker not in projection_text for marker in ("林瑄", "西安", "小青"))
+
+
+def test_malformed_optional_profile_fails_compile_closed():
+    modules = _catalog_modules()
+    _set_profile_field(modules, "few_shot_examples", [])
+
+    result = compile_dr_result_v0_3(_canvas(modules))
+
+    assert result["valid"] is False
+    assert {error["code"] for error in result["errors"]} >= {
+        "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+    }
+    assert "runtime_dialogue_projection" not in result["dr_payload"]
+
+
+def test_nested_profile_contract_failures_do_not_emit_projection():
+    for mutation in (
+        "empty_fallback",
+        "empty_fallback_constraints",
+        "empty_source_trace",
+        "invalid_scene_boolean",
+        "invalid_example_source_layer",
+    ):
+        modules = deepcopy(_catalog_modules())
+        module = _catalog_module(modules, "dialogue_runtime_profile")
+        fields = _profile_input_fields(module)
+        if mutation == "empty_fallback":
+            _set_profile_field(modules, "fallback_behavior", {})
+        elif mutation == "empty_fallback_constraints":
+            fallback = deepcopy(fields["fallback_behavior"]["field_value"])
+            fallback["constraints"] = []
+            _set_profile_field(modules, "fallback_behavior", fallback)
+        elif mutation == "empty_source_trace":
+            _set_profile_field(modules, "source_trace", {})
+        elif mutation == "invalid_scene_boolean":
+            scenarios = deepcopy(fields["scenario_overrides"]["field_value"])
+            scenarios[0]["follow_up_allowed"] = "yes"
+            _set_profile_field(modules, "scenario_overrides", scenarios)
+        else:
+            examples = deepcopy(fields["few_shot_examples"]["field_value"])
+            examples[0]["source_layer"] = 123
+            _set_profile_field(modules, "few_shot_examples", examples)
+
+        result = compile_dr_result_v0_3(_canvas(modules))
+
+        assert result["valid"] is False, mutation
+        assert "runtime_dialogue_projection" not in result["dr_payload"], mutation
+        assert {error["code"] for error in result["errors"]} >= {
+            "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+        }
+
+
+def test_authority_reference_fields_reject_copied_policy_content():
+    modules = deepcopy(_catalog_modules())
+    module = _catalog_module(modules, "dialogue_runtime_profile")
+    memory_reference = deepcopy(
+        _profile_input_fields(module)["memory_policy_reference"]["field_value"]
+    )
+    memory_reference["copied_policy"] = {"allow": "all"}
+    _set_profile_field(modules, "memory_policy_reference", memory_reference)
+
+    result = compile_dr_result_v0_3(_canvas(modules))
+
+    assert result["valid"] is False
+    assert "runtime_dialogue_projection" not in result["dr_payload"]
+    assert {error["code"] for error in result["errors"]} >= {
+        "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+    }
+
+
+def test_profile_structure_and_authority_targets_are_exact():
+    for mutation in ("extra_field", "duplicate_reference", "wrong_authority_node_type"):
+        modules = deepcopy(_catalog_modules())
+        module = _catalog_module(modules, "dialogue_runtime_profile")
+        if mutation == "extra_field":
+            config_input = next(
+                node
+                for node in module["module_graph"]["nodes"]
+                if node["node_id"] == "dialogue_runtime_profile_config_input"
+            )
+            config_input["params"]["fields"].append(
+                {
+                    "field_key": "unexpected_13th",
+                    "field_value": "must_not_compile",
+                    "required": False,
+                }
+            )
+        elif mutation == "duplicate_reference":
+            reference_input = next(
+                node
+                for node in module["module_graph"]["nodes"]
+                if node["node_id"] == "dialogue_runtime_profile_reference_input"
+            )
+            reference_input["params"]["references"].append(
+                deepcopy(reference_input["params"]["references"][0])
+            )
+        else:
+            memory_module = _catalog_module(modules, "memory_access_control")
+            memory_output = next(
+                node
+                for node in memory_module["module_graph"]["nodes"]
+                if node["node_id"] == "memory_access_output"
+            )
+            memory_output["node_type"] = "text_config"
+
+        result = compile_dr_result_v0_3(_canvas(modules))
+
+        assert result["valid"] is False, mutation
+        assert "runtime_dialogue_projection" not in result["dr_payload"], mutation
+        assert {error["code"] for error in result["errors"]} >= {
+            "DR_DIALOGUE_RUNTIME_PROFILE_INVALID"
+        }
+
+
+def test_optional_profile_preserves_behavior_capabilities_and_protocol_versions():
+    modules = _catalog_modules()
+    with_profile = _compile(modules)
+    without_profile = _compile(
+        [module for module in modules if module["module_id"] != "dialogue_runtime_profile"]
+    )
+
+    assert with_profile["payload"]["behavior_policy"] == without_profile["payload"][
+        "behavior_policy"
+    ]
+    assert with_profile["manifest"]["required_capabilities"] == without_profile["manifest"][
+        "required_capabilities"
+    ] == ["llm", "memory", "lattice"]
+    for version_key in (
+        "dr_version",
+        "dr_schema_version",
+        "protocol_version",
+        "schema_version",
+    ):
+        assert with_profile[version_key] == without_profile[version_key]
+
+
+def test_dialogue_runtime_profile_module_json_round_trip_compiles_and_loads():
+    modules = _catalog_modules()
+    profile_index = next(
+        index
+        for index, module in enumerate(modules)
+        if module["module_id"] == "dialogue_runtime_profile"
+    )
+    original = modules[profile_index]
+    restored = json.loads(json.dumps(original, ensure_ascii=False, sort_keys=True))
+    modules[profile_index] = restored
+
+    assert restored == original
+    dr = _compile(modules)
+    projection = _projection(dr)
+    assert len(projection) == 28
+    assert len(projection["scenarios"]) == 10
+    assert len(projection["few_shot_examples"]) == 30
+    assert mock_load_dr_v0_3(dr)["loaded"] is True
 
 
 def test_projection_has_the_fixed_optional_payload_path_and_required_shape():
@@ -912,7 +1507,7 @@ def test_old_snapshot_supporting_sources_resolve_after_compatibility_merge():
 def test_fallback_is_neutral_and_does_not_fake_understanding_or_persona():
     fallback = _projection(_compile(_catalog_modules()))["fallback_behavior"]
 
-    assert fallback == {
+    assert _without_source_metadata(fallback) == {
         "trigger": "upstream_text_generation_unavailable",
         "locale": "zh-CN",
         "text": "抱歉，我现在暂时无法生成回应。请稍后再试。",
@@ -923,6 +1518,7 @@ def test_fallback_is_neutral_and_does_not_fake_understanding_or_persona():
             "no_request_details",
         ],
     }
+    _assert_source_attribution(fallback)
     assert "林瑄" not in json.dumps(fallback, ensure_ascii=False)
 
 

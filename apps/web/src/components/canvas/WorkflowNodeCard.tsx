@@ -356,8 +356,13 @@ function stage748ConfigPrefix(moduleId?: string) {
   return "";
 }
 
+function stage749ConfigPrefix(moduleId?: string) {
+  if (moduleId === "dialogue_runtime_profile") return "stage7_4_9.dialogueRuntime";
+  return "";
+}
+
 function usesLocalizedStructuredIds(moduleId?: string) {
-  return isLayer11Module(moduleId) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId));
+  return isLayer11Module(moduleId) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId)) || Boolean(stage749ConfigPrefix(moduleId));
 }
 
 function localizedCoreKey(language: Language, key: string, moduleId?: string) {
@@ -372,6 +377,11 @@ function localizedCoreKey(language: Language, key: string, moduleId?: string) {
   const stage748Prefix = stage748ConfigPrefix(moduleId);
   if (stage748Prefix) {
     const localized = translateIfPresent(language, `${stage748Prefix}.key.${key}`);
+    if (localized) return localized;
+  }
+  const stage749Prefix = stage749ConfigPrefix(moduleId);
+  if (stage749Prefix) {
+    const localized = translateIfPresent(language, `${stage749Prefix}.key.${key}`);
     if (localized) return localized;
   }
   return (
@@ -394,6 +404,11 @@ function localizedCoreValue(language: Language, value: string, moduleId?: string
   const stage748Prefix = stage748ConfigPrefix(moduleId);
   if (stage748Prefix) {
     const localized = translateIfPresent(language, `${stage748Prefix}.value.${value}`);
+    if (localized) return localized;
+  }
+  const stage749Prefix = stage749ConfigPrefix(moduleId);
+  if (stage749Prefix) {
+    const localized = translateIfPresent(language, `${stage749Prefix}.value.${value}`);
     if (localized) return localized;
   }
   const normalized = stableI18nKeyPart(value);
@@ -1401,7 +1416,10 @@ function StructuredValueEditor({
       </select>
     );
   }
-  if (text && usesLocalizedStructuredIds(moduleId) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(text)) {
+  const localizedStructuredId =
+    /^[A-Za-z][A-Za-z0-9_-]*$/.test(text) ||
+    (moduleId === "dialogue_runtime_profile" && /^[A-Za-z][A-Za-z0-9_:-]*$/.test(text));
+  if (text && usesLocalizedStructuredIds(moduleId) && localizedStructuredId) {
     return (
       <div className="layer11-id-editor" title={text}>
         <span>{localizedCoreValue(language, text, moduleId)}</span>

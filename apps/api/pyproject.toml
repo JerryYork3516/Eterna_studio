@@ -30,3 +30,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["app", "app.models", "app.registry", "app.routers", "app.services", "app.schemas", "app.dr", "app.dr.v2", "app.dr.v2.validator"]
+
+[tool.setuptools.package-data]
+"app.registry" = ["dialogue_runtime_profile_linxuan.json"]

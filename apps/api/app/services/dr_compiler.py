@@ -27,7 +27,11 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-from .daily_companion_runtime import build_runtime_dialogue_projection
+from .daily_companion_runtime import (
+    build_runtime_dialogue_projection,
+    extract_dialogue_runtime_profile,
+    validate_dialogue_runtime_profile,
+)
 
 from ..dr.v3.dr_v0_3_schema import (
     DRDocumentV03,
@@ -94,6 +98,9 @@ from ..registry.module_catalog import (
     DECISION_BEHAVIOR_PRESET_ID,
     DETAIL_BEHAVIOR_MODULE_ID,
     DETAIL_BEHAVIOR_PRESET_ID,
+    DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS,
+    DIALOGUE_RUNTIME_PROFILE_MODULE_ID,
+    DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY,
     EVENT_MEMORY_MODULE_ID,
     EVENT_MEMORY_OUTPUT_KEY,
     MEMORY_ACCESS_CONTROL_MODULE_ID,
@@ -2564,6 +2571,34 @@ def _synchronize_first_presence_module_output(
         )
 
 
+def _synchronize_dialogue_runtime_profile_module_output(
+    collection: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Mirror the saved optional profile fields before deriving the projection."""
+
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict)
+            and candidate.get("module_id") == DIALOGUE_RUNTIME_PROFILE_MODULE_ID
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return None
+    profile = extract_dialogue_runtime_profile(module, collection.get("modules"))
+    if not isinstance(profile, dict):
+        return None
+    output = {
+        field_key: deepcopy(profile[field_key])
+        for field_key in DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS
+        if field_key in profile
+    }
+    _set_compiled_module_output(module, DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY, output)
+    return profile
+
+
 def _memory_router_node_params(module: Dict[str, Any], role: str) -> Dict[str, Any]:
     node_id = MEMORY_PROVIDER_ROUTER_NODE_IDS.get(role, "")
     node = _module_node_by_id(module, node_id) if node_id else None
@@ -3639,6 +3674,11 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
         modules = [_as_dict(m) for m in raw_modules]
     else:
         modules = [m.model_dump(mode="json") for m in get_module_catalog()]
+        modules = [
+            module
+            for module in modules
+            if _as_dict(module.get("config")).get("optional_module") is not True
+        ]
     modules = [module for module in modules if not _is_catalog_only_module(module)]
     modules = _normalize_reference_inputs(modules)
     compatibility_findings: List[Dict[str, str]] = []
@@ -4797,6 +4837,18 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _synchronize_layer8_validation_results(collection, findings)
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
+    dialogue_runtime_profile = _synchronize_dialogue_runtime_profile_module_output(collection)
+    if dialogue_runtime_profile is not None and not validate_dialogue_runtime_profile(
+        dialogue_runtime_profile
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_DIALOGUE_RUNTIME_PROFILE_INVALID",
+                "dialogue_runtime_profile must use a known type template, valid resident overrides, and both required authority references",
+                "payload.modules.dialogue_runtime_profile",
+            )
+        )
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
     checked_at = _now_iso()
     compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
@@ -4894,7 +4946,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         if present
     ]
     runtime_dialogue_projection = build_runtime_dialogue_projection(
-        _as_dict(payload.get("behavior_policy")), supporting_source_paths
+        _as_dict(payload.get("behavior_policy")),
+        supporting_source_paths,
+        dialogue_runtime_profile,
     )
     if runtime_dialogue_projection is not None:
         payload["runtime_dialogue_projection"] = runtime_dialogue_projection
