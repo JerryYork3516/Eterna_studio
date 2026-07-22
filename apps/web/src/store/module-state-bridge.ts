@@ -23,6 +23,7 @@ import {
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
   mergeAvailableModuleReferencePointers,
+  migrateDialogueRuntimeProfileContentCopies,
   LINXUAN_RESIDENT_ID,
   migrateLinxuanFirstGreetingValue,
   migrateLinxuanFirstInteractionEnabledValue,
@@ -40,7 +41,10 @@ const MODULE_INSTANCE_SEPARATOR = "::";
 const LINXUAN_IDENTITY_GRAPH_ID = "layer_1::module_basic_identity";
 const LINXUAN_INTERACTION_GRAPH_ID = "layer_8::interaction_strategy";
 const DIALOGUE_RUNTIME_PROFILE_GRAPH_ID = "layer_8::dialogue_runtime_profile";
+const DIALOGUE_RUNTIME_PROFILE_CONFIG_INPUT_ID = "dialogue_runtime_profile_config_input";
 const DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID = "dialogue_runtime_profile_reference_input";
+const DIALOGUE_RUNTIME_PROFILE_OUTPUT_ID = "dialogue_runtime_profile_output";
+const DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
@@ -1997,18 +2001,115 @@ function mergeDialogueRuntimeProfileReferenceSeed(
   return { ...graph, nodes };
 }
 
+function migrateDialogueRuntimeProfileContentSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[]
+): ModuleGraph | null {
+  if (graph.moduleNodeId !== DIALOGUE_RUNTIME_PROFILE_GRAPH_ID || !initialNodes?.length) {
+    return null;
+  }
+  const seedInput = initialNodes.find(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_CONFIG_INPUT_ID
+  );
+  const seedOutput = initialNodes.find(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_OUTPUT_ID
+  );
+  const inputIndex = graph.nodes.findIndex(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_CONFIG_INPUT_ID
+  );
+  const outputIndex = graph.nodes.findIndex(
+    (node) => catalogNodeIdFromGraphNode(node) === DIALOGUE_RUNTIME_PROFILE_OUTPUT_ID
+  );
+  if (!seedInput || !seedOutput || inputIndex < 0 || outputIndex < 0) {
+    return null;
+  }
+
+  const seedInputSchema = schemaNodeRecord(seedInput);
+  const seedOutputSchema = schemaNodeRecord(seedOutput);
+  const currentInput = cloneJson(graph.nodes[inputIndex]) as WorkflowNode;
+  const currentOutput = cloneJson(graph.nodes[outputIndex]) as WorkflowNode;
+  const currentInputSchema = schemaNodeRecord(currentInput);
+  const currentOutputSchema = schemaNodeRecord(currentOutput);
+  if (!seedInputSchema || !seedOutputSchema || !currentInputSchema || !currentOutputSchema) {
+    return null;
+  }
+
+  const seedInputData = schemaDataRecord(seedInputSchema);
+  const seedOutputData = schemaDataRecord(seedOutputSchema);
+  const inputData = schemaDataRecord(currentInputSchema);
+  const outputData = schemaDataRecord(currentOutputSchema);
+  const seedParams = isRecord(seedInputData.params) ? seedInputData.params : {};
+  const params = isRecord(inputData.params) ? { ...inputData.params } : {};
+  const seedOutputs = isRecord(seedOutputData.outputs) ? seedOutputData.outputs : {};
+  const outputs = isRecord(outputData.outputs) ? { ...outputData.outputs } : {};
+  const seedProfileOutput = isRecord(seedOutputs[DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY])
+    ? seedOutputs[DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY]
+    : {};
+  const currentProfileOutput = isRecord(outputs[DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY])
+    ? outputs[DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY]
+    : cloneJson(seedProfileOutput);
+  const migration = migrateDialogueRuntimeProfileContentCopies(
+    {
+      profileContentRevision: params.profile_content_revision,
+      fields: Array.isArray(params.fields) ? params.fields.filter(isRecord) : undefined,
+      dataFields: Array.isArray(inputData.fields) ? inputData.fields.filter(isRecord) : undefined,
+      legacyFields: Array.isArray(params.legacy_fields)
+        ? params.legacy_fields.filter(isRecord)
+        : undefined,
+      legacyDataFields: Array.isArray(params.legacy_data_fields)
+        ? params.legacy_data_fields.filter(isRecord)
+        : undefined,
+      output: currentProfileOutput,
+    },
+    {
+      profileContentRevision: seedParams.profile_content_revision,
+      fields: Array.isArray(seedParams.fields) ? seedParams.fields.filter(isRecord) : undefined,
+      output: seedProfileOutput,
+    }
+  );
+  if (!migration.migrated) {
+    return null;
+  }
+
+  params.profile_content_revision = migration.value.profileContentRevision;
+  if (migration.value.fields) params.fields = cloneJson(migration.value.fields);
+  if (migration.value.legacyFields) {
+    params.legacy_fields = cloneJson(migration.value.legacyFields);
+  }
+  if (migration.value.legacyDataFields) {
+    params.legacy_data_fields = cloneJson(migration.value.legacyDataFields);
+  }
+  inputData.params = params;
+  if (migration.value.dataFields) {
+    inputData.fields = cloneJson(migration.value.dataFields);
+  }
+  outputData.outputs = {
+    ...outputs,
+    [DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY]: cloneJson(migration.value.output),
+  };
+  const nodes = [...graph.nodes];
+  nodes[inputIndex] = currentInput;
+  nodes[outputIndex] = currentOutput;
+  return { ...graph, nodes };
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ): ModuleGraph | null {
   const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(graph, initialNodes);
-  const referenceMerged = mergeLayer12ReferenceSeed(dialogueReferenceMerged ?? graph, initialNodes, initialEdges);
-  const graphAfterReferenceMerge = referenceMerged ?? dialogueReferenceMerged ?? graph;
+  const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
+    dialogueReferenceMerged ?? graph,
+    initialNodes
+  );
+  const graphAfterDialogueMerge = dialogueContentMigrated ?? dialogueReferenceMerged ?? graph;
+  const referenceMerged = mergeLayer12ReferenceSeed(graphAfterDialogueMerge, initialNodes, initialEdges);
+  const graphAfterReferenceMerge = referenceMerged ?? graphAfterDialogueMerge;
   const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
   const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graphAfterReferenceMerge, initialNodes);
   const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graphAfterReferenceMerge, initialNodes, initialEdges);
-  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueReferenceMerged;
+  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueContentMigrated ?? dialogueReferenceMerged;
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {

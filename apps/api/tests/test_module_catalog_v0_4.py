@@ -3741,6 +3741,7 @@ def test_layer8_dialogue_runtime_profile_reuses_optional_reference_shell():
         "memory_policy_reference",
         "relationship_policy_reference",
         "source_trace",
+        "emotional_dialogue",
     ]
     assert all(field["required"] is False for field in fields)
 
@@ -3756,6 +3757,9 @@ def test_layer8_dialogue_runtime_profile_reuses_optional_reference_shell():
         )
         for reference in references
     ] == [
+        ("layer_2", "personality_traits", "personality_traits_output_summary", "module", "constrains", True),
+        ("layer_2", "emotion_pattern", "emotion_pattern_output_summary", "module", "constrains", True),
+        ("layer_3", "humanistic_risk_response_config_v0_1", "risk_response_output", "module", "constrains", True),
         ("layer_5", "memory_access_control", "memory_access_output", "module", "constrains", True),
         (
             "layer_11",
@@ -3765,6 +3769,7 @@ def test_layer8_dialogue_runtime_profile_reuses_optional_reference_shell():
             "constrains",
             True,
         ),
+        ("layer_12", "self_awareness", "self_awareness_output", "module", "constrains", True),
     ]
     assert nodes["dialogue_runtime_profile_reference_output"]["params"]["authority_source_type"] == "derived_config"
     assert nodes["dialogue_runtime_profile_reference_output"]["params"]["override_allowed"] is False
@@ -3772,8 +3777,11 @@ def test_layer8_dialogue_runtime_profile_reuses_optional_reference_shell():
         "public_rules",
         "type_template",
         "resident_profile",
+        "layer_2_personality_emotion_authority",
+        "layer_3_high_risk_safety_authority",
         "layer_5_memory_authority",
         "layer_11_relationship_authority",
+        "layer_12_professional_limits_authority",
         "runtime_projection",
     ]
     assert not any("behavior_policy.modules" in path for path in module.dr_write_keys)

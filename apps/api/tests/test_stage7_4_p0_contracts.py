@@ -158,9 +158,9 @@ def test_required_reference_resolves_local_node_and_field_path():
     checked = message.split("checked=", 1)[1].split(",", 1)[0]
     resolved = message.split("resolved=", 1)[1]
     # The fixture's required reference, Layer 10's seven static first-presence
-    # references, and the optional dialogue profile's two authority references
+    # references, and the optional dialogue profile's six authority references
     # must all resolve.
-    assert "required=10" in message
+    assert "required=14" in message
     assert checked == resolved
 
 

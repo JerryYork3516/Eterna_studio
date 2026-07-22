@@ -4,10 +4,16 @@ import test from "node:test";
 
 import {
   firstInteractionEnabledValue,
+  DIALOGUE_RUNTIME_PROFILE_ID,
+  DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+  LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
   LINXUAN_RESIDENT_ID,
   mergeCatalogReferenceDeclarations,
   mergeChecklistTemplateDefaults,
   mergeCatalogFieldsPreservingValues,
+  migrateDialogueRuntimeProfileId,
+  migrateDialogueRuntimeProfileContentCopies,
+  normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
   migrateLinxuanFirstGreetingValue,
   normalizeCatalogNodeId,
@@ -1152,6 +1158,7 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
     "memory_policy_reference",
     "relationship_policy_reference",
     "source_trace",
+    "emotional_dialogue",
   ];
   const seedFields = fieldKeys.map((fieldKey, index) => ({
     field_key: fieldKey,
@@ -1168,7 +1175,7 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
   }));
 
   const mergedFields = mergeCatalogFieldsPreservingValues(seedFields, savedFields);
-  assert.equal(mergedFields.length, 12);
+  assert.equal(mergedFields.length, 13);
   for (const [index, field] of mergedFields.entries()) {
     assert.equal(field.field_key, fieldKeys[index]);
     assert.deepEqual(field.field_value, {
@@ -1184,6 +1191,36 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
   );
 
   const seedReferences = [
+    {
+      reference_id: "dialogue_runtime_personality_traits",
+      source_layer_id: "layer_2",
+      source_module_id: "personality_traits",
+      source_node_id: "personality_traits_output_summary",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
+    {
+      reference_id: "dialogue_runtime_emotion_pattern",
+      source_layer_id: "layer_2",
+      source_module_id: "emotion_pattern",
+      source_node_id: "emotion_pattern_output_summary",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
+    {
+      reference_id: "dialogue_runtime_high_risk_safety",
+      source_layer_id: "layer_3",
+      source_module_id: "humanistic_risk_response_config_v0_1",
+      source_node_id: "risk_response_output",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
     {
       reference_id: "dialogue_runtime_memory_policy",
       source_layer_id: "layer_5",
@@ -1204,6 +1241,16 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
       reference_type: "constrains",
       required: true,
     },
+    {
+      reference_id: "dialogue_runtime_professional_limits",
+      source_layer_id: "layer_12",
+      source_module_id: "self_awareness",
+      source_node_id: "self_awareness_output",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "constrains",
+      required: true,
+    },
   ];
   const savedReferences = seedReferences.map(({ reference_id: _referenceId, ...reference }) => ({
     ...reference,
@@ -1213,7 +1260,14 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
   assert.equal(mergedReferences.changed, true);
   assert.deepEqual(
     mergedReferences.references.map((reference) => reference.reference_id),
-    ["dialogue_runtime_memory_policy", "dialogue_runtime_relationship_policy"]
+    [
+      "dialogue_runtime_personality_traits",
+      "dialogue_runtime_emotion_pattern",
+      "dialogue_runtime_high_risk_safety",
+      "dialogue_runtime_memory_policy",
+      "dialogue_runtime_relationship_policy",
+      "dialogue_runtime_professional_limits",
+    ]
   );
   assert.ok(mergedReferences.references.every((reference) => reference.source_scope === "module"));
   assert.ok(mergedReferences.references.every((reference) => reference.required === true));
@@ -1225,6 +1279,279 @@ test("Stage 7.4.9 dialogue runtime profile preserves all catalog fields and auth
   );
   assert.equal(reopenedReferences.changed, false);
   assert.deepEqual(reopenedReferences.references, mergedReferences.references);
+});
+
+test("Stage 7.4.10 legacy emotional examples are separated before persistence and compile", () => {
+  const sourceMetadata = {
+    source_scope: "resident_profile",
+    source_id: "dialogue_profile_resident_0001_v0_1",
+    source_layer: "layer_8",
+    template_id: "humanistic_companion_v0_1",
+    override_source: "dialogue_runtime_profile",
+  };
+  const recommended = Array.from({ length: 20 }, (_, index) => ({
+    example_id: `recommended_${index + 1}`,
+    scene_id: `scene_${Math.floor(index / 2) + 1}`,
+    status: "recommended",
+    turns: [{ role: "user", text: `用户 ${index + 1}` }, { role: "assistant", text: `回应 ${index + 1}` }],
+    usage: "behavior_guidance_only",
+    not_fixed_response: true,
+    not_keyword_matching: true,
+  }));
+  const prohibited = Array.from({ length: 10 }, (_, index) => ({
+    example_id: `prohibited_${index + 1}`,
+    scene_id: `scene_${index + 1}`,
+    status: "prohibited",
+    turns: [{ role: "user", text: `用户 ${index + 1}` }, { role: "assistant", text: `错误回应 ${index + 1}` }],
+    why_forbidden: `原因 ${index + 1}`,
+    preferred_response: `正确回应 ${index + 1}`,
+    usage: "behavior_guidance_only",
+    not_fixed_response: true,
+    not_keyword_matching: true,
+  }));
+  const seedValue = {
+    few_shot_selection: {
+      usage: "behavior_guidance_only",
+      selection_mode: "semantic_relevance",
+      generation_allowed_statuses: ["recommended"],
+      prohibited_examples_usage: "evaluation_only",
+      inject_negative_examples: false,
+      use_preferred_response_for_generation: true,
+    },
+    few_shot_examples: recommended.map((example) => ({ ...example, ...sourceMetadata })),
+    negative_examples: prohibited.map((example) => ({
+      ...example,
+      usage: "evaluation_only",
+      generation_allowed: false,
+      ...sourceMetadata,
+    })),
+  };
+  const legacyValue = {
+    enabled: true,
+    few_shot_selection: {
+      usage: "behavior_guidance_only",
+      selection_mode: "semantic_relevance",
+    },
+    few_shot_examples: [...recommended, ...prohibited],
+  };
+
+  const normalized = normalizeEmotionalDialogueExampleIsolation(legacyValue, seedValue);
+  assert.equal(normalized.few_shot_examples.length, 20);
+  assert.ok(normalized.few_shot_examples.every((example) => example.status === "recommended"));
+  assert.equal(normalized.negative_examples.length, 10);
+  assert.ok(normalized.negative_examples.every((example) => example.status === "prohibited"));
+  assert.ok(normalized.negative_examples.every((example) => example.usage === "evaluation_only"));
+  assert.ok(normalized.negative_examples.every((example) => example.generation_allowed === false));
+  assert.deepEqual(normalized.few_shot_selection.generation_allowed_statuses, ["recommended"]);
+  assert.equal(normalized.few_shot_selection.prohibited_examples_usage, "evaluation_only");
+  assert.equal(normalized.few_shot_selection.inject_negative_examples, false);
+  assert.equal(normalized.few_shot_selection.use_preferred_response_for_generation, true);
+  assert.equal(normalized.enabled, true);
+  assert.ok(
+    [...normalized.few_shot_examples, ...normalized.negative_examples].every((example) =>
+      Object.entries(sourceMetadata).every(([key, expected]) => example[key] === expected)
+    )
+  );
+
+  const merged = mergeCatalogFieldsPreservingValues(
+    [{ field_key: "emotional_dialogue", field_value: seedValue, required: false }],
+    [{ field_key: "emotional_dialogue", field_value: legacyValue }]
+  );
+  assert.deepEqual(merged[0].field_value, normalized);
+  assert.deepEqual(
+    normalizeEmotionalDialogueExampleIsolation(normalized, seedValue),
+    normalized
+  );
+
+  const alreadySeparatedWithoutSource = {
+    ...legacyValue,
+    few_shot_examples: recommended,
+    negative_examples: seedValue.negative_examples.map(({ source_scope, source_id, source_layer, template_id, override_source, ...example }) => example),
+  };
+  const sourceRepaired = normalizeEmotionalDialogueExampleIsolation(
+    alreadySeparatedWithoutSource,
+    seedValue
+  );
+  assert.equal(sourceRepaired.few_shot_examples.length, 20);
+  assert.equal(sourceRepaired.negative_examples.length, 10);
+  assert.ok(
+    [...sourceRepaired.few_shot_examples, ...sourceRepaired.negative_examples].every((example) =>
+      Object.entries(sourceMetadata).every(([key, expected]) => example[key] === expected)
+    )
+  );
+});
+
+test("Stage 7.4.10 migrates only the legacy dialogue profile id across saved fields", () => {
+  const seedFields = [
+    { field_key: "profile_id", field_value: DIALOGUE_RUNTIME_PROFILE_ID },
+    {
+      field_key: "scenario_overrides",
+      field_value: [{ source_id: DIALOGUE_RUNTIME_PROFILE_ID }],
+    },
+    {
+      field_key: "emotional_dialogue",
+      field_value: {
+        source_trace: { source_id: DIALOGUE_RUNTIME_PROFILE_ID },
+        few_shot_examples: [],
+        negative_examples: [],
+      },
+    },
+  ];
+  const savedFields = [
+    { field_key: "profile_id", field_value: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID },
+    {
+      field_key: "scenario_overrides",
+      field_value: [{ source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID, text: "preserved" }],
+    },
+    {
+      field_key: "emotional_dialogue",
+      field_value: {
+        source_trace: { source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID },
+        few_shot_examples: [],
+        negative_examples: [],
+      },
+    },
+  ];
+
+  const merged = mergeCatalogFieldsPreservingValues(seedFields, savedFields);
+  assert.equal(merged[0].field_value, DIALOGUE_RUNTIME_PROFILE_ID);
+  assert.equal(merged[1].field_value[0].source_id, DIALOGUE_RUNTIME_PROFILE_ID);
+  assert.equal(merged[1].field_value[0].text, "preserved");
+  assert.equal(
+    merged[2].field_value.source_trace.source_id,
+    DIALOGUE_RUNTIME_PROFILE_ID
+  );
+  assert.equal(migrateDialogueRuntimeProfileId("resident_b_companion_v0_1"), "resident_b_companion_v0_1");
+});
+
+test("Stage 7.4.10 migrates stale dialogue Few-shots across Canvas compatibility copies once", () => {
+  const profile = JSON.parse(
+    readFileSync(
+      new URL("../../api/app/registry/dialogue_runtime_profile_resident_0001.json", import.meta.url),
+      "utf8"
+    )
+  );
+  const seedExamples = profile.few_shot_examples;
+  const staleExamples = JSON.parse(JSON.stringify(seedExamples));
+  staleExamples[0].turns.at(-1).text =
+    "你好，我叫林瑄，是一位以西安为生活语境的数字居民。";
+  staleExamples[22].turns.at(-1).text =
+    "不是。我可以和你认真聊日常，但不会把我们的关系默认成恋爱。叫我林瑄就好。";
+  staleExamples[5].saved_editor_note = "preserve unrelated customization";
+  const fields = [
+    { field_key: "response_style", field_value: { saved: true } },
+    { field_key: "few_shot_examples", field_value: staleExamples },
+    { field_key: "custom_field", field_value: { nested: ["keep"] } },
+  ];
+  const stored = {
+    fields: JSON.parse(JSON.stringify(fields)),
+    dataFields: JSON.parse(JSON.stringify(fields)),
+    legacyFields: JSON.parse(JSON.stringify(fields)),
+    legacyDataFields: JSON.parse(JSON.stringify(fields)),
+    output: {
+      profile_id: DIALOGUE_RUNTIME_PROFILE_ID,
+      few_shot_examples: JSON.parse(JSON.stringify(staleExamples)),
+      custom_output: { keep: true },
+    },
+  };
+  const seed = {
+    profileContentRevision: DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+    fields: [{ field_key: "few_shot_examples", field_value: seedExamples }],
+    output: { few_shot_examples: seedExamples },
+  };
+
+  const migrated = migrateDialogueRuntimeProfileContentCopies(stored, seed);
+  assert.equal(migrated.migrated, true);
+  assert.equal(migrated.value.profileContentRevision, DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION);
+  for (const copy of [
+    migrated.value.fields,
+    migrated.value.dataFields,
+    migrated.value.legacyFields,
+    migrated.value.legacyDataFields,
+  ]) {
+    const examples = copy.find((field) => field.field_key === "few_shot_examples").field_value;
+    assert.deepEqual(examples[0], seedExamples[0]);
+    assert.deepEqual(examples[22], seedExamples[22]);
+    assert.equal(examples[5].saved_editor_note, "preserve unrelated customization");
+    assert.doesNotMatch(JSON.stringify(examples), /林瑄/);
+    assert.deepEqual(copy.find((field) => field.field_key === "response_style").field_value, {
+      saved: true,
+    });
+    assert.deepEqual(copy.find((field) => field.field_key === "custom_field").field_value, {
+      nested: ["keep"],
+    });
+  }
+  assert.deepEqual(migrated.value.output.few_shot_examples[0], seedExamples[0]);
+  assert.deepEqual(migrated.value.output.few_shot_examples[22], seedExamples[22]);
+  assert.deepEqual(migrated.value.output.custom_output, { keep: true });
+
+  const reopened = migrateDialogueRuntimeProfileContentCopies(migrated.value, seed);
+  assert.equal(reopened.migrated, false);
+  assert.deepEqual(reopened.value, migrated.value);
+
+  const savedCanvas = serializeCanvasState({
+    moduleGraphs: {
+      "layer_8::dialogue_runtime_profile": {
+        moduleId: "layer_8::dialogue_runtime_profile",
+        nodes: [
+          {
+            id: "dialogue_runtime_profile_config_input",
+            data: {
+              schemaNode: {
+                node_id: "dialogue_runtime_profile_config_input",
+                data: {
+                  catalog_module_id: "dialogue_runtime_profile",
+                  catalog_node_id: "dialogue_runtime_profile_config_input",
+                  params: {
+                    profile_content_revision: migrated.value.profileContentRevision,
+                    fields: migrated.value.fields,
+                    legacy_fields: migrated.value.legacyFields,
+                    legacy_data_fields: migrated.value.legacyDataFields,
+                  },
+                  fields: migrated.value.dataFields,
+                },
+              },
+            },
+          },
+          {
+            id: "dialogue_runtime_profile_output",
+            data: {
+              schemaNode: {
+                node_id: "dialogue_runtime_profile_output",
+                data: {
+                  catalog_module_id: "dialogue_runtime_profile",
+                  catalog_node_id: "dialogue_runtime_profile_output",
+                  params: {},
+                  outputs: { dialogue_runtime_profile_config: migrated.value.output },
+                },
+              },
+            },
+          },
+        ],
+        edges: [],
+      },
+    },
+  });
+  const imported = importCanvasState(JSON.stringify(savedCanvas));
+  assert.equal(imported.success, true);
+  const reopenedNodes = imported.state.moduleGraphs["layer_8::dialogue_runtime_profile"].nodes;
+  const reopenedInput = reopenedNodes[0].data.schemaNode.data;
+  const reopenedOutput = reopenedNodes[1].data.schemaNode.data.outputs.dialogue_runtime_profile_config;
+  assert.equal(
+    reopenedInput.params.profile_content_revision,
+    DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION
+  );
+  assert.deepEqual(reopenedInput.params.fields, migrated.value.fields);
+  assert.deepEqual(reopenedInput.fields, migrated.value.dataFields);
+  assert.deepEqual(reopenedInput.params.legacy_fields, migrated.value.legacyFields);
+  assert.deepEqual(reopenedInput.params.legacy_data_fields, migrated.value.legacyDataFields);
+  assert.deepEqual(reopenedOutput, migrated.value.output);
+  assert.doesNotMatch(JSON.stringify(reopenedNodes), /林瑄/);
+
+  const newCanvas = { ...stored, profileContentRevision: DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION };
+  const untouched = migrateDialogueRuntimeProfileContentCopies(newCanvas, seed);
+  assert.equal(untouched.migrated, false);
+  assert.equal(untouched.value, newCanvas);
 });
 
 test("compile-time reference normalization preserves stable declaration ids", () => {
@@ -1252,7 +1579,7 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
   const catalogSource = readFileSync(new URL("../../api/app/registry/module_catalog.py", import.meta.url), "utf8");
   const profile = JSON.parse(
     readFileSync(
-      new URL("../../api/app/registry/dialogue_runtime_profile_linxuan.json", import.meta.url),
+      new URL("../../api/app/registry/dialogue_runtime_profile_resident_0001.json", import.meta.url),
       "utf8"
     )
   );
@@ -1277,6 +1604,7 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
     "memoryPolicyReference",
     "relationshipPolicyReference",
     "sourceTrace",
+    "emotionalDialogue",
   ];
   const expectedCatalogKeys = [
     "module.title",
@@ -1302,7 +1630,7 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
       `field.${field}.description`,
       `field.${field}.placeholder`,
     ]),
-    ...["memoryPolicy", "relationshipPolicy"].flatMap((reference) => [
+    ...["personalityTraits", "emotionPattern", "highRiskSafety", "memoryPolicy", "relationshipPolicy", "professionalLimits"].flatMap((reference) => [
       `reference.${reference}.label`,
       `reference.${reference}.description`,
       `reference.${reference}.usage`,
@@ -1364,15 +1692,18 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
   };
   collectSourceRuleRefs(profile);
   const structuredValues = [
-    "linxuan_daily_companion_v0_1",
+    "dialogue_profile_resident_0001_v0_1",
     "humanistic_companion",
     "humanistic_companion_v0_1",
     "behavior_guidance_only",
     "public_rules",
     "type_template",
     "resident_profile",
+    "layer_2_personality_emotion_authority",
+    "layer_3_high_risk_safety_authority",
     "layer_5_memory_authority",
     "layer_11_relationship_authority",
+    "layer_12_professional_limits_authority",
     "runtime_projection",
     "public_rules_remain_authoritative",
     "type_template_precedes_resident_profile",

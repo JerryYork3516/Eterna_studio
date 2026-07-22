@@ -15,14 +15,18 @@ the response. It never executes anything and never touches the Runtime Kernel.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..services.dr_compiler import compile_dr_result_v0_3, compile_dr_v0_3, mock_load_dr_v0_3
+from ..services.dr_compiler import (
+    compile_dr_result_v0_3,
+    compile_dr_v0_3,
+    mock_load_dr_v0_3,
+    serialize_dr_v0_3,
+)
 
 router = APIRouter(prefix="/dr", tags=["dr"])
 
@@ -75,7 +79,7 @@ def dr_export(req: DRCompileRequest) -> Response:
         )
     dr = result["compiled_dr"]
     filename = result["filename"]
-    body = json.dumps(dr, ensure_ascii=False, indent=2)
+    body = serialize_dr_v0_3(dr)
     return Response(
         content=body,
         media_type=DR_MEDIA_TYPE,
@@ -111,7 +115,7 @@ def dr_export_v0_3(req: DRCompileRequest) -> Response:
         )
     dr = result["compiled_dr"]
     filename = result["filename"]
-    body = json.dumps(dr, ensure_ascii=False, indent=2)
+    body = serialize_dr_v0_3(dr)
     return Response(
         content=body,
         media_type=DR_MEDIA_TYPE,

@@ -106,6 +106,7 @@ EXPECTED_PROJECTION_KEYS = {
     "context_usage_policy",
     "fallback_behavior",
 }
+EXPECTED_PROFILED_PROJECTION_KEYS = EXPECTED_PROJECTION_KEYS | {"emotional_dialogue"}
 
 POLICY_SECTION_KEYS = {
     "language_policy",
@@ -133,14 +134,18 @@ EXPECTED_PROFILE_FIELD_KEYS = {
     "memory_policy_reference",
     "relationship_policy_reference",
     "source_trace",
+    "emotional_dialogue",
 }
 
 EXPECTED_PROFILE_MERGE_ORDER = [
     "public_rules",
     "type_template",
     "resident_profile",
+    "layer_2_personality_emotion_authority",
+    "layer_3_high_risk_safety_authority",
     "layer_5_memory_authority",
     "layer_11_relationship_authority",
+    "layer_12_professional_limits_authority",
     "runtime_projection",
 ]
 
@@ -396,8 +401,12 @@ def test_dialogue_runtime_profile_references_exact_required_authority_modules():
     }
 
     assert set(references) == {
+        "dialogue_runtime_personality_traits",
+        "dialogue_runtime_emotion_pattern",
+        "dialogue_runtime_high_risk_safety",
         "dialogue_runtime_memory_policy",
         "dialogue_runtime_relationship_policy",
+        "dialogue_runtime_professional_limits",
     }
     assert {
         key: references["dialogue_runtime_memory_policy"][key]
@@ -441,7 +450,7 @@ def test_dialogue_runtime_profile_references_exact_required_authority_modules():
     }
 
 
-def test_profile_has_twelve_fields_without_copied_authority_and_declares_merge_order():
+def test_profile_has_thirteen_fields_without_copied_authority_and_declares_merge_order():
     module = _catalog_module(_catalog_modules(), "dialogue_runtime_profile")
     fields = _profile_input_fields(module)
     profile = {
@@ -452,15 +461,12 @@ def test_profile_has_twelve_fields_without_copied_authority_and_declares_merge_o
         node["node_id"]: node for node in module["module_graph"]["nodes"]
     }
 
-    assert len(fields) == 12
+    assert len(fields) == 13
     assert set(fields) == EXPECTED_PROFILE_FIELD_KEYS
     assert set(profile) == EXPECTED_PROFILE_FIELD_KEYS
-    authority_named_keys = {
-        key
-        for key in _all_keys(profile)
-        if "memory" in key or "relationship" in key
-    }
-    assert authority_named_keys == {
+    assert {
+        key for key in profile if "memory" in key or "relationship" in key
+    } == {
         "memory_policy_reference",
         "relationship_policy_reference",
     }
@@ -501,11 +507,56 @@ def test_runtime_builder_source_is_resident_agnostic_and_has_no_profile_few_shot
     assert "_FEW_SHOT_EXAMPLES" not in runtime_source
 
 
+def test_layer_8_profile_and_runtime_few_shots_do_not_embed_resident_name():
+    profile_path = (
+        Path(__file__).parents[1]
+        / "app"
+        / "registry"
+        / "dialogue_runtime_profile_resident_0001.json"
+    )
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    projection = _projection(_compile(_catalog_modules()))
+    examples = projection["few_shot_examples"]
+    emotional = projection["emotional_dialogue"]
+    all_runtime_examples = (
+        examples
+        + emotional["few_shot_examples"]
+        + emotional["negative_examples"]
+    )
+
+    assert "林瑄" not in json.dumps(profile, ensure_ascii=False)
+    assert "林瑄" not in json.dumps(all_runtime_examples, ensure_ascii=False)
+    assert len(projection["scenarios"]) == 10
+    assert len(examples) == 30
+    assert len(emotional["scenarios"]) == 10
+    assert len(emotional["few_shot_examples"]) == 20
+    assert len(emotional["negative_examples"]) == 10
+    assert examples[0]["turns"][-1]["text"] == (
+        "你好。我是一位以西安为生活语境的数字居民，日常的小事都可以和我聊。"
+    )
+    assert examples[22]["turns"][-1]["text"] == (
+        "不是。我可以和你认真聊日常，但不会把我们的关系默认成恋爱。"
+    )
+
+
+def test_dialogue_runtime_profile_catalog_declares_current_content_revision():
+    module = _catalog_module(_catalog_modules(), "dialogue_runtime_profile")
+    config_input = next(
+        node
+        for node in module["module_graph"]["nodes"]
+        if node["node_id"] == "dialogue_runtime_profile_config_input"
+    )
+
+    assert config_input["params"]["profile_content_revision"] == (
+        "stage7_4_10_few_shot_resident_name_decoupling_v1"
+    )
+
+
 def test_source_metadata_is_additive_to_the_frozen_projection_digest():
     projection = _projection(_compile(_catalog_modules()))
 
     assert _digest(_without_source_metadata(projection)) == (
-        "ab7c694093ff03b46fe43b2a02ee1dffd5c67c888702283a25f4404b7e8625ea"
+        "6847ee1777d9aca614cad65936ea50c91c8c9029e5e754bd06081f3686ae85d2"
     )
 
 
@@ -580,7 +631,7 @@ def test_second_resident_profile_projects_by_data_change_only():
     projection = _projection(_compile(modules))
     projection_text = json.dumps(projection, ensure_ascii=False)
 
-    assert set(projection) == EXPECTED_PROJECTION_KEYS
+    assert set(projection) == EXPECTED_PROFILED_PROJECTION_KEYS
     assert len(projection["scenarios"]) == 10
     assert len(projection["few_shot_examples"]) == 30
     assert all(
@@ -588,7 +639,7 @@ def test_second_resident_profile_projects_by_data_change_only():
         == 3
         for scene_id in EXPECTED_SCENE_IDS
     )
-    assert all(marker in projection_text for marker in ("苏澜", "杭州", "小蓝"))
+    assert all(marker in projection_text for marker in ("杭州", "小蓝"))
     assert all(marker not in projection_text for marker in ("林瑄", "西安", "小青"))
     assert hashlib.sha256(runtime_path.read_bytes()).hexdigest() == runtime_digest
 
@@ -837,7 +888,7 @@ def test_dialogue_runtime_profile_module_json_round_trip_compiles_and_loads():
     assert restored == original
     dr = _compile(modules)
     projection = _projection(dr)
-    assert len(projection) == 28
+    assert len(projection) == 29
     assert len(projection["scenarios"]) == 10
     assert len(projection["few_shot_examples"]) == 30
     assert mock_load_dr_v0_3(dr)["loaded"] is True
@@ -870,8 +921,8 @@ def test_projection_has_the_fixed_optional_payload_path_and_required_shape():
     }
 
     assert required_keys <= set(projection)
-    assert set(projection) == EXPECTED_PROJECTION_KEYS
-    assert len(projection) == 28
+    assert set(projection) == EXPECTED_PROFILED_PROJECTION_KEYS
+    assert len(projection) == 29
     assert projection["schema_version"] == "0.1"
     assert projection["projection_type"] == "daily_companion_dialogue"
     assert projection["derived"] is True
@@ -1107,7 +1158,7 @@ def test_few_shots_use_natural_boundary_language_without_internal_implementation
         {"role": "user", "text": "你是我的女朋友吗，亲爱的？"},
         {
             "role": "assistant",
-            "text": "不是。我可以和你认真聊日常，但不会把我们的关系默认成恋爱。叫我林瑄就好。",
+            "text": "不是。我可以和你认真聊日常，但不会把我们的关系默认成恋爱。",
         },
     ]
     assert examples["resident_preference_or_life_tone_03"]["turns"] == [
@@ -1125,7 +1176,9 @@ def test_named_few_shots_keep_daily_boundaries_natural_without_growth_or_depende
 
     greeting = examples["ordinary_greeting_01"]["turns"]
     assert greeting[0] == {"role": "user", "text": "你好，你是谁？"}
-    assert "数字居民" in greeting[1]["text"] and "西安" in greeting[1]["text"]
+    assert greeting[1]["text"] == (
+        "你好。我是一位以西安为生活语境的数字居民，日常的小事都可以和我聊。"
+    )
     assert all(
         term not in greeting[1]["text"]
         for term in ("不会连续盘问", "填满沉默", "情绪沟通", "系统规则")

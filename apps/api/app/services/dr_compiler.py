@@ -285,6 +285,7 @@ _LAYER8_BEHAVIOR_MODULES: tuple[tuple[str, str, str], ...] = (
     (DETAIL_BEHAVIOR_MODULE_ID, "detail_behavior", DETAIL_BEHAVIOR_PRESET_ID),
 )
 _LAYER8_CORE_BEHAVIOR_MODULE_IDS = tuple(module_id for module_id, _policy_key, _preset_id in _LAYER8_BEHAVIOR_MODULES)
+_LAYER8_OPTIONAL_DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_runtime_profile"
 _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
 _REFERENCE_FIELD_ALIASES = {
     ("professional_boundary", "no_professional_judgement_replacement"): (
@@ -2092,11 +2093,20 @@ def _synchronize_layer8_validation_results(
             valid_count += 1
 
     if valid_count == len(_LAYER8_BEHAVIOR_MODULES):
+        optional_profile_present = _LAYER8_OPTIONAL_DIALOGUE_RUNTIME_PROFILE_ID in modules
+        selected_module_count = valid_count + int(optional_profile_present)
+        optional_profile_detail = (
+            ", and the optional dialogue runtime profile is validated by its dedicated contract"
+            if optional_profile_present
+            else ""
+        )
         findings.append(
             _finding(
                 "PASS",
                 "DR_LAYER8_VALIDATION_FINALIZED",
-                "all six Layer 8 behavior modules selected their required compile-time validation rules",
+                f"Layer 8 includes {selected_module_count} selected behavior modules: all "
+                f"{valid_count} core behavior modules selected their required compile-time "
+                f"validation rules{optional_profile_detail}",
                 "payload.modules.layer_8",
             )
         )
@@ -4627,6 +4637,12 @@ def _v03_file_size_findings(measured_bytes: int) -> List[Dict[str, str]]:
     ]
 
 
+def serialize_dr_v0_3(dr: Dict[str, Any]) -> bytes:
+    """Serialize the exact UTF-8 bytes used by the v0.3 export response."""
+
+    return json.dumps(dr, ensure_ascii=False, indent=2).encode("utf-8")
+
+
 def _attach_v03_audit_report(
     dr: Dict[str, Any],
     findings: List[Dict[str, str]],
@@ -4634,15 +4650,16 @@ def _attach_v03_audit_report(
     named_check_findings: Dict[str, List[Dict[str, str]]],
 ) -> None:
     measured_bytes = 0
-    for _ in range(8):
+    for _ in range(32):
         named_check_findings["file_size_check"] = _v03_file_size_findings(measured_bytes)
         audit_report = _build_v03_audit_report(findings, checked_at, named_check_findings)
         dr["audit_report"] = audit_report
         dr["audit"] = deepcopy(audit_report)
-        next_size = len(json.dumps(dr, ensure_ascii=False, indent=2).encode("utf-8"))
+        next_size = len(serialize_dr_v0_3(dr))
         if next_size == measured_bytes:
             return
         measured_bytes = next_size
+    raise RuntimeError("DR v0.3 audit file size did not converge to final serialized bytes")
 
 
 def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:

@@ -1980,7 +1980,12 @@ SOCIAL_BEHAVIOR_NODE_IDS = {
 SOCIAL_BEHAVIOR_PRESET_ID = "human_empathy_social_v0_1"
 DIALOGUE_RUNTIME_PROFILE_MODULE_ID = "dialogue_runtime_profile"
 DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config"
-DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH = Path(__file__).with_name("dialogue_runtime_profile_linxuan.json")
+DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION = (
+    "stage7_4_10_few_shot_resident_name_decoupling_v1"
+)
+DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH = Path(__file__).with_name(
+    "dialogue_runtime_profile_resident_0001.json"
+)
 DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS = (
     "profile_id",
     "resident_type",
@@ -1994,6 +1999,7 @@ DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS = (
     "memory_policy_reference",
     "relationship_policy_reference",
     "source_trace",
+    "emotional_dialogue",
 )
 DIALOGUE_RUNTIME_PROFILE_NODE_IDS = {
     "config_input": "dialogue_runtime_profile_config_input",
@@ -2010,8 +2016,11 @@ DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER = [
     "public_rules",
     "type_template",
     "resident_profile",
+    "layer_2_personality_emotion_authority",
+    "layer_3_high_risk_safety_authority",
     "layer_5_memory_authority",
     "layer_11_relationship_authority",
+    "layer_12_professional_limits_authority",
     "runtime_projection",
 ]
 
@@ -2019,7 +2028,7 @@ DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER = [
 def _load_dialogue_runtime_profile_config() -> Dict[str, object]:
     loaded = json.loads(DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise ValueError("dialogue_runtime_profile_linxuan.json must contain an object")
+        raise ValueError("dialogue_runtime_profile_resident_0001.json must contain an object")
     return loaded
 
 
@@ -5025,6 +5034,7 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
         "memory_policy_reference": "payload.runtime_dialogue_projection.memory_usage_policy",
         "relationship_policy_reference": "payload.runtime_dialogue_projection.relationship_policy",
         "source_trace": f"payload.modules.{module_id}.outputs.{output_key}.source_trace",
+        "emotional_dialogue": "payload.runtime_dialogue_projection.emotional_dialogue",
     }
     fields = []
     for field_key in DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS:
@@ -5050,15 +5060,36 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
             }
         )
 
+    emotional_dialogue = profile.get("emotional_dialogue")
+    emotional_references = (
+        emotional_dialogue.get("authority_references")
+        if isinstance(emotional_dialogue, dict)
+        else None
+    )
     reference_specs = [
         ("memory_policy_reference", "memoryPolicy"),
         ("relationship_policy_reference", "relationshipPolicy"),
     ]
     references = []
-    for field_key, suffix in reference_specs:
-        source = profile[field_key]
+    reference_sources = (
+        emotional_references
+        if isinstance(emotional_references, list) and emotional_references
+        else [profile[field_key] for field_key, _ in reference_specs]
+    )
+    suffix_by_reference_id = {
+        "dialogue_runtime_personality_traits": "personalityTraits",
+        "dialogue_runtime_emotion_pattern": "emotionPattern",
+        "dialogue_runtime_high_risk_safety": "highRiskSafety",
+        "dialogue_runtime_memory_policy": "memoryPolicy",
+        "dialogue_runtime_relationship_policy": "relationshipPolicy",
+        "dialogue_runtime_professional_limits": "professionalLimits",
+    }
+    for source in reference_sources:
         if not isinstance(source, dict):
-            raise ValueError(f"dialogue runtime profile {field_key} must be an object")
+            raise ValueError("dialogue runtime profile authority reference must be an object")
+        suffix = suffix_by_reference_id.get(str(source.get("reference_id")))
+        if suffix is None:
+            raise ValueError("dialogue runtime profile authority reference_id is unknown")
         references.append(
             {
                 **deepcopy(source),
@@ -5116,6 +5147,7 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
                 "text": "",
                 "fields": fields,
                 "config_mode": "optional_resident_profile",
+                "profile_content_revision": DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
             },
             "configInput",
         ),
@@ -5163,8 +5195,11 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
             {
                 "input": node_ids["resident_override"],
                 "config_mode": "scenario_config",
-                "field_keys": ["scenario_overrides"],
+                "field_keys": ["scenario_overrides", "emotional_dialogue"],
                 "scenario_count": len(profile["scenario_overrides"]),
+                "emotional_scenario_count": len(emotional_dialogue.get("scenarios", []))
+                if isinstance(emotional_dialogue, dict)
+                else 0,
                 "merge_stage": "resident_profile",
             },
             "scenarioConfig",
@@ -5188,13 +5223,20 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
                 "input": node_ids["few_shot_config"],
                 "reference_input": node_ids["reference_input"],
                 "reference_ids": reference_ids,
-                "authority_field_keys": ["memory_policy_reference", "relationship_policy_reference"],
+                "authority_field_keys": [
+                    "emotional_dialogue.authority_references",
+                    "memory_policy_reference",
+                    "relationship_policy_reference",
+                ],
                 "merge_order": DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER,
                 "validation_rules": [
                     "public_rules_remain_authoritative",
                     "type_template_precedes_resident_profile",
+                    "resident_profile_cannot_override_layer_2_personality_emotion_authority",
+                    "high_risk_uses_layer_3_safety_authority",
                     "resident_profile_cannot_override_layer_5_memory_authority",
                     "resident_profile_cannot_override_layer_11_relationship_authority",
+                    "resident_profile_cannot_override_layer_12_professional_limits_authority",
                     "runtime_projection_is_derived",
                     "no_behavior_policy_write",
                     "no_authority_override",
@@ -5312,7 +5354,7 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="amber",
-        tags=["behavior", "dialogue_runtime", "resident_profile", "optional", "stage7_4_9"],
+        tags=["behavior", "dialogue_runtime", "resident_profile", "optional", "stage7_4_9", "stage7_4_10"],
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,

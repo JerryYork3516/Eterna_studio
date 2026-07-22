@@ -711,6 +711,45 @@ _PROFILE_FIELD_TYPES: Dict[str, type] = {
     "source_trace": dict,
 }
 
+_OPTIONAL_PROFILE_FIELD_TYPES: Dict[str, type] = {
+    "emotional_dialogue": dict,
+}
+
+_EMOTIONAL_SCENE_IDS = (
+    "invalidation_and_grievance",
+    "loneliness",
+    "anxiety_and_uncertainty",
+    "interpersonal_conflict",
+    "loss",
+    "anger",
+    "self_doubt",
+    "pronounced_low_mood",
+    "dependency_testing",
+    "high_risk_safety_signal",
+)
+
+_PERSONALITY_AUTHORITY = {
+    "reference_id": "dialogue_runtime_personality_traits",
+    "source_layer_id": "layer_2",
+    "source_module_id": "personality_traits",
+    "source_node_id": "personality_traits_output_summary",
+    "source_scope": "module",
+}
+_EMOTION_AUTHORITY = {
+    "reference_id": "dialogue_runtime_emotion_pattern",
+    "source_layer_id": "layer_2",
+    "source_module_id": "emotion_pattern",
+    "source_node_id": "emotion_pattern_output_summary",
+    "source_scope": "module",
+}
+_HIGH_RISK_AUTHORITY = {
+    "reference_id": "dialogue_runtime_high_risk_safety",
+    "source_layer_id": "layer_3",
+    "source_module_id": "humanistic_risk_response_config_v0_1",
+    "source_node_id": "risk_response_output",
+    "source_scope": "module",
+}
+
 _MEMORY_AUTHORITY = {
     "reference_id": "dialogue_runtime_memory_policy",
     "source_layer_id": "layer_5",
@@ -725,9 +764,28 @@ _RELATIONSHIP_AUTHORITY = {
     "source_node_id": "relationship_behavior_config_output",
     "source_scope": "module",
 }
+_PROFESSIONAL_LIMITS_AUTHORITY = {
+    "reference_id": "dialogue_runtime_professional_limits",
+    "source_layer_id": "layer_12",
+    "source_module_id": "self_awareness",
+    "source_node_id": "self_awareness_output",
+    "source_scope": "module",
+}
+_ALL_DIALOGUE_AUTHORITIES = (
+    _PERSONALITY_AUTHORITY,
+    _EMOTION_AUTHORITY,
+    _HIGH_RISK_AUTHORITY,
+    _MEMORY_AUTHORITY,
+    _RELATIONSHIP_AUTHORITY,
+    _PROFESSIONAL_LIMITS_AUTHORITY,
+)
 _AUTHORITY_OUTPUT_KEYS = {
+    "personality_traits": "personality_traits",
+    "emotion_pattern": "emotion_pattern",
+    "humanistic_risk_response_config_v0_1": "risk_policy",
     "memory_access_control": "memory_access_policy_result",
     "relationship_rule": "relationship_behavior_config",
+    "self_awareness": "self_awareness_config",
 }
 
 
@@ -744,11 +802,35 @@ def _authority_references_valid(module: Dict[str, Any], available_modules: Any) 
     ]
     if len(reference_nodes) != 1:
         return False
+    config_input = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and node.get("node_id") == "dialogue_runtime_profile_config_input"
+        ),
+        None,
+    )
+    config_params = config_input.get("params") if isinstance(config_input, dict) else None
+    config_fields = config_params.get("fields") if isinstance(config_params, dict) else None
+    has_emotional_dialogue = any(
+        isinstance(field, dict)
+        and (field.get("field_id") or field.get("field_key")) == "emotional_dialogue"
+        and isinstance(
+            field.get("value") if "value" in field else field.get("field_value"), dict
+        )
+        for field in (config_fields if isinstance(config_fields, list) else [])
+    )
+    expected = (
+        _ALL_DIALOGUE_AUTHORITIES
+        if has_emotional_dialogue
+        else (_MEMORY_AUTHORITY, _RELATIONSHIP_AUTHORITY)
+    )
     params = reference_nodes[0].get("params")
     references = params.get("references") if isinstance(params, dict) else None
     if (
         not isinstance(references, list)
-        or len(references) != 2
+        or len(references) != len(expected)
         or any(not isinstance(reference, dict) for reference in references)
     ):
         return False
@@ -757,7 +839,6 @@ def _authority_references_valid(module: Dict[str, Any], available_modules: Any) 
         for reference in references
         if isinstance(reference, dict) and isinstance(reference.get("reference_id"), str)
     }
-    expected = (_MEMORY_AUTHORITY, _RELATIONSHIP_AUTHORITY)
     if set(references_by_id) != {item["reference_id"] for item in expected}:
         return False
     for authority in expected:
@@ -837,7 +918,7 @@ def extract_dialogue_runtime_profile(
             if not isinstance(field, dict):
                 continue
             field_id = field.get("field_id") or field.get("field_key")
-            if field_id not in _PROFILE_FIELD_TYPES:
+            if field_id not in {**_PROFILE_FIELD_TYPES, **_OPTIONAL_PROFILE_FIELD_TYPES}:
                 continue
             field_ids.append(str(field_id))
             fields[str(field_id)] = deepcopy(
@@ -845,9 +926,10 @@ def extract_dialogue_runtime_profile(
             )
     fields["_config_input_valid"] = (
         len(config_inputs) == 1
-        and len(raw_fields) == len(_PROFILE_FIELD_TYPES)
-        and len(field_ids) == len(_PROFILE_FIELD_TYPES)
-        and set(field_ids) == set(_PROFILE_FIELD_TYPES)
+        and len(raw_fields) == len(field_ids)
+        and set(_PROFILE_FIELD_TYPES).issubset(field_ids)
+        and set(field_ids).issubset({**_PROFILE_FIELD_TYPES, **_OPTIONAL_PROFILE_FIELD_TYPES})
+        and len(field_ids) == len(set(field_ids))
     )
     fields["_authority_references_valid"] = _authority_references_valid(
         module, available_modules
@@ -869,10 +951,272 @@ def _resident_trace_matches(value: Any, profile_id: str, template_id: str) -> bo
     }
 
 
+def _resident_source_fields_match(value: Any, profile_id: str, template_id: str) -> bool:
+    return isinstance(value, dict) and all(
+        value.get(key) == expected
+        for key, expected in {
+            "source_scope": "resident_profile",
+            "source_id": profile_id,
+            "source_layer": "layer_8",
+            "template_id": template_id,
+            "override_source": "dialogue_runtime_profile",
+        }.items()
+    )
+
+
 def _nonempty_string_list(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and all(
         isinstance(item, str) and bool(item.strip()) for item in value
     )
+
+
+def _select_emotional_generation_examples(value: Any) -> Optional[list[Dict[str, Any]]]:
+    """Return only explicitly recommended generation examples, or fail closed."""
+
+    if not isinstance(value, dict):
+        return None
+    examples = value.get("few_shot_examples")
+    if not isinstance(examples, list) or len(examples) != 20:
+        return None
+    selected: list[Dict[str, Any]] = []
+    for example in examples:
+        if not isinstance(example, dict) or example.get("status") != "recommended":
+            return None
+        selected.append(deepcopy(example))
+    return selected
+
+
+def _valid_emotional_dialogue(value: Any, profile_id: str, template_id: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    required_keys = {
+        "schema_version",
+        "domain_type",
+        "enabled",
+        "usage",
+        "not_fixed_response",
+        "not_keyword_matching",
+        "system_instruction_addendum",
+        "response_sequence",
+        "policies",
+        "authority_references",
+        "scenarios",
+        "few_shot_selection",
+        "few_shot_examples",
+        "negative_examples",
+        "prohibited_patterns",
+        "source_trace",
+    }
+    if not required_keys.issubset(value):
+        return False
+    if any(
+        value.get(key) != expected
+        for key, expected in {
+            "schema_version": "0.1",
+            "domain_type": "emotional_dialogue",
+            "enabled": True,
+            "usage": "behavior_guidance_only",
+            "not_fixed_response": True,
+            "not_keyword_matching": True,
+        }.items()
+    ):
+        return False
+    if not isinstance(value.get("system_instruction_addendum"), str) or not value[
+        "system_instruction_addendum"
+    ].strip():
+        return False
+    if not _resident_trace_matches(value.get("source_trace"), profile_id, template_id):
+        return False
+
+    sequence = value.get("response_sequence")
+    expected_sequence = [
+        "respond_to_concrete_event",
+        "brief_emotional_acknowledgement",
+        "determine_listening_or_advice",
+        "at_most_one_light_follow_up",
+        "short_advice_when_requested",
+        "immediate_real_world_safety_support_for_high_risk",
+    ]
+    if not isinstance(sequence, list) or [item.get("step_id") for item in sequence if isinstance(item, dict)] != expected_sequence:
+        return False
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("instruction"), str)
+        or not item["instruction"].strip()
+        for item in sequence
+    ):
+        return False
+
+    policies = value.get("policies")
+    if not isinstance(policies, dict) or set(policies) != {
+        "acknowledgement",
+        "listening_or_advice",
+        "follow_up",
+        "advice",
+        "risk_escalation",
+    }:
+        return False
+    if any(not isinstance(item, dict) or not item for item in policies.values()):
+        return False
+    risk_policy = policies["risk_escalation"]
+    if risk_policy.get("bypass_advice_confirmation") is not True:
+        return False
+    if risk_policy.get("priority") != "immediate_real_world_safety_support":
+        return False
+
+    references = value.get("authority_references")
+    if not isinstance(references, list) or references != list(_ALL_DIALOGUE_AUTHORITIES):
+        return False
+
+    scenarios = value.get("scenarios")
+    required_scene_keys = {
+        "scene_id",
+        "intent",
+        "response_strategy",
+        "follow_up_allowed",
+        "advice_allowed",
+        "recommended_length",
+        "prohibited_behaviors",
+        "linked_policy_ids",
+        "authority_reference_ids",
+        "risk_level",
+    }
+    if not isinstance(scenarios, list) or len(scenarios) != len(_EMOTIONAL_SCENE_IDS):
+        return False
+    if [scene.get("scene_id") for scene in scenarios if isinstance(scene, dict)] != list(_EMOTIONAL_SCENE_IDS):
+        return False
+    authority_ids = {item["reference_id"] for item in _ALL_DIALOGUE_AUTHORITIES}
+    for scene in scenarios:
+        if not isinstance(scene, dict) or not required_scene_keys.issubset(scene):
+            return False
+        if any(
+            not isinstance(scene.get(key), str) or not scene[key].strip()
+            for key in ("scene_id", "intent", "response_strategy", "recommended_length", "risk_level")
+        ):
+            return False
+        if not isinstance(scene.get("follow_up_allowed"), bool) or not isinstance(scene.get("advice_allowed"), bool):
+            return False
+        if any(not _nonempty_string_list(scene.get(key)) for key in ("prohibited_behaviors", "linked_policy_ids", "authority_reference_ids")):
+            return False
+        if not set(scene["authority_reference_ids"]).issubset(authority_ids):
+            return False
+    high_risk = scenarios[-1]
+    if high_risk["scene_id"] != "high_risk_safety_signal" or _HIGH_RISK_AUTHORITY["reference_id"] not in high_risk["authority_reference_ids"]:
+        return False
+
+    selection = value.get("few_shot_selection")
+    if not isinstance(selection, dict) or any(
+        selection.get(key) != expected
+        for key, expected in {
+            "usage": "behavior_guidance_only",
+            "not_fixed_response": True,
+            "not_keyword_matching": True,
+            "selection_mode": "semantic_relevance",
+            "generation_allowed_statuses": ["recommended"],
+            "prohibited_examples_usage": "evaluation_only",
+            "inject_negative_examples": False,
+            "use_preferred_response_for_generation": True,
+        }.items()
+    ):
+        return False
+    examples = _select_emotional_generation_examples(value)
+    if examples is None:
+        return False
+    counts = {scene_id: 0 for scene_id in _EMOTIONAL_SCENE_IDS}
+    example_ids: set[str] = set()
+    for example in examples:
+        if not isinstance(example, dict):
+            return False
+        example_id = example.get("example_id")
+        scene_id = example.get("scene_id")
+        status = example.get("status")
+        turns = example.get("turns")
+        if not isinstance(example_id, str) or not example_id or example_id in example_ids:
+            return False
+        if scene_id not in counts or status != "recommended":
+            return False
+        if not isinstance(turns, list) or not 2 <= len(turns) <= 4:
+            return False
+        if any(
+            not isinstance(turn, dict)
+            or turn.get("role") not in {"user", "assistant"}
+            or not isinstance(turn.get("text"), str)
+            or not turn["text"].strip()
+            for turn in turns
+        ):
+            return False
+        if any(
+            example.get(key) != expected
+            for key, expected in {
+                "usage": "behavior_guidance_only",
+                "not_fixed_response": True,
+                "not_keyword_matching": True,
+            }.items()
+        ):
+            return False
+        if not _resident_source_fields_match(example, profile_id, template_id):
+            return False
+        counts[str(scene_id)] += 1
+        example_ids.add(example_id)
+    if not all(count == 2 for count in counts.values()):
+        return False
+
+    negative_examples = value.get("negative_examples")
+    if not isinstance(negative_examples, list) or len(negative_examples) != 10:
+        return False
+    negative_counts = {scene_id: 0 for scene_id in _EMOTIONAL_SCENE_IDS}
+    negative_ids: set[str] = set()
+    for example in negative_examples:
+        if not isinstance(example, dict):
+            return False
+        example_id = example.get("example_id")
+        scene_id = example.get("scene_id")
+        turns = example.get("turns")
+        if (
+            not isinstance(example_id, str)
+            or not example_id
+            or example_id in example_ids
+            or example_id in negative_ids
+            or scene_id not in negative_counts
+            or example.get("status") != "prohibited"
+            or example.get("usage") != "evaluation_only"
+            or example.get("generation_allowed") is not False
+        ):
+            return False
+        if not isinstance(turns, list) or not 2 <= len(turns) <= 4:
+            return False
+        if any(
+            not isinstance(turn, dict)
+            or turn.get("role") not in {"user", "assistant"}
+            or not isinstance(turn.get("text"), str)
+            or not turn["text"].strip()
+            for turn in turns
+        ):
+            return False
+        if any(
+            example.get(key) != expected
+            for key, expected in {
+                "not_fixed_response": True,
+                "not_keyword_matching": True,
+            }.items()
+        ):
+            return False
+        if (
+            not isinstance(example.get("why_forbidden"), str)
+            or not example["why_forbidden"].strip()
+            or not isinstance(example.get("preferred_response"), str)
+            or not example["preferred_response"].strip()
+        ):
+            return False
+        if not _resident_source_fields_match(example, profile_id, template_id):
+            return False
+        negative_counts[str(scene_id)] += 1
+        negative_ids.add(example_id)
+    if not all(count == 1 for count in negative_counts.values()):
+        return False
+    if not _nonempty_string_list(value.get("prohibited_patterns")):
+        return False
+    return True
 
 
 def _valid_profile(profile: Dict[str, Any]) -> bool:
@@ -894,6 +1238,11 @@ def _valid_profile(profile: Dict[str, Any]) -> bool:
     if not _reference_matches(profile["relationship_policy_reference"], _RELATIONSHIP_AUTHORITY):
         return False
     if not _resident_trace_matches(profile["source_trace"], profile_id, template_id):
+        return False
+    emotional_dialogue = profile.get("emotional_dialogue")
+    if emotional_dialogue is not None and not _valid_emotional_dialogue(
+        emotional_dialogue, profile_id, template_id
+    ):
         return False
 
     response_style = profile["response_style"]
@@ -1115,8 +1464,8 @@ def _merge_prohibited_patterns(profile: Optional[Dict[str, Any]], template_id: s
     return patterns
 
 
-def _system_instruction(resident_segment: str) -> str:
-    return (
+def _system_instruction(resident_segment: str, emotional_addendum: str = "") -> str:
+    instruction = (
         "以当前数字居民一贯的人格、语言和边界进行日常陪伴对话。默认使用自然中文和中短句，"
         "通常控制在一至三个自然段；用户明确要求时可以切换语言或展开说明，零散英文不改变主语言。"
         "先回应用户刚刚表达的具体内容，再判断是否需要安慰、建议或至多一个轻度问题，不跳过细节套用结论。"
@@ -1140,6 +1489,9 @@ def _system_instruction(resident_segment: str) -> str:
         "避免客服、心理咨询师、导师、导游、通用套话、油腻讨好和强行亲密。用户结束时简短收束；"
         "意图不明时只做一次轻度确认。"
     )
+    if emotional_addendum.strip():
+        instruction += emotional_addendum.strip()
+    return instruction
 
 
 def _context_usage_policy(template_id: str) -> Dict[str, Any]:
@@ -1267,7 +1619,7 @@ def build_runtime_dialogue_projection(
     )
     locale = str(profile["response_style"].get("locale") or template["locale"]) if profile else str(template["locale"])
 
-    return {
+    projection = {
         "schema_version": "0.1",
         "projection_type": "daily_companion_dialogue",
         "derived": True,
@@ -1278,7 +1630,12 @@ def build_runtime_dialogue_projection(
         "usage": "llm_system_context",
         "not_fixed_response": True,
         "not_keyword_matching": True,
-        "system_instruction": _system_instruction(resident_segment),
+        "system_instruction": _system_instruction(
+            resident_segment,
+            str(profile.get("emotional_dialogue", {}).get("system_instruction_addendum", ""))
+            if profile
+            else "",
+        ),
         "language_policy": policies["language_policy"],
         "response_style": policies["response_style"],
         "response_order": policies["response_order"],
@@ -1309,3 +1666,12 @@ def build_runtime_dialogue_projection(
         "context_usage_policy": _context_usage_policy(template_id),
         "fallback_behavior": fallback,
     }
+    emotional_dialogue = profile.get("emotional_dialogue") if profile else None
+    if isinstance(emotional_dialogue, dict):
+        generation_examples = _select_emotional_generation_examples(emotional_dialogue)
+        if generation_examples is None:
+            return None
+        emotional_projection = deepcopy(emotional_dialogue)
+        emotional_projection["few_shot_examples"] = generation_examples
+        projection["emotional_dialogue"] = emotional_projection
+    return projection
