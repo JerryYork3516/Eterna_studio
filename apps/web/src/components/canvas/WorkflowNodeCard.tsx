@@ -320,7 +320,12 @@ function displayObjectEntries(value: Record<string, unknown>, omittedKeys: Set<s
   );
 }
 
-function localizedFieldText(field: Record<string, unknown>, key: "label" | "placeholder" | "help", language: Language, fallback: string) {
+function localizedFieldText(
+  field: Record<string, unknown>,
+  key: "label" | "placeholder" | "help" | "default" | "validation_error",
+  language: Language,
+  fallback: string
+) {
   const i18n = isRecord(field.i18n_keys) ? field.i18n_keys : {};
   const i18nKey = typeof i18n[key] === "string" ? i18n[key] : "";
   return i18nKey ? translate(language, i18nKey, fallback) : fallback;
@@ -350,6 +355,10 @@ function layer12CoreParamPrefix(moduleId?: string) {
   return "";
 }
 
+function layer8EmotionalExpressionPrefix(moduleId?: string) {
+  return moduleId === "emotion_reaction" ? "layer8.emotionalExpression" : "";
+}
+
 function stage748ConfigPrefix(moduleId?: string) {
   if (moduleId === "interaction_strategy") return "stage7_4_8.firstInteraction";
   if (moduleId === "visual_style") return "stage7_4_8.expression";
@@ -362,12 +371,17 @@ function stage749ConfigPrefix(moduleId?: string) {
 }
 
 function usesLocalizedStructuredIds(moduleId?: string) {
-  return isLayer11Module(moduleId) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId)) || Boolean(stage749ConfigPrefix(moduleId));
+  return isLayer11Module(moduleId) || Boolean(layer8EmotionalExpressionPrefix(moduleId)) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId)) || Boolean(stage749ConfigPrefix(moduleId));
 }
 
 function localizedCoreKey(language: Language, key: string, moduleId?: string) {
   if (isLayer11Module(moduleId)) {
     return resolveLayer11DisplayText({ value: key, valueType: "key", moduleId, language });
+  }
+  const layer8ExpressionPrefix = layer8EmotionalExpressionPrefix(moduleId);
+  if (layer8ExpressionPrefix) {
+    const localized = translateIfPresent(language, `${layer8ExpressionPrefix}.key.${key}`);
+    if (localized) return localized;
   }
   const layer12Prefix = layer12CoreParamPrefix(moduleId);
   if (layer12Prefix) {
@@ -395,6 +409,11 @@ function localizedCoreKey(language: Language, key: string, moduleId?: string) {
 function localizedCoreValue(language: Language, value: string, moduleId?: string) {
   if (isLayer11Module(moduleId)) {
     return resolveLayer11DisplayText({ value, valueType: "value", moduleId, language });
+  }
+  const layer8ExpressionPrefix = layer8EmotionalExpressionPrefix(moduleId);
+  if (layer8ExpressionPrefix) {
+    const localized = translateIfPresent(language, `${layer8ExpressionPrefix}.value.${value}`);
+    if (localized) return localized;
   }
   const layer12Prefix = layer12CoreParamPrefix(moduleId);
   if (layer12Prefix) {
@@ -1737,6 +1756,25 @@ function GenericTextInputRenderer({
             const localizedPlaceholder = field.i18n_keys?.placeholder
               ? translate(language, field.i18n_keys.placeholder, "")
               : undefined;
+            const localizedHelp = field.i18n_keys?.help
+              ? translate(language, field.i18n_keys.help, "")
+              : "";
+            const localizedDefault = field.i18n_keys?.default
+              ? translate(language, field.i18n_keys.default, "")
+              : "";
+            const localizedValidationError = field.i18n_keys?.validation_error
+              ? translate(language, field.i18n_keys.validation_error, "")
+              : "";
+            const numberInvalid = field.field_type === "number" && (
+              typeof field.field_value !== "number" ||
+              !Number.isFinite(field.field_value) ||
+              (typeof field.minimum === "number" && field.field_value < field.minimum) ||
+              (typeof field.maximum === "number" && field.field_value > field.maximum)
+            );
+            const enumInvalid = Boolean(
+              field.enum_options?.length &&
+              !field.enum_options.some((option) => option.value === field.field_value)
+            );
             return (
               <article key={`${index}-${field.field_key}`} className="generic-fields-editor__field-card">
               <div className="generic-fields-editor__field-head">
@@ -1755,6 +1793,11 @@ function GenericTextInputRenderer({
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.fieldValue")}</span>
                 {renderFieldValueControl(field, index, localizedPlaceholder)}
+                {localizedHelp ? <small className="generic-fields-editor__hint">{localizedHelp}</small> : null}
+                {localizedDefault ? <small className="generic-fields-editor__hint">{localizedDefault}</small> : null}
+                {(numberInvalid || enumInvalid) && localizedValidationError ? (
+                  <small className="generic-fields-editor__warning" role="alert">{localizedValidationError}</small>
+                ) : null}
               </label>
               <label className="generic-fields-editor__block">
                 <span>{i18nText(language, "genericFields.description")}</span>
@@ -3043,7 +3086,7 @@ function ChecklistTextConfigRenderer({
       </div>
       <div className="text-config-checklist__preset">
         <span>{i18nText(language, "node.checklist.preset")}</span>
-        <strong>{config.presetId}</strong>
+        <strong>{localizedCoreValue(language, config.presetId, moduleId)}</strong>
       </div>
       {renderOptionGroup("node.checklist.defaultOptions", config.defaultOptions)}
       {renderOptionGroup("node.checklist.optionalOptions", config.optionalOptions)}
@@ -3793,6 +3836,10 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
   const showFieldReferenceForm = isCatalogPreconfigured && String(effectiveType) === "field_reference";
   const showReferenceOutputForm = String(effectiveType) === "reference_output";
   const showReferenceInputForm = String(effectiveType) === "reference_input";
+  const showReferenceInputGenericFields =
+    showReferenceInputForm &&
+    stringValue(compileTimeParams.mode) === "generic_fields" &&
+    compileTimeFields.length > 0;
   const showGenericTextInputForm = String(effectiveType) === "text_input";
   const showCoreParamsPanel = isCatalogPreconfigured && ["layer_aggregator", "structure_normalize", "validation", "update_rule"].includes(String(effectiveType));
   const showModuleOutputSummary = isCatalogPreconfigured && String(effectiveType) === "module_output";
@@ -3980,7 +4027,12 @@ export function WorkflowNodeCard({ data, selected }: NodeProps) {
           ) : showReferenceOutputForm ? (
             <ReferenceOutputRenderer data={nodeData} language={language} onInput={onInput} />
           ) : showReferenceInputForm ? (
-            <ReferenceInputRenderer currentNode={schemaNode} data={nodeData} language={language} onInput={onInput} />
+            <>
+              {showReferenceInputGenericFields ? (
+                <GenericTextInputRenderer fields={inputSchema} data={nodeData} language={language} onFieldFocus={onFieldFocus} onInput={onInput} />
+              ) : null}
+              <ReferenceInputRenderer currentNode={schemaNode} data={nodeData} language={language} onInput={onInput} />
+            </>
           ) : showFieldReferenceForm ? (
             <FieldReferenceRenderer data={nodeData} language={language} onInput={onInput} />
           ) : showChecklistTextConfig ? (

@@ -158,9 +158,9 @@ def test_required_reference_resolves_local_node_and_field_path():
     checked = message.split("checked=", 1)[1].split(",", 1)[0]
     resolved = message.split("resolved=", 1)[1]
     # The fixture's required reference, Layer 10's seven static first-presence
-    # references, and the optional dialogue profile's six authority references
-    # must all resolve.
-    assert "required=14" in message
+    # references, the optional dialogue profile's six authority references,
+    # and the expression-state module's nine semantic references must resolve.
+    assert "required=23" in message
     assert checked == resolved
 
 
@@ -175,6 +175,23 @@ def test_exact_legacy_reference_prefix_is_canonicalized_without_mutating_canvas(
     assert result["valid"] is True
     assert canvas == before
     assert _target_reference(result["compiled_dr"]["payload"])["source_node_id"] == local_node_id
+
+
+def test_wrong_legacy_reference_prefix_is_rejected():
+    canvas, local_node_id = _reference_canvas()
+    wrong_prefix_id = f"layer_99::wrong_module::{local_node_id}"
+    _target_reference({"modules": canvas["modules"]})["source_node_id"] = wrong_prefix_id
+    before = deepcopy(canvas)
+
+    result = compile_dr_result_v0_3(canvas)
+
+    assert result["valid"] is False
+    assert canvas == before
+    finding = next(
+        item for item in result["errors"]
+        if item["code"] == "DR_REFERENCE_SOURCE_NODE_MISSING"
+    )
+    assert wrong_prefix_id in finding["message"]
 
 
 def test_required_reference_failure_blocks_compile_and_export_with_audit_evidence():

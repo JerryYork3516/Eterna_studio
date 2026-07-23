@@ -23,6 +23,21 @@ export const LEGACY_DIALOGUE_RUNTIME_PROFILE_ID = "linxuan_daily_companion_v0_1"
 export const DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_profile_resident_0001_v0_1";
 export const DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION =
   "stage7_4_10_few_shot_resident_name_decoupling_v1";
+export const EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION =
+  "stage7_4_11_expression_state_semantics_v1";
+
+const EXPRESSION_CONTEXT_INPUT_NODE_ID = "expression_context_input";
+const RESIDENT_EXPRESSION_NOTES_FIELD_KEY = "resident_expression_notes";
+const EXPRESSION_STATE_FIELD_KEY = "expression_state";
+const EXPRESSION_INTENSITY_FIELD_KEY = "expression_intensity";
+const EXPRESSION_STATE_VALUES = new Set(["neutral", "calm", "caring", "subdued", "joyful"]);
+const LEGACY_EXPRESSION_NODE_INDEX = new Map<string, number>([
+  ["detail_behavior_input_basis", 0],
+  ["detail_behavior_core_rules", 2],
+  ["detail_behavior_boundary_limits", 4],
+  ["detail_behavior_validation", 6],
+  ["detail_behavior_output_expression", 7],
+]);
 
 const DIALOGUE_RUNTIME_PROFILE_MIGRATED_EXAMPLE_IDS = new Set([
   "ordinary_greeting_01",
@@ -374,6 +389,268 @@ export function mergeCatalogFieldsPreservingValues(
     ...merged,
     ...existingFields.filter((field) => !seededIds.has(fieldId(field))).map((field) => cloneJsonValue(field)),
   ];
+}
+
+export type ExpressionStateSemanticsGraph = {
+  nodes: unknown[];
+  edges: unknown[];
+};
+
+function expressionGraphSchemaNode(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const outerData = isRecord(value.data) ? value.data : {};
+  return isRecord(outerData.schemaNode) ? outerData.schemaNode : value;
+}
+
+function expressionGraphNodeData(value: unknown): Record<string, unknown> {
+  const schemaNode = expressionGraphSchemaNode(value);
+  return schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+}
+
+function expressionGraphCatalogNodeId(value: unknown): string {
+  const schemaNode = expressionGraphSchemaNode(value);
+  const data = expressionGraphNodeData(value);
+  return normalizeCatalogNodeId(data.catalog_node_id || schemaNode?.node_id || (isRecord(value) ? value.id : ""));
+}
+
+function expressionGraphNodeParams(value: unknown): Record<string, unknown> {
+  const data = expressionGraphNodeData(value);
+  return isRecord(data.params) ? data.params : {};
+}
+
+function expressionGraphNodeFields(value: unknown): Record<string, unknown>[] {
+  const data = expressionGraphNodeData(value);
+  const params = expressionGraphNodeParams(value);
+  if (Array.isArray(params.fields)) {
+    return params.fields.filter(isRecord);
+  }
+  return Array.isArray(data.fields) ? data.fields.filter(isRecord) : [];
+}
+
+function expressionFieldKey(field: Record<string, unknown>): string {
+  return String(field.field_key || field.field_id || "");
+}
+
+function expressionFieldValue(field: Record<string, unknown>): unknown {
+  return "field_value" in field ? field.field_value : field.value;
+}
+
+function setExpressionFieldValue(field: Record<string, unknown>, value: unknown) {
+  const valueKey = "field_value" in field ? "field_value" : "value";
+  return { ...field, [valueKey]: value };
+}
+
+function expressionGraphNodePosition(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (isRecord(value.position)) {
+    return value.position;
+  }
+  const schemaNode = expressionGraphSchemaNode(value);
+  return schemaNode && isRecord(schemaNode.position) ? schemaNode.position : null;
+}
+
+function expressionGraphNodeUiName(value: unknown): string {
+  const data = expressionGraphNodeData(value);
+  return typeof data.ui_name === "string" ? data.ui_name : "";
+}
+
+function setExpressionGraphNodePosition(value: Record<string, unknown>, position: Record<string, unknown>) {
+  value.position = cloneJsonValue(position);
+  const schemaNode = expressionGraphSchemaNode(value);
+  if (schemaNode && schemaNode !== value) {
+    schemaNode.position = cloneJsonValue(position);
+  }
+}
+
+function setExpressionGraphNodeUiName(value: Record<string, unknown>, uiName: string) {
+  const schemaNode = expressionGraphSchemaNode(value);
+  if (!schemaNode) {
+    return;
+  }
+  const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+  data.ui_name = uiName;
+  schemaNode.data = data;
+}
+
+function setExpressionGraphNodeFields(value: Record<string, unknown>, fields: Record<string, unknown>[]) {
+  const schemaNode = expressionGraphSchemaNode(value);
+  if (!schemaNode) {
+    return;
+  }
+  const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+  const params = isRecord(data.params) ? { ...data.params } : {};
+  params.fields = cloneJsonValue(fields);
+  data.params = params;
+  if (Array.isArray(data.fields)) {
+    data.fields = cloneJsonValue(fields);
+  }
+  schemaNode.data = data;
+}
+
+function legacyExpressionCustomText(nodes: unknown[]): string[] {
+  const values: string[] = [];
+  for (const node of nodes) {
+    const params = expressionGraphNodeParams(node);
+    for (const candidate of [params.checkbox_config, params.checklist_config]) {
+      if (!isRecord(candidate) || typeof candidate.custom_text !== "string") {
+        continue;
+      }
+      const text = candidate.custom_text.trim();
+      if (text && !values.includes(text)) {
+        values.push(text);
+      }
+    }
+  }
+  return values;
+}
+
+function mergeResidentExpressionNotes(
+  fields: Record<string, unknown>[],
+  legacyNotes: string[]
+): Record<string, unknown>[] {
+  if (!legacyNotes.length) {
+    return fields;
+  }
+  return fields.map((field) => {
+    if (expressionFieldKey(field) !== RESIDENT_EXPRESSION_NOTES_FIELD_KEY) {
+      return field;
+    }
+    const current = expressionFieldValue(field);
+    const values = [typeof current === "string" ? current.trim() : "", ...legacyNotes]
+      .filter(Boolean)
+      .filter((item, index, items) => items.indexOf(item) === index);
+    return setExpressionFieldValue(field, values.join("\n\n"));
+  });
+}
+
+function normalizeExpressionStateFields(fields: Record<string, unknown>[]): Record<string, unknown>[] {
+  return fields.map((field) => {
+    const fieldKey = expressionFieldKey(field);
+    const current = expressionFieldValue(field);
+    if (fieldKey === EXPRESSION_STATE_FIELD_KEY) {
+      return setExpressionFieldValue(
+        field,
+        typeof current === "string" && EXPRESSION_STATE_VALUES.has(current) ? current : "neutral"
+      );
+    }
+    if (fieldKey === EXPRESSION_INTENSITY_FIELD_KEY) {
+      const parsed = typeof current === "number"
+        ? current
+        : typeof current === "string" && current.trim()
+          ? Number(current)
+          : Number.NaN;
+      return setExpressionFieldValue(
+        field,
+        Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0.0
+      );
+    }
+    return field;
+  });
+}
+
+/**
+ * Rebuild the catalog-owned Stage 7.4.11 expression graph once while retaining
+ * resident-authored field values and editor-only layout/name customizations.
+ */
+export function migrateExpressionStateSemanticsGraph(
+  stored: ExpressionStateSemanticsGraph,
+  seed: ExpressionStateSemanticsGraph
+): { value: ExpressionStateSemanticsGraph; migrated: boolean } {
+  const seedInput = seed.nodes.find(
+    (node) => expressionGraphCatalogNodeId(node) === EXPRESSION_CONTEXT_INPUT_NODE_ID
+  );
+  const seedRevision = expressionGraphNodeParams(seedInput).content_revision;
+  if (seedRevision !== EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+
+  const storedInput = stored.nodes.find(
+    (node) => expressionGraphCatalogNodeId(node) === EXPRESSION_CONTEXT_INPUT_NODE_ID
+  );
+  if (expressionGraphNodeParams(storedInput).content_revision === seedRevision) {
+    return { value: stored, migrated: false };
+  }
+
+  const storedByCatalogId = new Map(
+    stored.nodes
+      .map((node) => [expressionGraphCatalogNodeId(node), node] as const)
+      .filter(([nodeId]) => Boolean(nodeId))
+  );
+  const legacyNodeBySeedIndex = new Map<number, unknown>();
+  for (const [legacyNodeId, seedIndex] of LEGACY_EXPRESSION_NODE_INDEX) {
+    const legacyNode = storedByCatalogId.get(legacyNodeId);
+    if (legacyNode) {
+      legacyNodeBySeedIndex.set(seedIndex, legacyNode);
+    }
+  }
+
+  const allStoredFields = stored.nodes.flatMap(expressionGraphNodeFields);
+  const storedFieldByKey = new Map(
+    allStoredFields
+      .map((field) => [expressionFieldKey(field), field] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+  const seedFieldKeys = new Set(seed.nodes.flatMap(expressionGraphNodeFields).map(expressionFieldKey).filter(Boolean));
+  const customFields = allStoredFields.filter(
+    (field, index) => {
+      const fieldKey = expressionFieldKey(field);
+      return Boolean(fieldKey) &&
+        !seedFieldKeys.has(fieldKey) &&
+        allStoredFields.findIndex((candidate) => expressionFieldKey(candidate) === fieldKey) === index;
+    }
+  );
+  const customText = legacyExpressionCustomText(stored.nodes);
+
+  const nodes = seed.nodes.map((seedNode, seedIndex) => {
+    const nextNode = cloneJsonValue(seedNode) as Record<string, unknown>;
+    const catalogNodeId = expressionGraphCatalogNodeId(seedNode);
+    const currentNode = storedByCatalogId.get(catalogNodeId) ?? legacyNodeBySeedIndex.get(seedIndex);
+    const currentPosition = expressionGraphNodePosition(currentNode);
+    if (currentPosition) {
+      setExpressionGraphNodePosition(nextNode, currentPosition);
+    }
+    const uiName = expressionGraphNodeUiName(currentNode);
+    if (uiName) {
+      setExpressionGraphNodeUiName(nextNode, uiName);
+    }
+
+    const seedFields = expressionGraphNodeFields(seedNode);
+    if (!seedFields.length) {
+      return nextNode;
+    }
+    const currentFieldByKey = new Map(
+      expressionGraphNodeFields(currentNode)
+        .map((field) => [expressionFieldKey(field), field] as const)
+        .filter(([fieldKey]) => Boolean(fieldKey))
+    );
+    const existingFields = seedFields
+      .map((field) => currentFieldByKey.get(expressionFieldKey(field)) ?? storedFieldByKey.get(expressionFieldKey(field)))
+      .filter((field): field is Record<string, unknown> => Boolean(field));
+    let mergedFields = mergeCatalogFieldsPreservingValues(seedFields, existingFields);
+    if (catalogNodeId === EXPRESSION_CONTEXT_INPUT_NODE_ID) {
+      mergedFields = normalizeExpressionStateFields(
+        mergeResidentExpressionNotes(
+          [...mergedFields, ...customFields.map((field) => cloneJsonValue(field))],
+          customText
+        )
+      );
+    }
+    setExpressionGraphNodeFields(nextNode, mergedFields);
+    return nextNode;
+  });
+
+  const value = {
+    nodes,
+    edges: cloneJsonValue(seed.edges),
+  };
+  return {
+    value,
+    migrated: stableComparableValue(value) !== stableComparableValue(stored),
+  };
 }
 
 export function mergeChecklistTemplateDefaults(

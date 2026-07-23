@@ -451,7 +451,8 @@ def test_layer8_behavior_policy_assembled_into_layer8_and_top_payload():
         assert module_policy["field_references"]
         assert module_policy["validation_rules"]
         assert module_policy["tags"]
-        assert len(module_policy["source_nodes"]) == 5
+        expected_source_nodes = 9 if module_id == DETAIL_BEHAVIOR_MODULE_ID else 5
+        assert len(module_policy["source_nodes"]) == expected_source_nodes
         for reference in module_policy["field_references"]:
             assert reference["reference_type"] != "forbidden"
             assert reference["layer_id"]

@@ -6,6 +6,7 @@ import {
   firstInteractionEnabledValue,
   DIALOGUE_RUNTIME_PROFILE_ID,
   DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+  EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION,
   LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
   LINXUAN_RESIDENT_ID,
   mergeCatalogReferenceDeclarations,
@@ -13,6 +14,7 @@ import {
   mergeCatalogFieldsPreservingValues,
   migrateDialogueRuntimeProfileId,
   migrateDialogueRuntimeProfileContentCopies,
+  migrateExpressionStateSemanticsGraph,
   normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
   migrateLinxuanFirstGreetingValue,
@@ -1552,6 +1554,305 @@ test("Stage 7.4.10 migrates stale dialogue Few-shots across Canvas compatibility
   const untouched = migrateDialogueRuntimeProfileContentCopies(newCanvas, seed);
   assert.equal(untouched.migrated, false);
   assert.equal(untouched.value, newCanvas);
+});
+
+test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resident-authored fields", () => {
+  const instanceId = "layer_8::emotion_reaction";
+  const nodeIds = [
+    "expression_context_input",
+    "expression_allowed_state_recognition",
+    "expression_state_selection_rules",
+    "expression_personality_consistency_validation",
+    "expression_relationship_safety_validation",
+    "expression_intensity_calculation",
+    "expression_state_normalize_fallback_validation",
+    "expression_state_output",
+    "expression_state_reference_output",
+  ];
+  const flowId = (nodeId) => `${instanceId}::${nodeId}`;
+  const seedFields = [
+    {
+      field_key: "expression_state",
+      field_value: "neutral",
+      field_type: "text",
+      i18n_keys: { label: "layer8.emotionalExpression.field.state.label" },
+    },
+    {
+      field_key: "expression_intensity",
+      field_value: 0,
+      field_type: "number",
+      minimum: 0,
+      maximum: 1,
+      i18n_keys: { label: "layer8.emotionalExpression.field.intensity.label" },
+    },
+    {
+      field_key: "resident_expression_notes",
+      field_value: "",
+      field_type: "long_text",
+      i18n_keys: { label: "layer8.emotionalExpression.field.notes.label" },
+    },
+  ];
+  const seedNodes = nodeIds.map((catalogNodeId, index) => {
+    const nodeType = index === 0
+      ? "reference_input"
+      : index === nodeIds.length - 1
+        ? "reference_output"
+        : index === nodeIds.length - 2
+          ? "module_output"
+          : "text_config";
+    const fields = index === 0 ? JSON.parse(JSON.stringify(seedFields)) : [];
+    return {
+      node_id: flowId(catalogNodeId),
+      type: nodeType,
+      title_key: `layer8.emotionalExpression.node.${catalogNodeId}.title`,
+      title_fallback: catalogNodeId,
+      position: { x: index * 260, y: 40 },
+      data: {
+        catalog_preconfigured: true,
+        catalog_module_id: "emotion_reaction",
+        catalog_node_id: catalogNodeId,
+        node_type: nodeType,
+        params: index === 0
+          ? {
+              mode: "generic_fields",
+              content_revision: EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION,
+              fields,
+            }
+          : { semantic_rule: catalogNodeId },
+        fields: JSON.parse(JSON.stringify(fields)),
+        i18n_keys: {
+          name: `layer8.emotionalExpression.node.${catalogNodeId}.title`,
+          description: `layer8.emotionalExpression.node.${catalogNodeId}.description`,
+        },
+      },
+    };
+  });
+  const seedEdges = nodeIds.slice(0, -1).map((sourceId, index) => ({
+    id: `${sourceId}_to_${nodeIds[index + 1]}`,
+    edge_id: `${sourceId}_to_${nodeIds[index + 1]}`,
+    source: flowId(sourceId),
+    target: flowId(nodeIds[index + 1]),
+  }));
+  seedEdges.push(
+    {
+      id: "expression_context_to_selection_references",
+      edge_id: "expression_context_to_selection_references",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[2]),
+    },
+    {
+      id: "expression_context_to_personality_references",
+      edge_id: "expression_context_to_personality_references",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[3]),
+    },
+    {
+      id: "expression_context_to_safety_references",
+      edge_id: "expression_context_to_safety_references",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[4]),
+    },
+    {
+      id: "expression_context_to_intensity_references",
+      edge_id: "expression_context_to_intensity_references",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[5]),
+    },
+    {
+      id: "expression_context_to_fallback_references",
+      edge_id: "expression_context_to_fallback_references",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[6]),
+    }
+  );
+
+  const legacyNode = (catalogNodeId, index, params, fields = []) => ({
+    id: flowId(catalogNodeId),
+    type: "workflowNode",
+    position: { x: 700 + index * 15, y: 300 + index * 10 },
+    data: {
+      schemaNode: {
+        node_id: flowId(catalogNodeId),
+        type: index === 0 ? "field_reference" : "text_config",
+        title_key: `layer8.detailBehavior.node.${catalogNodeId}.title`,
+        position: { x: 700 + index * 15, y: 300 + index * 10 },
+        data: {
+          catalog_preconfigured: true,
+          catalog_module_id: "emotion_reaction",
+          catalog_node_id: catalogNodeId,
+          node_type: index === 0 ? "field_reference" : "text_config",
+          ui_name: index === 0 ? "保留的表达上下文名称" : "",
+          params: { ...params, ...(fields.length ? { fields } : {}) },
+          fields,
+          i18n_keys: { name: `layer8.detailBehavior.node.${catalogNodeId}.title` },
+        },
+      },
+    },
+  });
+  const legacyFields = [
+    { field_key: "expression_state", field_value: "caring" },
+    { field_key: "expression_intensity", field_value: 0.72 },
+    { field_key: "resident_expression_notes", field_value: "既有居民表达备注。" },
+    { field_key: "custom_resident_rule", field_value: "保留居民自定义字段", field_type: "long_text" },
+  ];
+  const legacyNodes = [
+    legacyNode(
+      "detail_behavior_input_basis",
+      0,
+      {
+        recommended_references: [{ source_module_id: "particle_avatar" }],
+        checkbox_config: { selected_options: [], custom_text: "" },
+      },
+      legacyFields
+    ),
+    legacyNode("detail_behavior_core_rules", 1, {
+      checkbox_config: {
+        selected_options: ["more_particle_hint_friendly"],
+        optional_options: [{ option_id: "more_particle_hint_friendly" }],
+        custom_text: "先听完居民表达，再选择合适状态。",
+      },
+    }),
+    legacyNode("detail_behavior_boundary_limits", 2, {
+      particle_energy: 0.4,
+      checkbox_config: { selected_options: ["no_gaze_behavior_description"], custom_text: "" },
+    }),
+    legacyNode("detail_behavior_output_expression", 3, {
+      checkbox_config: {
+        selected_options: ["low_amplitude_particle_hint"],
+        default_options: [{ option_id: "low_amplitude_particle_hint" }],
+        custom_text: "关系紧张时降低表达强度。",
+      },
+    }),
+    legacyNode("detail_behavior_validation", 4, {
+      checkbox_config: { selected_options: ["check_template_style"], custom_text: "" },
+    }),
+  ];
+  const legacyEdges = legacyNodes.slice(0, -1).map((node, index) => ({
+    id: `legacy_${index}`,
+    source: node.id,
+    target: legacyNodes[index + 1].id,
+  }));
+  const stored = { nodes: legacyNodes, edges: legacyEdges };
+  const seed = { nodes: seedNodes, edges: seedEdges };
+
+  const migrated = migrateExpressionStateSemanticsGraph(stored, seed);
+  assert.equal(migrated.migrated, true);
+  assert.equal(migrated.value.nodes.length, 9);
+  assert.equal(migrated.value.edges.length, 13);
+  assert.deepEqual(
+    migrated.value.nodes.map((node) => node.data.catalog_node_id),
+    nodeIds
+  );
+  assert.deepEqual(
+    migrated.value.edges.slice(0, 8).map((edge) => [edge.source.split("::").at(-1), edge.target.split("::").at(-1)]),
+    nodeIds.slice(0, -1).map((sourceId, index) => [sourceId, nodeIds[index + 1]])
+  );
+
+  const input = migrated.value.nodes[0];
+  assert.equal(input.data.params.content_revision, EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION);
+  assert.deepEqual(input.position, legacyNodes[0].position);
+  assert.equal(input.data.ui_name, "保留的表达上下文名称");
+  const migratedFields = input.data.params.fields;
+  assert.equal(migratedFields.find((field) => field.field_key === "expression_state").field_value, "caring");
+  assert.equal(migratedFields.find((field) => field.field_key === "expression_intensity").field_value, 0.72);
+  assert.equal(
+    migratedFields.find((field) => field.field_key === "resident_expression_notes").field_value,
+    "既有居民表达备注。\n\n先听完居民表达，再选择合适状态。\n\n关系紧张时降低表达强度。"
+  );
+  assert.equal(
+    migratedFields.find((field) => field.field_key === "custom_resident_rule").field_value,
+    "保留居民自定义字段"
+  );
+  assert.equal(seedNodes[0].data.params.fields[2].field_value, "");
+  assert.doesNotMatch(
+    JSON.stringify(migrated.value),
+    /particle|checkbox_config|selected_options|low_amplitude|shader|glow/i
+  );
+
+  const invalidStored = JSON.parse(JSON.stringify(stored));
+  const invalidFields = invalidStored.nodes[0].data.schemaNode.data.params.fields;
+  invalidFields.find((field) => field.field_key === "expression_state").field_value = "unsupported";
+  invalidFields.find((field) => field.field_key === "expression_intensity").field_value = 2.4;
+  const normalized = migrateExpressionStateSemanticsGraph(invalidStored, seed);
+  const normalizedFields = normalized.value.nodes[0].data.params.fields;
+  assert.equal(normalizedFields.find((field) => field.field_key === "expression_state").field_value, "neutral");
+  assert.equal(normalizedFields.find((field) => field.field_key === "expression_intensity").field_value, 0);
+  assert.equal(
+    normalizedFields.find((field) => field.field_key === "resident_expression_notes").field_value,
+    "既有居民表达备注。\n\n先听完居民表达，再选择合适状态。\n\n关系紧张时降低表达强度。"
+  );
+
+  const reopened = migrateExpressionStateSemanticsGraph(migrated.value, seed);
+  assert.equal(reopened.migrated, false);
+  assert.equal(reopened.value, migrated.value);
+
+  const bridgeSource = readFileSync(new URL("../src/store/module-state-bridge.ts", import.meta.url), "utf8");
+  assert.match(bridgeSource, /EXPRESSION_STATE_GRAPH_ID = ["']layer_8::emotion_reaction["']/);
+  assert.match(
+    bridgeSource,
+    /migrateExpressionStateSemanticsSeed[\s\S]*?migrateExpressionStateSemanticsGraph\([\s\S]*?const expressionMigrated = migrateExpressionStateSemanticsSeed/s
+  );
+  assert.match(
+    bridgeSource,
+    /moduleNodeId === EXPRESSION_STATE_GRAPH_ID[\s\S]*?saveModuleGraphState\(moduleNodeId, mergedGraph\.nodes, mergedGraph\.edges\)/s
+  );
+});
+
+test("Stage 7.4.11 emotional expression catalog strings and enum labels are localized", () => {
+  const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
+  const en = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
+  const zh = JSON.parse(readFileSync(new URL("../locales/zh.json", import.meta.url), "utf8"));
+  const prefix = "layer8.emotionalExpression";
+
+  assert.match(cardSource, /moduleId === ["']emotion_reaction["']/);
+  assert.match(cardSource, /moduleId === ["']emotion_reaction["'] \? ["']layer8\.emotionalExpression["']/);
+  assert.match(cardSource, /showReferenceInputGenericFields[\s\S]*?<GenericTextInputRenderer[\s\S]*?<ReferenceInputRenderer/);
+  assert.match(cardSource, /field\.i18n_keys\?\.help/);
+  assert.match(cardSource, /field\.i18n_keys\?\.default/);
+  assert.match(cardSource, /field\.i18n_keys\?\.validation_error/);
+
+  for (const suffix of [
+    "module.title",
+    "module.description",
+    "module.type",
+    "node.contextInput.title",
+    "node.allowedStateRecognition.title",
+    "node.stateSelectionRules.title",
+    "node.personalityConsistencyValidation.title",
+    "node.relationshipSafetyValidation.title",
+    "node.intensityCalculation.title",
+    "node.normalizeFallback.title",
+    "node.output.title",
+    "node.referenceOutput.title",
+    "field.expressionState.label",
+    "field.expressionState.help",
+    "field.expressionState.default",
+    "field.expressionState.validation.invalid",
+    "field.expressionIntensity.label",
+    "field.expressionIntensity.help",
+    "field.expressionIntensity.default",
+    "field.expressionIntensity.validation.invalid",
+  ]) {
+    const key = `${prefix}.${suffix}`;
+    assert.equal(typeof zh[key], "string", `missing Chinese localization: ${key}`);
+    assert.equal(typeof en[key], "string", `missing English localization: ${key}`);
+    assert.ok(zh[key].length > 0, `blank Chinese localization: ${key}`);
+    assert.ok(en[key].length > 0, `blank English localization: ${key}`);
+  }
+
+  const expectedChineseLabels = {
+    neutral: "中性",
+    calm: "平静",
+    caring: "关怀",
+    subdued: "低落",
+    joyful: "愉悦",
+  };
+  for (const [value, label] of Object.entries(expectedChineseLabels)) {
+    const key = `${prefix}.enum.expressionState.${value}`;
+    assert.equal(zh[key], label);
+    assert.equal(typeof en[key], "string");
+    assert.notEqual(zh[key], value);
+  }
 });
 
 test("compile-time reference normalization preserves stable declaration ids", () => {

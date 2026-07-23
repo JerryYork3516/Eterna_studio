@@ -1940,12 +1940,18 @@ DECISION_BEHAVIOR_NODE_IDS = {
 DECISION_BEHAVIOR_PRESET_ID = "human_empathy_decision_v0_1"
 DETAIL_BEHAVIOR_MODULE_ID = "emotion_reaction"
 DETAIL_BEHAVIOR_OUTPUT_KEY = "detail_behavior_config"
-DETAIL_BEHAVIOR_NODE_IDS = {
-    "input_basis": "detail_behavior_input_basis",
-    "core_rules": "detail_behavior_core_rules",
-    "boundary_limits": "detail_behavior_boundary_limits",
-    "output_expression": "detail_behavior_output_expression",
-    "validation": "detail_behavior_validation",
+EXPRESSION_STATE_CONTENT_REVISION = "stage7_4_11_expression_state_semantics_v1"
+EXPRESSION_STATE_VALUES = ("neutral", "calm", "caring", "subdued", "joyful")
+EXPRESSION_STATE_NODE_IDS = {
+    "context_input": "expression_context_input",
+    "allowed_state_recognition": "expression_allowed_state_recognition",
+    "state_selection_rules": "expression_state_selection_rules",
+    "personality_consistency_validation": "expression_personality_consistency_validation",
+    "relationship_safety_validation": "expression_relationship_safety_validation",
+    "intensity_calculation": "expression_intensity_calculation",
+    "normalize_fallback": "expression_state_normalize_fallback_validation",
+    "output": "expression_state_output",
+    "reference_output": "expression_state_reference_output",
 }
 DETAIL_BEHAVIOR_PRESET_ID = "human_empathy_detail_v0_1"
 INTERACTION_BEHAVIOR_MODULE_ID = "interaction_strategy"
@@ -2109,32 +2115,6 @@ def _decision_behavior_checkbox_config(
     }
 
 
-def _detail_behavior_option(option_id: str, key_suffix: str, *, default_selected: bool = True) -> Dict[str, object]:
-    return {
-        "option_id": option_id,
-        "default_selected": default_selected,
-        "i18n_keys": {
-            "label": f"layer8.detailBehavior.option.{key_suffix}",
-        },
-    }
-
-
-def _detail_behavior_checkbox_config(
-    default_options: List[Dict[str, object]],
-    optional_options: List[Dict[str, object]] | None = None,
-) -> Dict[str, object]:
-    selected = [str(option["option_id"]) for option in default_options if option.get("default_selected") is not False]
-    return {
-        "preset_id": DETAIL_BEHAVIOR_PRESET_ID,
-        "selected_options": selected,
-        "default_selected_options": selected,
-        "default_options": default_options,
-        "optional_options": optional_options or [],
-        "custom_text": "",
-        "apply_preset_label_key": "node.checklist.applyHumanEmpathyDetailTemplate",
-    }
-
-
 def _interaction_behavior_option(option_id: str, key_suffix: str, *, default_selected: bool = True) -> Dict[str, object]:
     return {
         "option_id": option_id,
@@ -2265,34 +2245,6 @@ def _decision_behavior_reference(
             "layer": f"layer.{layer_id}",
             "module": module_key or f"module.{module_id}",
             "field": field_key or f"layer8.decisionBehavior.refField.{field_id}",
-        },
-    }
-
-
-def _detail_behavior_reference(
-    reference_id: str,
-    reference_type: str,
-    layer_id: str,
-    module_id: str,
-    field_id: str,
-    usage_suffix: str,
-    *,
-    module_key: str | None = None,
-    field_key: str | None = None,
-) -> Dict[str, object]:
-    return {
-        "reference_id": reference_id,
-        "reference_type": reference_type,
-        "layer_id": layer_id,
-        "module_id": module_id,
-        "field_id": field_id,
-        "path": f"{layer_id}/{module_id}/{field_id}",
-        "usage": "",
-        "usage_key": f"layer8.detailBehavior.referenceUsage.{usage_suffix}",
-        "i18n_keys": {
-            "layer": f"layer.{layer_id}",
-            "module": module_key or f"module.{module_id}",
-            "field": field_key or f"layer8.detailBehavior.refField.{field_id}",
         },
     }
 
@@ -3119,353 +3071,541 @@ def _decision_behavior_module() -> ModuleV04:
 
 
 def _detail_behavior_module() -> ModuleV04:
+    """Stage 7.4.11 semantic expression-state rules on the existing module id."""
+
     module_id = DETAIL_BEHAVIOR_MODULE_ID
-    core_checkbox_config = _detail_behavior_checkbox_config(
-        [
-            _detail_behavior_option("allow_light_pause", "allowLightPause"),
-            _detail_behavior_option("short_response_first", "shortResponseFirst"),
-            _detail_behavior_option("restrained_listening_feedback", "restrainedListeningFeedback"),
-            _detail_behavior_option("no_forced_filling_silence", "noForcedFillingSilence"),
-            _detail_behavior_option("comfort_lower_information_density", "comfortLowerInformationDensity"),
-            _detail_behavior_option("clear_paragraphs_when_explaining", "clearParagraphsWhenExplaining"),
-            _detail_behavior_option("no_fixed_catchphrase", "noFixedCatchphrase"),
-            _detail_behavior_option("no_excessive_action_description", "noExcessiveActionDescription"),
-        ],
-        [
-            _detail_behavior_option("quieter", "quieter", default_selected=False),
-            _detail_behavior_option("softer", "softer", default_selected=False),
-            _detail_behavior_option("more_life_like", "moreLifeLike", default_selected=False),
-            _detail_behavior_option("more_rational_restrained", "moreRationalRestrained", default_selected=False),
-            _detail_behavior_option("more_subtitle_friendly", "moreSubtitleFriendly", default_selected=False),
-            _detail_behavior_option("more_particle_hint_friendly", "moreParticleHintFriendly", default_selected=False),
-        ],
-    )
-    boundary_checkbox_config = _detail_behavior_checkbox_config(
-        [
-            _detail_behavior_option("no_catchphrase_template", "noCatchphraseTemplate"),
-            _detail_behavior_option("no_excessive_realistic_action", "noExcessiveRealisticAction"),
-            _detail_behavior_option("no_gaze_behavior_description", "noGazeBehaviorDescription"),
-            _detail_behavior_option("no_forced_cuteness", "noForcedCuteness"),
-            _detail_behavior_option("no_greasy_intimacy", "noGreasyIntimacy"),
-            _detail_behavior_option("no_long_paragraph_stacking", "noLongParagraphStacking"),
-            _detail_behavior_option("no_frequent_city_imagery", "noFrequentCityImagery"),
-            _detail_behavior_option("no_non_layer1_hardcoded_name", "noNonLayer1HardcodedName"),
-        ]
-    )
-    output_checkbox_config = _detail_behavior_checkbox_config(
-        [
-            _detail_behavior_option("common_short_response", "commonShortResponse"),
-            _detail_behavior_option("light_hesitation_expression", "lightHesitationExpression"),
-            _detail_behavior_option("restrained_listening_feedback_output", "restrainedListeningFeedbackOutput"),
-            _detail_behavior_option("quiet_companionship_expression", "quietCompanionshipExpression"),
-            _detail_behavior_option("short_subtitle_segmentation", "shortSubtitleSegmentation"),
-            _detail_behavior_option("low_amplitude_particle_hint", "lowAmplitudeParticleHint"),
-            _detail_behavior_option("low_mood_slow_down_rhythm", "lowMoodSlowDownRhythm"),
-            _detail_behavior_option("thinking_short_transition", "thinkingShortTransition"),
-        ]
-    )
-    validation_checkbox_config = _detail_behavior_checkbox_config(
-        [
-            _detail_behavior_option("check_template_style", "checkTemplateStyle"),
-            _detail_behavior_option("check_excessive_realism", "checkExcessiveRealism"),
-            _detail_behavior_option("check_girlfriend_tone", "checkGirlfriendTone"),
-            _detail_behavior_option("check_too_many_catchphrases", "checkTooManyCatchphrases"),
-            _detail_behavior_option("check_too_many_action_descriptions", "checkTooManyActionDescriptions"),
-            _detail_behavior_option("check_too_long_sentences", "checkTooLongSentences"),
-            _detail_behavior_option("check_warm_restrained_personality", "checkWarmRestrainedPersonality"),
-            _detail_behavior_option("check_hardcoded_resident_name", "checkHardcodedResidentName"),
-        ]
-    )
-    recommended_references = [
-        _detail_behavior_reference(
-            "required_expression_style_tone_warmth",
-            "required",
-            "layer_2",
-            "expression_style",
-            "tone_warmth",
-            "expressionTemperament",
-            module_key="layer2.expressionMode.module.title",
-            field_key="layer8.detailBehavior.refField.expressionTemperament",
+    i18n_prefix = "layer8.emotionalExpression"
+    output = {
+        "expression_state": "neutral",
+        "expression_intensity": 0.0,
+    }
+
+    def field(
+        field_key: str,
+        field_value: object,
+        field_type: str,
+        suffix: str,
+        *,
+        required: bool = False,
+        enum_options: list[Dict[str, str]] | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> Dict[str, object]:
+        item: Dict[str, object] = {
+            "field_key": field_key,
+            "field_name": field_key,
+            "field_value": field_value,
+            "field_type": field_type,
+            "description": f"{i18n_prefix}.field.{suffix}.description",
+            "dr_mapping": f"payload.behavior_policy.modules.detail_behavior.{field_key}",
+            "reference_enabled": False,
+            "required": required,
+            "field_name_custom": False,
+            "description_custom": False,
+            "i18n_keys": {
+                "label": f"{i18n_prefix}.field.{suffix}.label",
+                "description": f"{i18n_prefix}.field.{suffix}.description",
+                "placeholder": f"{i18n_prefix}.field.{suffix}.placeholder",
+                "help": f"{i18n_prefix}.field.{suffix}.help",
+                "default": f"{i18n_prefix}.field.{suffix}.default",
+            },
+        }
+        if enum_options is not None:
+            item["enum_options"] = enum_options
+        if minimum is not None:
+            item["minimum"] = minimum
+        if maximum is not None:
+            item["maximum"] = maximum
+        return item
+
+    fields = [
+        field(
+            "expression_state",
+            "neutral",
+            "text",
+            "expressionState",
+            required=True,
+            enum_options=[
+                {
+                    "value": state,
+                    "label_key": f"{i18n_prefix}.enum.expressionState.{state}",
+                }
+                for state in EXPRESSION_STATE_VALUES
+            ],
         ),
-        _detail_behavior_reference(
-            "required_language_behavior_speech_pace",
-            "required",
-            "layer_8",
-            LANGUAGE_BEHAVIOR_MODULE_ID,
-            "speech_pace",
-            "speechPace",
-            module_key="layer8.languageBehavior.module.title",
-            field_key="layer8.detailBehavior.refField.speechPace",
+        field(
+            "expression_intensity",
+            0.0,
+            "number",
+            "expressionIntensity",
+            required=True,
+            minimum=0.0,
+            maximum=1.0,
         ),
-        _detail_behavior_reference(
-            "required_language_behavior_comfort_expression_style",
-            "required",
-            "layer_8",
-            LANGUAGE_BEHAVIOR_MODULE_ID,
-            "comfort_expression_style",
-            "silenceCompanionshipStyle",
-            module_key="layer8.interactionBehavior.module.title",
-            field_key="layer8.detailBehavior.refField.silenceCompanionshipStyle",
-        ),
-        _detail_behavior_reference(
-            "optional_world_context_city_imagery",
-            "optional",
-            "layer_7",
-            "world_setting",
-            "city_imagery",
-            "cityImagery",
-            module_key="module.world_setting",
-            field_key="layer8.detailBehavior.refField.cityImagery",
-        ),
-        _detail_behavior_reference(
-            "optional_visual_style_visual_temperament",
-            "optional",
-            "layer_10",
-            "visual_style",
-            "visual_temperament",
-            "visualTemperament",
-            module_key="module.visual_style",
-            field_key="layer8.detailBehavior.refField.visualTemperament",
-        ),
-        _detail_behavior_reference(
-            "optional_particle_avatar_particle_state_hint",
-            "optional",
-            "layer_10",
-            "particle_avatar",
-            "particle_state_hint",
-            "particleStateHint",
-            module_key="module.particle_avatar",
-            field_key="layer8.detailBehavior.refField.particleStateHint",
-        ),
-        _detail_behavior_reference(
-            "optional_relationship_rule_default_relationship",
-            "optional",
-            "layer_11",
-            "relationship_rule",
-            "default_relationship",
-            "defaultRelationship",
-            module_key="module.relationship_rule",
-            field_key="layer8.detailBehavior.refField.defaultRelationship",
-        ),
-        _detail_behavior_reference(
-            "forbidden_basic_identity_name",
-            "forbidden",
-            "layer_1",
-            "module_basic_identity",
-            "name",
-            "forbiddenIdentityName",
-            module_key="module.module_basic_identity",
-            field_key="field.identity.name.label",
-        ),
-        _detail_behavior_reference(
-            "forbidden_basic_identity_resident_id",
-            "forbidden",
-            "layer_1",
-            "module_basic_identity",
-            "resident_id",
-            "forbiddenResidentId",
-            module_key="module.module_basic_identity",
-            field_key="field.identity.resident_id.label",
-        ),
-        _detail_behavior_reference(
-            "forbidden_basic_identity_codename",
-            "forbidden",
-            "layer_1",
-            "module_basic_identity",
-            "codename",
-            "forbiddenCodename",
-            module_key="module.module_basic_identity",
-            field_key="field.identity.codename.label",
-        ),
-        _detail_behavior_reference(
-            "forbidden_basic_identity_display_alias",
-            "forbidden",
-            "layer_1",
-            "module_basic_identity",
-            "display_alias",
-            "forbiddenNickname",
-            module_key="module.module_basic_identity",
-            field_key="field.identity.display_alias.label",
+        field(
+            "resident_expression_notes",
+            "",
+            "long_text",
+            "residentExpressionNotes",
         ),
     ]
-    reference_options = {
-        "layers": [
-            {"value": layer_id, "label_key": f"layer.{layer_id}"}
-            for layer_id in ["layer_1", "layer_2", "layer_7", "layer_8", "layer_10", "layer_11"]
-        ],
-        "modules": [
-            {"value": "module_basic_identity", "layer_id": "layer_1", "label_key": "module.module_basic_identity"},
-            {"value": "expression_style", "layer_id": "layer_2", "label_key": "layer2.expressionMode.module.title"},
-            {"value": "world_setting", "layer_id": "layer_7", "label_key": "module.world_setting"},
-            {"value": LANGUAGE_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.languageBehavior.module.title"},
-            {"value": INTERACTION_BEHAVIOR_MODULE_ID, "layer_id": "layer_8", "label_key": "layer8.interactionBehavior.module.title"},
-            {"value": "visual_style", "layer_id": "layer_10", "label_key": "module.visual_style"},
-            {"value": "particle_avatar", "layer_id": "layer_10", "label_key": "module.particle_avatar"},
-            {"value": "relationship_rule", "layer_id": "layer_11", "label_key": "module.relationship_rule"},
-        ],
-        "fields": [
-            {"value": str(reference["field_id"]), "module_id": str(reference["module_id"]), "label_key": str(reference["i18n_keys"]["field"])}
-            for reference in recommended_references
-        ],
+    fields[0]["i18n_keys"]["validation_error"] = (  # type: ignore[index]
+        f"{i18n_prefix}.validation.invalidState"
+    )
+    fields[1]["i18n_keys"]["validation_error"] = (  # type: ignore[index]
+        f"{i18n_prefix}.validation.intensityOutOfRange"
+    )
+
+    references = [
+        {
+            "reference_id": "expression_personality_tendency",
+            "source_layer_id": "layer_2",
+            "source_module_id": "personality_traits",
+            "source_node_id": "personality_traits_output_summary",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"],
+            "usage_key": f"{i18n_prefix}.reference.personalityTraits.usage",
+        },
+        {
+            "reference_id": "expression_emotional_style",
+            "source_layer_id": "layer_2",
+            "source_module_id": "emotion_pattern",
+            "source_node_id": "emotion_pattern_output_summary",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"],
+            "usage_key": f"{i18n_prefix}.reference.emotionPattern.usage",
+        },
+        {
+            "reference_id": "expression_dialogue_way",
+            "source_layer_id": "layer_8",
+            "source_module_id": LANGUAGE_BEHAVIOR_MODULE_ID,
+            "source_node_id": LANGUAGE_BEHAVIOR_NODE_IDS["output_expression"],
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+            "usage_key": f"{i18n_prefix}.reference.languageBehavior.usage",
+        },
+        {
+            "reference_id": "expression_interaction_strategy",
+            "source_layer_id": "layer_8",
+            "source_module_id": INTERACTION_BEHAVIOR_MODULE_ID,
+            "source_node_id": INTERACTION_BEHAVIOR_NODE_IDS["core_rules"],
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+            "usage_key": f"{i18n_prefix}.reference.interactionStrategy.usage",
+        },
+        {
+            "reference_id": "expression_interaction_boundary",
+            "source_layer_id": "layer_3",
+            "source_module_id": INTERACTION_SAFETY_MODULE_ID,
+            "source_node_id": "interaction_boundary_config_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+            "usage_key": f"{i18n_prefix}.reference.interactionBoundary.usage",
+        },
+        {
+            "reference_id": "expression_risk_response",
+            "source_layer_id": "layer_3",
+            "source_module_id": RISK_RESPONSE_MODULE_ID,
+            "source_node_id": RISK_RESPONSE_NODE_IDS["module_output"],
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+            "usage_key": f"{i18n_prefix}.reference.riskResponse.usage",
+        },
+        {
+            "reference_id": "expression_relationship_boundary",
+            "source_layer_id": "layer_11",
+            "source_module_id": "relationship_rule",
+            "source_node_id": "relationship_behavior_config_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+            "usage_key": f"{i18n_prefix}.reference.relationshipRule.usage",
+        },
+        {
+            "reference_id": "expression_user_relationship",
+            "source_layer_id": "layer_11",
+            "source_module_id": "user_relationship",
+            "source_node_id": "user_relationship_config_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["intensity_calculation"],
+            "usage_key": f"{i18n_prefix}.reference.userRelationship.usage",
+        },
+        {
+            "reference_id": "expression_self_limitation",
+            "source_layer_id": "layer_12",
+            "source_module_id": "self_awareness",
+            "source_node_id": "self_awareness_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": EXPRESSION_STATE_NODE_IDS["normalize_fallback"],
+            "usage_key": f"{i18n_prefix}.reference.selfAwareness.usage",
+        },
+    ]
+
+    selection_rule_ids = [
+        "select_supported_state_only",
+        "align_with_dialogue_and_interaction",
+        "prefer_neutral_when_context_insufficient",
+        "use_lowest_sufficient_intensity",
+    ]
+    validation_rule_ids = [
+        "check_expression_state_allowed",
+        "check_expression_intensity_range",
+        "check_neutral_fallback",
+        "check_semantic_output_contract",
+    ]
+
+    def checkbox_config(option_ids: list[str]) -> Dict[str, object]:
+        return {
+            "preset_id": DETAIL_BEHAVIOR_PRESET_ID,
+            "selected_options": option_ids,
+            "default_selected_options": option_ids,
+            "default_options": [
+                {
+                    "option_id": option_id,
+                    "default_selected": True,
+                    "i18n_keys": {
+                        "label": f"{i18n_prefix}.value.{option_id}",
+                    },
+                }
+                for option_id in option_ids
+            ],
+            "optional_options": [],
+            "custom_text": "",
+        }
+
+    reference_ids_by_target = {
+        target_id: [
+            str(reference["reference_id"])
+            for reference in references
+            if reference["target_node_id"] == target_id
+        ]
+        for target_id in {
+            str(reference["target_node_id"])
+            for reference in references
+        }
     }
-    nodes = [
-        {
-            "node_id": DETAIL_BEHAVIOR_NODE_IDS["input_basis"],
-            "node_type": "field_reference",
-            "module_id": module_id,
-            "layer_id": "layer_8",
-            "position": {"x": 0, "y": 0},
-            "params": {
-                "reference_unit": "field",
-                "path_format": "Layer / Module / Field",
-                "reference_types": ["required", "optional", "forbidden"],
-                "references": [],
-                "recommended_references": recommended_references,
-                "reference_options": reference_options,
-                "no_copy_full_text": True,
-                "no_slot": True,
+    node_specs = [
+        (
+            "context_input",
+            "reference_input",
+            {
+                "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+                "mode": "generic_fields",
+                "fields": fields,
+                "references": references,
+                "semantic_context_only": True,
             },
-            "i18n_keys": {
-                "name": "layer8.detailBehavior.node.inputBasis.title",
-                "description": "layer8.detailBehavior.node.inputBasis.description",
-                "type_name": "node.type.field_reference",
+            "contextInput",
+        ),
+        (
+            "allowed_state_recognition",
+            "text_config",
+            {
+                "config_mode": "expression_allowed_state_recognition",
+                "allowed_states": list(EXPRESSION_STATE_VALUES),
+                "default_state": "neutral",
+                "invalid_state_fallback": "neutral",
+                "recognition_rules": [
+                    "recognize_supported_state_only",
+                    "reject_unsupported_state",
+                    "default_to_neutral",
+                ],
             },
-            "outputs": {"field_references": []},
-            "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True, "reusable_node": True},
-        },
-        {
-            "node_id": DETAIL_BEHAVIOR_NODE_IDS["core_rules"],
-            "node_type": "text_config",
-            "module_id": module_id,
-            "layer_id": "layer_8",
-            "position": {"x": 320, "y": 0},
-            "params": {"config_mode": "checkbox_detail_core_rules", "checkbox_config": core_checkbox_config},
-            "i18n_keys": {
-                "name": "layer8.detailBehavior.node.coreRules.title",
-                "description": "layer8.detailBehavior.node.coreRules.description",
-                "type_name": "node.type.text_config",
+            "allowedStateRecognition",
+        ),
+        (
+            "state_selection_rules",
+            "text_config",
+            {
+                "config_mode": "expression_state_selection_rules",
+                "reference_ids": reference_ids_by_target[EXPRESSION_STATE_NODE_IDS["state_selection_rules"]],
+                "selection_rules": selection_rule_ids,
+                "checkbox_config": checkbox_config(selection_rule_ids),
             },
-            "outputs": {},
-            "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True},
-        },
-        {
-            "node_id": DETAIL_BEHAVIOR_NODE_IDS["boundary_limits"],
-            "node_type": "text_config",
-            "module_id": module_id,
-            "layer_id": "layer_8",
-            "position": {"x": 320, "y": 260},
-            "params": {"config_mode": "checkbox_detail_boundaries", "checkbox_config": boundary_checkbox_config},
-            "i18n_keys": {
-                "name": "layer8.detailBehavior.node.boundaryLimits.title",
-                "description": "layer8.detailBehavior.node.boundaryLimits.description",
-                "type_name": "node.type.text_config",
+            "stateSelectionRules",
+        ),
+        (
+            "personality_consistency_validation",
+            "validation",
+            {
+                "config_mode": "expression_personality_consistency_check",
+                "reference_ids": reference_ids_by_target[EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"]],
+                "validation_rules": [
+                    "respect_personality_tendency",
+                    "respect_emotional_expression_style",
+                    "reject_personality_drift",
+                ],
             },
-            "outputs": {},
-            "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True},
-        },
-        {
-            "node_id": DETAIL_BEHAVIOR_NODE_IDS["output_expression"],
-            "node_type": "text_config",
-            "module_id": module_id,
-            "layer_id": "layer_8",
-            "position": {"x": 640, "y": 0},
-            "params": {
-                "config_mode": "checkbox_detail_output_expression",
-                "checkbox_config": output_checkbox_config,
-                "hint_only": True,
-                "no_visual_implementation": True,
+            "personalityConsistencyValidation",
+        ),
+        (
+            "relationship_safety_validation",
+            "validation",
+            {
+                "config_mode": "expression_relationship_safety_check",
+                "reference_ids": reference_ids_by_target[EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"]],
+                "validation_rules": [
+                    "respect_interaction_boundary",
+                    "respect_risk_response",
+                    "respect_relationship_boundary",
+                ],
             },
-            "i18n_keys": {
-                "name": "layer8.detailBehavior.node.outputExpression.title",
-                "description": "layer8.detailBehavior.node.outputExpression.description",
-                "type_name": "node.type.text_config",
+            "relationshipSafetyValidation",
+        ),
+        (
+            "intensity_calculation",
+            "text_config",
+            {
+                "config_mode": "expression_intensity_rules",
+                "reference_ids": reference_ids_by_target[EXPRESSION_STATE_NODE_IDS["intensity_calculation"]],
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 0.0,
+                "calculation_rules": [
+                    "use_relationship_context",
+                    "clamp_to_declared_range",
+                    "avoid_unjustified_intensity",
+                ],
             },
-            "outputs": {},
-            "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True},
-        },
-        {
-            "node_id": DETAIL_BEHAVIOR_NODE_IDS["validation"],
-            "node_type": "text_config",
-            "module_id": module_id,
-            "layer_id": "layer_8",
-            "position": {"x": 960, "y": 0},
-            "params": {
-                "config_mode": "checkbox_detail_validation",
-                "checkbox_config": validation_checkbox_config,
+            "intensityCalculation",
+        ),
+        (
+            "normalize_fallback",
+            "text_config",
+            {
+                "config_mode": "expression_state_semantics_validation",
+                "reference_ids": reference_ids_by_target[EXPRESSION_STATE_NODE_IDS["normalize_fallback"]],
+                "normalization_rules": [
+                    "normalize_state_enum",
+                    "normalize_intensity_range",
+                    "fallback_invalid_state_to_neutral",
+                    "fallback_invalid_intensity_to_zero",
+                ],
+                "fallback_state": "neutral",
+                "invalid_state_fallback": "neutral",
+                "intensity_out_of_range_fallback": 0.0,
+                "validation_error_keys": {
+                    "invalid_state": f"{i18n_prefix}.validation.invalidState",
+                    "intensity_out_of_range": f"{i18n_prefix}.validation.intensityOutOfRange",
+                },
+                "checkbox_config": checkbox_config(validation_rule_ids),
                 "validation_result": "pending",
                 "no_runtime_validation": True,
             },
-            "i18n_keys": {
-                "name": "layer8.detailBehavior.node.validation.title",
-                "description": "layer8.detailBehavior.node.validation.description",
-                "type_name": "node.type.text_config",
+            "normalizeFallback",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": EXPRESSION_STATE_NODE_IDS["normalize_fallback"],
+                "output_key": DETAIL_BEHAVIOR_OUTPUT_KEY,
+                "output_schema": {
+                    "type": "object",
+                    "additional_properties": False,
+                    "fields": {
+                        "expression_state": {
+                            "type": "string",
+                            "enum": list(EXPRESSION_STATE_VALUES),
+                            "default": "neutral",
+                        },
+                        "expression_intensity": {
+                            "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
+                            "default": 0.0,
+                        },
+                    },
+                },
             },
-            "outputs": {},
-            "metadata": {"compile_time_only": True, "runtime_enabled": False, "no_execution": True},
-        },
+            "output",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": EXPRESSION_STATE_NODE_IDS["output"],
+                "export_name": "",
+                "export_name_key": f"{i18n_prefix}.referenceOutput.exportName",
+                "export_description": "",
+                "export_description_key": f"{i18n_prefix}.referenceOutput.exportDescription",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [
+                    {
+                        "field_key": "expression_state",
+                        "field_path": "expression_state",
+                        "label_key": f"{i18n_prefix}.referenceOutput.field.expressionState",
+                        "description_key": f"{i18n_prefix}.referenceOutput.field.expressionState.description",
+                        "value_type": "string",
+                        "enum": list(EXPRESSION_STATE_VALUES),
+                        "required": True,
+                    },
+                    {
+                        "field_key": "expression_intensity",
+                        "field_path": "expression_intensity",
+                        "label_key": f"{i18n_prefix}.referenceOutput.field.expressionIntensity",
+                        "description_key": f"{i18n_prefix}.referenceOutput.field.expressionIntensity.description",
+                        "value_type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "required": True,
+                    },
+                ],
+                "authority_source_type": "derived_config",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
+    ]
+    positions = {
+        role: {"x": index * 360, "y": 120}
+        for index, (role, _node_type, _params, _suffix) in enumerate(node_specs)
+    }
+    metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "no_execution": True,
+        "no_model_call": True,
+    }
+    nodes = [
+        {
+            "node_id": EXPRESSION_STATE_NODE_IDS[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_8",
+            "position": positions[role],
+            "params": params,
+            "i18n_keys": {
+                "name": f"{i18n_prefix}.node.{suffix}.title",
+                "description": f"{i18n_prefix}.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {DETAIL_BEHAVIOR_OUTPUT_KEY: output} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for role, node_type, params, suffix in node_specs
+    ]
+    main_chain = [role for role, _node_type, _params, _suffix in node_specs]
+    side_targets = [
+        "state_selection_rules",
+        "personality_consistency_validation",
+        "relationship_safety_validation",
+        "intensity_calculation",
+        "normalize_fallback",
+    ]
+    edge_pairs = list(zip(main_chain, main_chain[1:])) + [
+        ("context_input", target) for target in side_targets
     ]
     edges = [
-        ("input_basis", "core_rules"),
-        ("core_rules", "output_expression"),
-        ("output_expression", "validation"),
-        ("boundary_limits", "core_rules"),
-        ("boundary_limits", "output_expression"),
-        ("boundary_limits", "validation"),
+        {
+            "edge_id": f"{EXPRESSION_STATE_NODE_IDS[source]}_to_{EXPRESSION_STATE_NODE_IDS[target]}",
+            "source": EXPRESSION_STATE_NODE_IDS[source],
+            "source_port": "p_out",
+            "target": EXPRESSION_STATE_NODE_IDS[target],
+            "target_port": "p_in",
+        }
+        for source, target in edge_pairs
     ]
+
     return _module(
         module_id,
         "detail_behavior_config",
-        "Detail Behavior Module",
+        "Emotional Expression Module",
         "layer_8",
         status=ProtocolStatus.ready,
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "detail_behavior", "text_config", "core", "hint_only"],
+        tags=["behavior", "emotional_expression", "expression_state", "text_config", "stage7_4_11"],
         module_graph={
             "shell_version": "module_shell_v1",
+            "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
             "nodes": nodes,
-            "edges": [
-                {
-                    "edge_id": f"{DETAIL_BEHAVIOR_NODE_IDS[source]}_to_{DETAIL_BEHAVIOR_NODE_IDS[target]}",
-                    "source": DETAIL_BEHAVIOR_NODE_IDS[source],
-                    "source_port": "p_out",
-                    "target": DETAIL_BEHAVIOR_NODE_IDS[target],
-                    "target_port": "p_in",
-                }
-                for source, target in edges
-            ],
+            "edges": edges,
             "output_key": DETAIL_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": DETAIL_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.detailBehavior.module.output"}],
-        ui_config={"shell_version": "module_shell_v1", "classification": "core"},
+        output_schema=[
+            {
+                "key": "expression_state",
+                "type": "string",
+                "required": True,
+                "description": f"{i18n_prefix}.field.expressionState.description",
+            },
+            {
+                "key": "expression_intensity",
+                "type": "number",
+                "required": True,
+                "description": f"{i18n_prefix}.field.expressionIntensity.description",
+            },
+        ],
+        ui_config={"shell_version": "module_shell_v1", "classification": "core", "node_width": 340},
         i18n_keys={
-            "display_name": "layer8.detailBehavior.module.title",
-            "description": "layer8.detailBehavior.module.description",
-            "output": "layer8.detailBehavior.module.output",
-            "module_type": "layer8.detailBehavior.module.type",
+            "display_name": f"{i18n_prefix}.module.title",
+            "description": f"{i18n_prefix}.module.description",
+            "output": f"{i18n_prefix}.module.output",
+            "module_type": f"{i18n_prefix}.module.type",
         },
-        outputs={},
+        outputs={DETAIL_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=_behavior_dr_write_keys("detail_behavior"),
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
             "module_class": "core",
-            "module_type_label_key": "layer8.detailBehavior.module.type",
-            "reference_registry": recommended_references,
+            "module_type_label_key": f"{i18n_prefix}.module.type",
+            "output_contract": {
+                "expression_state": {
+                    "allowed": list(EXPRESSION_STATE_VALUES),
+                    "default": "neutral",
+                    "invalid_fallback": "neutral",
+                },
+                "expression_intensity": {
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "default": 0.0,
+                },
+            },
+            "missing_reference_modules": [],
             "edit_scope": "developer_only",
             "update_level": "versioned_core",
             "requires_recompile": True,
             "compile_time_only": True,
             "text_config_only": True,
-            "checkbox_config_only": True,
-            "hint_only": True,
-            "no_visual_implementation": True,
-            "no_particle_runtime_binding": True,
-            "no_action_or_gaze_system": True,
+            "semantic_output_only": True,
             "no_runtime_capability": True,
             "no_provider_binding": True,
             "no_slot_binding": True,
+            "no_model_call": True,
+            "no_render_mapping": True,
         },
         mock_only=True,
         no_execution=True,

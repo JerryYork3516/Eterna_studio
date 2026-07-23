@@ -67,31 +67,6 @@ _POLICY_SECTIONS: Dict[str, Dict[str, Any]] = {
             )
             + _refs("task_behavior", "short_sentence_expression")
             + _refs("social_behavior", "comfort_no_empty_motivational_talk")
-            + _refs(
-                "detail_behavior",
-                "allow_light_pause",
-                "short_response_first",
-                "restrained_listening_feedback",
-                "comfort_lower_information_density",
-                "clear_paragraphs_when_explaining",
-                "no_fixed_catchphrase",
-                "no_excessive_action_description",
-                "no_catchphrase_template",
-                "no_excessive_realistic_action",
-                "no_gaze_behavior_description",
-                "no_forced_cuteness",
-                "no_greasy_intimacy",
-                "no_long_paragraph_stacking",
-                "no_frequent_city_imagery",
-                "no_non_layer1_hardcoded_name",
-                "common_short_response",
-                "light_hesitation_expression",
-                "restrained_listening_feedback_output",
-                "short_subtitle_segmentation",
-                "low_amplitude_particle_hint",
-                "low_mood_slow_down_rhythm",
-                "thinking_short_transition",
-            )
         ),
     },
     "response_order": {
@@ -199,10 +174,7 @@ _POLICY_SECTIONS: Dict[str, Dict[str, Any]] = {
             "用户沉默、只想待一会儿或只回复“嗯”“好”时，可以安静等待或给一个很短的回应。"
             "不要主动连续发送消息，不用情感压力要求回应，也不强行开启新话题。"
         ),
-        "source_rule_refs": (
-            _refs("interaction_behavior", "silence_quiet_companionship")
-            + _refs("detail_behavior", "no_forced_filling_silence", "quiet_companionship_expression")
-        ),
+        "source_rule_refs": _refs("interaction_behavior", "silence_quiet_companionship"),
     },
     "relationship_policy": {
         "instruction": (
@@ -331,14 +303,7 @@ _POLICY_SECTIONS: Dict[str, Dict[str, Any]] = {
             "不得声称性格由持续对话、自主学习、训练、记忆积累或长期互动逐渐形成，"
             "也不冒充真实感官、生活履历或现实在场。"
         ),
-        "source_rule_refs": (
-            _refs("interaction_behavior", "no_fake_real_presence")
-            + _refs(
-                "detail_behavior",
-                "no_excessive_realistic_action",
-                "no_gaze_behavior_description",
-            )
-        ),
+        "source_rule_refs": _refs("interaction_behavior", "no_fake_real_presence"),
     },
     "ending_policy": {
         "instruction": (
@@ -423,7 +388,7 @@ _TYPE_TEMPLATE_SCENES = [
         "recommended_length": "one_to_two_short_sentences",
         "prohibited_behaviors": ["generic_praise", "forced_celebration", "question_barrage"],
         "linked_policy_ids": ["response_order", "response_style", "follow_up_policy"],
-        "source_rule_refs": _refs("detail_behavior", "common_short_response", "restrained_listening_feedback_output"),
+        "source_rule_refs": _refs("language_behavior", "medium_short", "restrained"),
     },
     {
         "scene_id": "mild_frustration",
@@ -681,6 +646,10 @@ def _selected_rule_refs(behavior_policy: Dict[str, Any]) -> tuple[Set[str], Set[
         return semantic_refs, validation_refs
     for policy_key, module_policy in modules.items():
         if not isinstance(policy_key, str) or not isinstance(module_policy, dict):
+            continue
+        # Stage 7.4.11 expression state is a semantic output contract, not an
+        # LLM dialogue-policy source. Keep it out of runtime prompt coverage.
+        if policy_key == "detail_behavior":
             continue
         selected_options = module_policy.get("selected_options")
         if not isinstance(selected_options, list):
@@ -1532,13 +1501,18 @@ def build_runtime_dialogue_projection(
     if behavior_policy.get("schema_version") != "0.1" or behavior_policy.get("source_layer") != "layer_8":
         return None
     modules = behavior_policy.get("modules")
-    if not isinstance(modules, dict) or set(modules) != _EXPECTED_POLICY_KEYS:
+    if (
+        not isinstance(modules, dict)
+        or not _EXPECTED_POLICY_KEYS.issubset(modules)
+        or set(modules) - _EXPECTED_POLICY_KEYS != {"detail_behavior"}
+    ):
         return None
     if any(
-        isinstance(module_policy, dict)
+        policy_key != "detail_behavior"
+        and isinstance(module_policy, dict)
         and isinstance(module_policy.get("custom_text"), str)
         and module_policy["custom_text"].strip()
-        for module_policy in modules.values()
+        for policy_key, module_policy in modules.items()
     ):
         return None
     semantic_refs, validation_refs = _selected_rule_refs(behavior_policy)

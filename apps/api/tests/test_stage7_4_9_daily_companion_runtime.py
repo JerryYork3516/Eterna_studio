@@ -313,6 +313,7 @@ def _semantic_behavior_refs(behavior_policy: dict) -> set[str]:
     return {
         f"{policy_key}:{option_id}"
         for policy_key, module_policy in behavior_policy["modules"].items()
+        if policy_key != "detail_behavior"
         for option_id in module_policy["selected_options"]
         if not option_id.startswith("check_")
     }
@@ -556,7 +557,7 @@ def test_source_metadata_is_additive_to_the_frozen_projection_digest():
     projection = _projection(_compile(_catalog_modules()))
 
     assert _digest(_without_source_metadata(projection)) == (
-        "6847ee1777d9aca614cad65936ea50c91c8c9029e5e754bd06081f3686ae85d2"
+        "dbe4b56ab9b063e7606b93593773d32b4e2c65b677c82850021afeaf71b7d3fa"
     )
 
 
@@ -955,11 +956,13 @@ def test_all_frozen_semantic_options_are_covered_by_natural_language_sections():
 
     assert semantic_refs == translated_refs
     assert projection["source_rule_coverage"] == {
-        "selected_semantic_rule_count": 140,
-        "translated_rule_count": 140,
+        "selected_semantic_rule_count": 116,
+        "translated_rule_count": 116,
         "unmapped_rule_refs": [],
-        "validation_rule_count_excluded": 48,
+        "validation_rule_count_excluded": 40,
     }
+    assert not any(ref.startswith("detail_behavior:") for ref in translated_refs)
+    assert payload["behavior_policy"]["modules"]["detail_behavior"]["selected_options"]
     assert ":check_" not in json.dumps(projection, ensure_ascii=False)
 
 
@@ -1646,3 +1649,16 @@ def test_partial_unknown_or_custom_behavior_policy_fails_closed_without_mutation
         assert (marker in policy_text) is should_exist
         assert "runtime_dialogue_projection" not in dr["payload"]
         assert mock_load_dr_v0_3(dr)["loaded"] is True
+
+
+def test_expression_state_custom_text_does_not_enter_or_disable_dialogue_projection():
+    modules = _catalog_modules()
+    marker = "只用于测试的居民表达语义规则"
+    _set_custom_text(modules, "emotion_reaction", marker)
+
+    dr = _compile(modules)
+    projection = dr["payload"]["runtime_dialogue_projection"]
+
+    assert marker in json.dumps(dr["payload"]["behavior_policy"], ensure_ascii=False)
+    assert marker not in json.dumps(projection, ensure_ascii=False)
+    assert projection["source_rule_coverage"]["unmapped_rule_refs"] == []

@@ -15,6 +15,9 @@ from app.registry.module_catalog import (
     DATA_SAFETY_OUTPUT_KEY,
     DECISION_BEHAVIOR_MODULE_ID,
     DETAIL_BEHAVIOR_MODULE_ID,
+    EXPRESSION_STATE_CONTENT_REVISION,
+    EXPRESSION_STATE_NODE_IDS,
+    EXPRESSION_STATE_VALUES,
     INTERACTION_BEHAVIOR_MODULE_ID,
     LAYER2_CATALOG_ONLY_MODULE_IDS,
     LAYER2_PERSONALITY_FORMAL_MODULE_IDS,
@@ -2794,139 +2797,254 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
     _assert_stable_checkbox_storage("decision_pattern")
 
 
-def test_layer8_detail_behavior_module_is_checkbox_config_with_field_references():
-    catalog_map = {module.module_id: module for module in get_module_catalog()}
-    module = catalog_map["emotion_reaction"]
+def test_layer8_emotional_expression_module_uses_semantic_state_contract():
+    catalog = get_module_catalog()
+    modules = [module for module in catalog if module.module_id == DETAIL_BEHAVIOR_MODULE_ID]
+    assert len(modules) == 1
+
+    module = modules[0]
     nodes = module.module_graph["nodes"]
+    node_map = {node["node_id"]: node for node in nodes}
     edges = module.module_graph["edges"]
-    reference_node = nodes[0]
-    recommended_refs = reference_node["params"]["recommended_references"]
-    positions = {node["node_id"]: node["position"] for node in nodes}
     edge_pairs = [(edge["source"], edge["target"]) for edge in edges]
+    expected_node_ids = list(EXPRESSION_STATE_NODE_IDS.values())
+    main_chain = list(zip(expected_node_ids, expected_node_ids[1:]))
 
     assert module.layer_id == "layer_8"
-    assert module.module_name == "Detail Behavior Module"
+    assert module.module_id == "emotion_reaction"
+    assert module.module_name == "Emotional Expression Module"
     assert module.module_type == "detail_behavior_config"
-    assert module.category == "behavior"
-    assert module.ui_config["classification"] == "core"
-    assert module.config["module_class"] == "core"
     assert module.config["text_config_only"] is True
-    assert module.config["checkbox_config_only"] is True
-    assert module.config["hint_only"] is True
-    assert module.config["no_visual_implementation"] is True
-    assert module.config["no_particle_runtime_binding"] is True
-    assert module.config["no_action_or_gaze_system"] is True
-    assert module.config["no_runtime_capability"] is True
-    assert module.config["no_provider_binding"] is True
-    assert module.config["no_slot_binding"] is True
-    assert module.is_placeholder is False
-    assert module.slot_type is None
-    assert module.slot_bindings == []
-    assert module.slot_declarations == []
+    assert module.config["semantic_output_only"] is True
+    assert module.config["no_model_call"] is True
+    assert module.config["content_revision"] == EXPRESSION_STATE_CONTENT_REVISION
+    assert module.module_graph["content_revision"] == EXPRESSION_STATE_CONTENT_REVISION
     assert module.runtime_enabled is False
     assert module.no_execution is True
-    assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
-    expected_default_options = {
-        "detail_behavior_core_rules": [
-            "allow_light_pause",
-            "short_response_first",
-            "restrained_listening_feedback",
-            "no_forced_filling_silence",
-            "comfort_lower_information_density",
-            "clear_paragraphs_when_explaining",
-            "no_fixed_catchphrase",
-            "no_excessive_action_description",
-        ],
-        "detail_behavior_boundary_limits": [
-            "no_catchphrase_template",
-            "no_excessive_realistic_action",
-            "no_gaze_behavior_description",
-            "no_forced_cuteness",
-            "no_greasy_intimacy",
-            "no_long_paragraph_stacking",
-            "no_frequent_city_imagery",
-            "no_non_layer1_hardcoded_name",
-        ],
-        "detail_behavior_output_expression": [
-            "common_short_response",
-            "light_hesitation_expression",
-            "restrained_listening_feedback_output",
-            "quiet_companionship_expression",
-            "short_subtitle_segmentation",
-            "low_amplitude_particle_hint",
-            "low_mood_slow_down_rhythm",
-            "thinking_short_transition",
-        ],
-        "detail_behavior_validation": [
-            "check_template_style",
-            "check_excessive_realism",
-            "check_girlfriend_tone",
-            "check_too_many_catchphrases",
-            "check_too_many_action_descriptions",
-            "check_too_long_sentences",
-            "check_warm_restrained_personality",
-            "check_hardcoded_resident_name",
-        ],
+    assert module.is_placeholder is False
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(nodes) == 9
+    assert len(edges) == 13
+    assert edge_pairs[:8] == main_chain
+    assert set(edge_pairs[8:]) == {
+        (
+            EXPRESSION_STATE_NODE_IDS["context_input"],
+            EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+        ),
+        (
+            EXPRESSION_STATE_NODE_IDS["context_input"],
+            EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"],
+        ),
+        (
+            EXPRESSION_STATE_NODE_IDS["context_input"],
+            EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+        ),
+        (
+            EXPRESSION_STATE_NODE_IDS["context_input"],
+            EXPRESSION_STATE_NODE_IDS["intensity_calculation"],
+        ),
+        (
+            EXPRESSION_STATE_NODE_IDS["context_input"],
+            EXPRESSION_STATE_NODE_IDS["normalize_fallback"],
+        ),
     }
-    assert positions == {
-        "detail_behavior_input_basis": {"x": 0, "y": 0},
-        "detail_behavior_core_rules": {"x": 320, "y": 0},
-        "detail_behavior_boundary_limits": {"x": 320, "y": 260},
-        "detail_behavior_output_expression": {"x": 640, "y": 0},
-        "detail_behavior_validation": {"x": 960, "y": 0},
-    }
-    assert edge_pairs == [
-        ("detail_behavior_input_basis", "detail_behavior_core_rules"),
-        ("detail_behavior_core_rules", "detail_behavior_output_expression"),
-        ("detail_behavior_output_expression", "detail_behavior_validation"),
-        ("detail_behavior_boundary_limits", "detail_behavior_core_rules"),
-        ("detail_behavior_boundary_limits", "detail_behavior_output_expression"),
-        ("detail_behavior_boundary_limits", "detail_behavior_validation"),
-    ]
-    assert ("detail_behavior_boundary_limits", "detail_behavior_input_basis") not in edge_pairs
-    assert reference_node["metadata"]["reusable_node"] is True
-    assert reference_node["params"]["reference_unit"] == "field"
-    assert reference_node["params"]["path_format"] == "Layer / Module / Field"
-    assert reference_node["params"]["references"] == []
-    assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
-    assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
-    assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
-        checkbox_config = node["params"]["checkbox_config"]
-        expected_selected = expected_default_options[node["node_id"]]
+    assert all(node["layer_id"] == "layer_8" for node in nodes)
+    assert all(node["module_id"] == DETAIL_BEHAVIOR_MODULE_ID for node in nodes)
+    assert all(node["metadata"]["no_execution"] is True for node in nodes)
+    assert all(node["metadata"]["no_model_call"] is True for node in nodes)
 
-        assert checkbox_config["preset_id"] == "human_empathy_detail_v0_1"
-        assert checkbox_config["apply_preset_label_key"] == "node.checklist.applyHumanEmpathyDetailTemplate"
-        assert checkbox_config["selected_options"] == expected_selected
-        assert checkbox_config["default_selected_options"] == expected_selected
-        assert checkbox_config["custom_text"] == ""
-        assert [option["option_id"] for option in checkbox_config["default_options"]] == expected_selected
-        assert all(option["i18n_keys"]["label"].startswith("layer8.detailBehavior.option.") for option in checkbox_config["default_options"])
-        assert not set(checkbox_config["selected_options"]) & {
-            "forbidden_basic_identity_name",
-            "forbidden_basic_identity_resident_id",
-            "forbidden_basic_identity_codename",
-            "forbidden_basic_identity_display_alias",
-        }
-    assert [option["option_id"] for option in nodes[1]["params"]["checkbox_config"]["optional_options"]] == [
-        "quieter",
-        "softer",
-        "more_life_like",
-        "more_rational_restrained",
-        "more_subtitle_friendly",
-        "more_particle_hint_friendly",
+    context_input = node_map[EXPRESSION_STATE_NODE_IDS["context_input"]]
+    assert context_input["params"]["content_revision"] == EXPRESSION_STATE_CONTENT_REVISION
+    fields = {
+        field["field_key"]: field
+        for field in context_input["params"]["fields"]
+    }
+    assert set(fields) == {
+        "expression_state",
+        "expression_intensity",
+        "resident_expression_notes",
+    }
+    state_field = fields["expression_state"]
+    intensity_field = fields["expression_intensity"]
+    assert state_field["field_value"] == "neutral"
+    assert [option["value"] for option in state_field["enum_options"]] == list(
+        EXPRESSION_STATE_VALUES
+    )
+    assert intensity_field["field_value"] == 0.0
+    assert intensity_field["minimum"] == 0.0
+    assert intensity_field["maximum"] == 1.0
+
+    allowed = node_map[EXPRESSION_STATE_NODE_IDS["allowed_state_recognition"]]["params"]
+    normalize = node_map[EXPRESSION_STATE_NODE_IDS["normalize_fallback"]]["params"]
+    intensity = node_map[EXPRESSION_STATE_NODE_IDS["intensity_calculation"]]["params"]
+    assert allowed["allowed_states"] == list(EXPRESSION_STATE_VALUES)
+    assert allowed["default_state"] == "neutral"
+    assert allowed["invalid_state_fallback"] == "neutral"
+    assert normalize["fallback_state"] == "neutral"
+    assert normalize["invalid_state_fallback"] == "neutral"
+    assert intensity["minimum"] == 0.0
+    assert intensity["maximum"] == 1.0
+
+    expected_output = {
+        "expression_state": "neutral",
+        "expression_intensity": 0.0,
+    }
+    assert module.outputs == {"detail_behavior_config": expected_output}
+    assert [field.key for field in module.output_schema] == [
+        "expression_state",
+        "expression_intensity",
     ]
+    output_node = node_map[EXPRESSION_STATE_NODE_IDS["output"]]
+    assert output_node["outputs"] == {"detail_behavior_config": expected_output}
+    output_fields = output_node["params"]["output_schema"]["fields"]
+    assert set(output_fields) == {"expression_state", "expression_intensity"}
+    assert output_fields["expression_state"]["enum"] == list(EXPRESSION_STATE_VALUES)
+    assert output_fields["expression_state"]["default"] == "neutral"
+    assert output_fields["expression_intensity"]["minimum"] == 0.0
+    assert output_fields["expression_intensity"]["maximum"] == 1.0
+    reference_output = node_map[EXPRESSION_STATE_NODE_IDS["reference_output"]]
+    assert [field["field_key"] for field in reference_output["params"]["export_fields"]] == [
+        "expression_state",
+        "expression_intensity",
+    ]
+
+    expected_references = {
+        (
+            "layer_2",
+            "personality_traits",
+            EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"],
+        ),
+        (
+            "layer_2",
+            "emotion_pattern",
+            EXPRESSION_STATE_NODE_IDS["personality_consistency_validation"],
+        ),
+        (
+            "layer_8",
+            "language_habit",
+            EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+        ),
+        (
+            "layer_8",
+            "interaction_strategy",
+            EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+        ),
+        (
+            "layer_3",
+            "humanistic_interaction_boundary_config_v0_1",
+            EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+        ),
+        (
+            "layer_3",
+            "humanistic_risk_response_config_v0_1",
+            EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+        ),
+        (
+            "layer_11",
+            "relationship_rule",
+            EXPRESSION_STATE_NODE_IDS["relationship_safety_validation"],
+        ),
+        (
+            "layer_11",
+            "user_relationship",
+            EXPRESSION_STATE_NODE_IDS["intensity_calculation"],
+        ),
+        (
+            "layer_12",
+            "self_awareness",
+            EXPRESSION_STATE_NODE_IDS["normalize_fallback"],
+        ),
+    }
+    references = context_input["params"]["references"]
+    assert len(references) == 9
+    assert {
+        (
+            reference["source_layer_id"],
+            reference["source_module_id"],
+            reference["target_node_id"],
+        )
+        for reference in references
+    } == expected_references
+    catalog_map = {(item.layer_id, item.module_id): item for item in catalog}
+    for reference in references:
+        source = catalog_map[
+            (reference["source_layer_id"], reference["source_module_id"])
+        ]
+        source_node_ids = {
+            node["node_id"] for node in source.module_graph.get("nodes", [])
+        }
+        assert reference["source_node_id"] in source_node_ids
+    assert module.config["missing_reference_modules"] == []
+
+    semantic_module = json.dumps(
+        {
+            "module_graph": module.module_graph,
+            "output_schema": [field.model_dump() for field in module.output_schema],
+            "outputs": module.outputs,
+            "config": module.config,
+            "tags": module.tags,
+        },
+        ensure_ascii=False,
+    ).lower()
+    for forbidden in (
+        "color",
+        "brightness",
+        "speed",
+        "diffusion",
+        "halo",
+        "particle",
+        "shader",
+    ):
+        assert forbidden not in semantic_module
+
+    root = Path(__file__).resolve().parents[3]
+    zh = json.loads((root / "apps/web/locales/zh.json").read_text())
+    en = json.loads((root / "apps/web/locales/en.json").read_text())
+    required_i18n = set(module.i18n_keys.values())
     for node in nodes:
-        assert node["layer_id"] == "layer_8"
-        assert node["module_id"] == "emotion_reaction"
-        assert node["metadata"]["compile_time_only"] is True
-        assert node["metadata"]["runtime_enabled"] is False
-        assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.detailBehavior.node.")
-    _assert_stable_checkbox_storage("emotion_reaction")
+        required_i18n.update(node["i18n_keys"].values())
+        params = node.get("params", {})
+        for field in params.get("fields", []):
+            required_i18n.update(field.get("i18n_keys", {}).values())
+            required_i18n.update(
+                option["label_key"] for option in field.get("enum_options", [])
+            )
+        for reference in params.get("references", []):
+            required_i18n.add(reference["usage_key"])
+        checkbox_config = params.get("checkbox_config")
+        if isinstance(checkbox_config, dict):
+            required_i18n.update(
+                option["i18n_keys"]["label"]
+                for option in checkbox_config["default_options"]
+            )
+        for key in params.get("validation_error_keys", {}).values():
+            required_i18n.add(key)
+        for field in params.get("export_fields", []):
+            required_i18n.add(field["label_key"])
+            required_i18n.add(field["description_key"])
+        for key_name in ("export_name_key", "export_description_key"):
+            if isinstance(params.get(key_name), str):
+                required_i18n.add(params[key_name])
+    for key in required_i18n:
+        assert key in zh, f"missing zh i18n key: {key}"
+        assert key in en, f"missing en i18n key: {key}"
+    assert zh[module.i18n_keys["display_name"]] == "情绪表达模块"
+    assert en[module.i18n_keys["display_name"]] == "Emotional Expression Module"
+    assert zh[module.i18n_keys["module_type"]] == "文本规则配置模块"
+    assert en[module.i18n_keys["module_type"]] == "Text Rules Configuration Module"
+
+    zh_state_labels = {
+        "neutral": "中性",
+        "calm": "平静",
+        "caring": "关怀",
+        "subdued": "低落",
+        "joyful": "愉悦",
+    }
+    for value, label in zh_state_labels.items():
+        key = f"layer8.emotionalExpression.enum.expressionState.{value}"
+        assert zh[key] == label
+        assert zh[key] != value
+        assert en[key]
 
 
 def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_references():

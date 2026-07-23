@@ -19,6 +19,7 @@ import type { ModuleInstance } from "@/lib/canvas-persistence";
 import { translate } from "@/i18n";
 import {
   filterDanglingModuleGraphEdges,
+  migrateExpressionStateSemanticsGraph,
   mergeCatalogReferenceDeclarations,
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
@@ -45,6 +46,7 @@ const DIALOGUE_RUNTIME_PROFILE_CONFIG_INPUT_ID = "dialogue_runtime_profile_confi
 const DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID = "dialogue_runtime_profile_reference_input";
 const DIALOGUE_RUNTIME_PROFILE_OUTPUT_ID = "dialogue_runtime_profile_output";
 const DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config";
+const EXPRESSION_STATE_GRAPH_ID = "layer_8::emotion_reaction";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
@@ -2093,23 +2095,47 @@ function migrateDialogueRuntimeProfileContentSeed(
   return { ...graph, nodes };
 }
 
+function migrateExpressionStateSemanticsSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (graph.moduleNodeId !== EXPRESSION_STATE_GRAPH_ID || !initialNodes?.length) {
+    return null;
+  }
+  const migration = migrateExpressionStateSemanticsGraph(
+    { nodes: graph.nodes, edges: graph.edges },
+    { nodes: initialNodes, edges: initialEdges ?? [] }
+  );
+  if (!migration.migrated) {
+    return null;
+  }
+  return {
+    ...graph,
+    nodes: migration.value.nodes as WorkflowNode[],
+    edges: migration.value.edges as WorkflowEdge[],
+  };
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
   initialEdges?: WorkflowEdge[]
 ): ModuleGraph | null {
-  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(graph, initialNodes);
+  const expressionMigrated = migrateExpressionStateSemanticsSeed(graph, initialNodes, initialEdges);
+  const graphAfterExpressionMigration = expressionMigrated ?? graph;
+  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(graphAfterExpressionMigration, initialNodes);
   const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
-    dialogueReferenceMerged ?? graph,
+    dialogueReferenceMerged ?? graphAfterExpressionMigration,
     initialNodes
   );
-  const graphAfterDialogueMerge = dialogueContentMigrated ?? dialogueReferenceMerged ?? graph;
+  const graphAfterDialogueMerge = dialogueContentMigrated ?? dialogueReferenceMerged ?? graphAfterExpressionMigration;
   const referenceMerged = mergeLayer12ReferenceSeed(graphAfterDialogueMerge, initialNodes, initialEdges);
   const graphAfterReferenceMerge = referenceMerged ?? graphAfterDialogueMerge;
   const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
   const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graphAfterReferenceMerge, initialNodes);
   const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graphAfterReferenceMerge, initialNodes, initialEdges);
-  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueContentMigrated ?? dialogueReferenceMerged;
+  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueContentMigrated ?? dialogueReferenceMerged ?? expressionMigrated;
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {
@@ -3193,7 +3219,11 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(existingGraph, initialNodes, initialEdges);
     if (mergedGraph) {
       store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
-      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID || moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID) {
+      if (
+        moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
+        moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
+        moduleNodeId === EXPRESSION_STATE_GRAPH_ID
+      ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into existing graph");
@@ -3226,7 +3256,11 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     const mergedGraph = mergeCatalogSeed(graph, initialNodes, initialEdges) ?? graph;
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
-      if (moduleNodeId === VISUAL_STYLE_GRAPH_ID || moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID) {
+      if (
+        moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
+        moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
+        moduleNodeId === EXPRESSION_STATE_GRAPH_ID
+      ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
       console.log("[P1-BRIDGE] ensureModuleGraphExists: merged catalog field seed into legacy graph");

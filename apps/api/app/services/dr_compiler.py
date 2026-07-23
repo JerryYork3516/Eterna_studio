@@ -691,10 +691,19 @@ def _canonical_reference_source_node_id(
     source_layer_id = _nonempty_str(reference.get("source_layer_id"))
     source_module_id = _nonempty_str(reference.get("source_module_id"))
     legacy_prefix = f"{source_layer_id}::{source_module_id}::"
-    if source_layer_id and source_module_id and source_node_id.startswith(legacy_prefix):
-        local_node_id = source_node_id[len(legacy_prefix) :]
-        if local_node_id in node_ids:
-            return local_node_id
+    local_source_node_id = source_node_id
+    if "::" in source_node_id:
+        if not source_layer_id or not source_module_id or not source_node_id.startswith(legacy_prefix):
+            return source_node_id
+        local_source_node_id = source_node_id[len(legacy_prefix) :]
+        if local_source_node_id in node_ids:
+            return local_source_node_id
+
+    suffix_matches = [
+        node_id for node_id in node_ids if node_id.split("::")[-1] == local_source_node_id
+    ]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
     return source_node_id
 
 
@@ -1917,9 +1926,9 @@ def _checkbox_config_from_node(node: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _behavior_reference_payload(reference: Dict[str, Any]) -> Dict[str, Any]:
-    layer_id = _nonempty_str(reference.get("layer_id"))
-    module_id = _nonempty_str(reference.get("module_id"))
-    field_id = _nonempty_str(reference.get("field_id"))
+    layer_id = _nonempty_str(reference.get("layer_id") or reference.get("source_layer_id"))
+    module_id = _nonempty_str(reference.get("module_id") or reference.get("source_module_id"))
+    field_id = _nonempty_str(reference.get("field_id") or reference.get("source_node_id"))
     path = _nonempty_str(reference.get("path")) or "/".join(item for item in (layer_id, module_id, field_id) if item)
     return {
         "reference_id": _nonempty_str(reference.get("reference_id")),
@@ -1934,7 +1943,10 @@ def _behavior_reference_payload(reference: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _behavior_field_references(module: Dict[str, Any]) -> List[Dict[str, Any]]:
-    field_reference_nodes = _module_nodes_by_type(module, "field_reference")
+    field_reference_nodes = [
+        *_module_nodes_by_type(module, "field_reference"),
+        *_module_nodes_by_type(module, "reference_input"),
+    ]
     references: List[Dict[str, Any]] = []
     for node in field_reference_nodes:
         params = _as_dict(node.get("params"))
