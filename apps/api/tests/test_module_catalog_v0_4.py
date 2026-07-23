@@ -28,6 +28,14 @@ from app.registry.module_catalog import (
     LANGUAGE_BEHAVIOR_MODULE_ID,
     INTERACTION_SAFETY_MODULE_ID,
     INTERACTION_SAFETY_OUTPUT_KEY,
+    PARTICLE_AVATAR_MODULE_ID,
+    PARTICLE_AVATAR_NODE_IDS,
+    PARTICLE_AVATAR_OUTPUT_KEY,
+    PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+    PARTICLE_EXPRESSION_STATES,
+    PARTICLE_LIFECYCLE_STATES,
+    PARTICLE_RELATIVE_MAPPING_DEFAULTS,
+    PARTICLE_RELATIVE_PARAMETER_RANGES,
     RISK_POLICY_OUTPUT_KEY,
     RISK_RESPONSE_MODULE_ID,
     RISK_RESPONSE_NODE_IDS,
@@ -3045,6 +3053,291 @@ def test_layer8_emotional_expression_module_uses_semantic_state_contract():
         assert zh[key] == label
         assert zh[key] != value
         assert en[key]
+
+
+def test_layer10_particle_avatar_uses_relative_expression_mapping_contract():
+    catalog = get_module_catalog()
+    modules = [
+        module for module in catalog if module.module_id == PARTICLE_AVATAR_MODULE_ID
+    ]
+    assert len(modules) == 1
+
+    module = modules[0]
+    nodes = module.module_graph["nodes"]
+    node_map = {node["node_id"]: node for node in nodes}
+    edges = module.module_graph["edges"]
+    edge_pairs = [(edge["source"], edge["target"]) for edge in edges]
+    expected_node_ids = list(PARTICLE_AVATAR_NODE_IDS.values())
+
+    assert module.layer_id == "layer_10"
+    assert module.module_type == "multimodal"
+    assert module.module_name == "Particle Avatar"
+    assert module.ui_config["classification"] == "visual_rule_config"
+    assert module.config["visual_rule_config_only"] is True
+    assert module.config["content_revision"] == (
+        PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
+    )
+    assert module.module_graph["content_revision"] == (
+        PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
+    )
+    assert module.runtime_enabled is False
+    assert module.no_execution is True
+    assert module.is_placeholder is True
+    assert [node["node_id"] for node in nodes] == expected_node_ids
+    assert len(nodes) == 10
+    assert len(edges) == 11
+    assert edge_pairs[:9] == list(zip(expected_node_ids, expected_node_ids[1:]))
+    assert set(edge_pairs[9:]) == {
+        (
+            PARTICLE_AVATAR_NODE_IDS["config_input"],
+            PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"],
+        ),
+        (
+            PARTICLE_AVATAR_NODE_IDS["config_input"],
+            PARTICLE_AVATAR_NODE_IDS["expression_intensity"],
+        ),
+    }
+    assert all(node["layer_id"] == "layer_10" for node in nodes)
+    assert all(node["module_id"] == PARTICLE_AVATAR_MODULE_ID for node in nodes)
+    assert all(node["metadata"]["no_execution"] is True for node in nodes)
+    assert all(node["metadata"]["no_model_call"] is True for node in nodes)
+    assert all(
+        node["metadata"]["no_final_particle_calculation"] is True for node in nodes
+    )
+
+    config_input = node_map[PARTICLE_AVATAR_NODE_IDS["config_input"]]
+    assert config_input["params"]["content_revision"] == (
+        PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
+    )
+    fields = {
+        field["field_key"]: field for field in config_input["params"]["fields"]
+    }
+    assert fields["resident_default_base_color"]["field_value"] == "#7aa2f7"
+    assert fields["user_current_base_color"]["field_value"] == ""
+    assert fields["primary_color"]["field_value"] == ""
+    assert fields["secondary_color"]["field_value"] == ""
+    assert fields["highlight_color"]["field_value"] == ""
+    assert fields["user_color_override_rule"]["field_value"] == (
+        "preserve_user_current_base_color"
+    )
+    assert fields["missing_color_fallback_rule"]["field_value"] == (
+        "resident_default_then_particle_core_gray_white"
+    )
+
+    base_color = node_map[PARTICLE_AVATAR_NODE_IDS["base_color_resolution"]][
+        "params"
+    ]
+    assert base_color["priority"] == [
+        "user_current_base_color",
+        "resident_default_base_color",
+        "particle_core_default_gray_white",
+    ]
+    assert base_color["expression_changes_are_relative_to_resolved_base"] is True
+    assert base_color["expression_may_replace_user_base_color"] is False
+    assert base_color["final_color_calculation"] is False
+
+    relative = node_map[
+        PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"]
+    ]["params"]
+    assert relative["states"] == list(PARTICLE_EXPRESSION_STATES)
+    assert relative["mapping_kind"] == "relative_parameters_only"
+    assert relative["fixed_state_colors_allowed"] is False
+    assert relative["invalid_state_fallback"] == "neutral"
+    assert relative["state_mappings"] == PARTICLE_RELATIVE_MAPPING_DEFAULTS
+    assert set(relative["state_mappings"]) == set(PARTICLE_EXPRESSION_STATES)
+    for state, mapping in relative["state_mappings"].items():
+        assert set(mapping) == set(PARTICLE_RELATIVE_PARAMETER_RANGES)
+        assert all(isinstance(value, (int, float)) for value in mapping.values())
+        assert not any(
+            key in mapping
+            for key in (
+                "color",
+                "fixed_color",
+                "primary_color",
+                "secondary_color",
+                "highlight_color",
+            )
+        ), state
+    assert relative["state_mappings"]["neutral"] == {
+        "brightness_multiplier": 1.0,
+        "saturation_multiplier": 1.0,
+        "color_temperature_offset": 0.0,
+        "energy_multiplier": 1.0,
+        "motion_speed_multiplier": 1.0,
+        "diffusion_multiplier": 1.0,
+    }
+
+    for state in PARTICLE_EXPRESSION_STATES:
+        for parameter, (minimum, maximum) in (
+            PARTICLE_RELATIVE_PARAMETER_RANGES.items()
+        ):
+            relative_field = fields[f"{state}_{parameter}"]
+            assert relative_field["minimum"] == minimum
+            assert relative_field["maximum"] == maximum
+            assert minimum <= relative_field["field_value"] <= maximum
+    range_validation = node_map[
+        PARTICLE_AVATAR_NODE_IDS["parameter_range"]
+    ]["params"]
+    assert range_validation["parameter_ranges"] == {
+        parameter: {"minimum": limits[0], "maximum": limits[1]}
+        for parameter, limits in PARTICLE_RELATIVE_PARAMETER_RANGES.items()
+    }
+    assert range_validation["clamp_on_save"] is True
+    assert range_validation["clamp_legacy_values"] is True
+
+    intensity = node_map[PARTICLE_AVATAR_NODE_IDS["expression_intensity"]][
+        "params"
+    ]
+    assert intensity["minimum"] == 0.0
+    assert intensity["maximum"] == 1.0
+    assert intensity["studio_executes_interpolation"] is False
+    assert intensity["interpolation_executor"] == "aftelle"
+
+    lifecycle = node_map[PARTICLE_AVATAR_NODE_IDS["lifecycle_priority"]][
+        "params"
+    ]
+    assert lifecycle["lifecycle_states"] == list(PARTICLE_LIFECYCLE_STATES)
+    assert lifecycle["expression_states"] == list(PARTICLE_EXPRESSION_STATES)
+    assert set(lifecycle["lifecycle_states"]).isdisjoint(
+        lifecycle["expression_states"]
+    )
+    assert lifecycle["state_domains_separate"] is True
+    assert lifecycle["combined_state_enum_forbidden"] is True
+    assert lifecycle["override_states"] == ["error", "loading", "exit"]
+    assert lifecycle["composable_states"] == ["idle", "thinking", "speaking"]
+
+    transition = node_map[PARTICLE_AVATAR_NODE_IDS["state_transition"]][
+        "params"
+    ]
+    assert fields["transition_duration"]["field_value"] == 0.6
+    assert fields["minimum_hold_duration"]["field_value"] == 0.35
+    assert fields["transition_style"]["field_value"] == "smooth"
+    assert transition["transition_style_options"] == ["smooth"]
+    assert transition["same_state_retriggers_transition"] is False
+    assert transition["new_state_continues_from_current_visual"] is True
+    assert transition["minimum_hold_prevents_flicker"] is True
+    assert transition["invalid_state_fallback"] == "neutral"
+    assert transition["uses_accumulated_idle_time_as_progress"] is False
+    assert transition["studio_stores_rules_only"] is True
+
+    references = config_input["params"]["references"]
+    assert [
+        (
+            reference["source_layer_id"],
+            reference["source_module_id"],
+            reference["source_node_id"],
+            reference["source_scope"],
+            reference["source_field_paths"],
+            reference["target_node_id"],
+        )
+        for reference in references
+    ] == [
+        (
+            "layer_8",
+            DETAIL_BEHAVIOR_MODULE_ID,
+            EXPRESSION_STATE_NODE_IDS["reference_output"],
+            "field",
+            ["expression_state"],
+            PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"],
+        ),
+        (
+            "layer_8",
+            DETAIL_BEHAVIOR_MODULE_ID,
+            EXPRESSION_STATE_NODE_IDS["reference_output"],
+            "field",
+            ["expression_intensity"],
+            PARTICLE_AVATAR_NODE_IDS["expression_intensity"],
+        ),
+    ]
+    source = next(
+        candidate
+        for candidate in catalog
+        if candidate.module_id == DETAIL_BEHAVIOR_MODULE_ID
+    )
+    source_node = next(
+        node
+        for node in source.module_graph["nodes"]
+        if node["node_id"] == EXPRESSION_STATE_NODE_IDS["reference_output"]
+    )
+    assert {
+        field["field_path"] for field in source_node["params"]["export_fields"]
+    }.issuperset({"expression_state", "expression_intensity"})
+    assert module.config["missing_reference_sources"] == [
+        "lifecycle_state_source",
+        "particle_base_color_source",
+    ]
+
+    assert module.outputs == {
+        PARTICLE_AVATAR_OUTPUT_KEY: node_map[
+            PARTICLE_AVATAR_NODE_IDS["output"]
+        ]["outputs"][PARTICLE_AVATAR_OUTPUT_KEY]
+    }
+    output = module.outputs[PARTICLE_AVATAR_OUTPUT_KEY]
+    assert set(output) == {
+        "base_color_config",
+        "expression_relative_mapping",
+        "expression_intensity_rule",
+        "lifecycle_priority",
+        "parameter_ranges",
+        "transition_rules",
+    }
+    assert "final_color" not in output
+    assert "final_particle_parameters" not in output
+
+    root = Path(__file__).resolve().parents[3]
+    zh = json.loads((root / "apps/web/locales/zh.json").read_text())
+    en = json.loads((root / "apps/web/locales/en.json").read_text())
+    required_i18n = set(module.i18n_keys.values())
+    for node in nodes:
+        required_i18n.update(node["i18n_keys"].values())
+        params = node.get("params", {})
+        for config_field in params.get("fields", []):
+            required_i18n.update(config_field.get("i18n_keys", {}).values())
+            required_i18n.update(
+                option["label_key"]
+                for option in config_field.get("enum_options", [])
+            )
+        for reference in params.get("references", []):
+            required_i18n.add(reference["usage_key"])
+        for export_field in params.get("export_fields", []):
+            required_i18n.add(export_field["label_key"])
+            required_i18n.add(export_field["description_key"])
+        for key_name in ("export_name_key", "export_description_key"):
+            if isinstance(params.get(key_name), str):
+                required_i18n.add(params[key_name])
+        validation_error_key = params.get("validation_error_key")
+        if isinstance(validation_error_key, str):
+            required_i18n.add(validation_error_key)
+    for key in required_i18n:
+        assert key in zh, f"missing zh i18n key: {key}"
+        assert key in en, f"missing en i18n key: {key}"
+        assert "\ufffd" not in zh[key]
+        assert "\ufffd" not in en[key]
+    assert zh[module.i18n_keys["display_name"]] == "粒子形象模块"
+    assert en[module.i18n_keys["display_name"]] == "Particle Avatar Module"
+    assert zh[module.i18n_keys["module_type"]] == "视觉规则配置模块"
+    assert en[module.i18n_keys["module_type"]] == "Visual Rules Configuration Module"
+    zh_state_labels = {
+        "neutral": "中性",
+        "calm": "平静",
+        "caring": "关怀",
+        "subdued": "低落",
+        "joyful": "愉悦",
+    }
+    for value, label in zh_state_labels.items():
+        key = f"layer10.particleAvatar.enum.expressionState.{value}"
+        assert zh[key] == label
+        assert zh[key] != value
+        assert en[key]
+    for value in PARTICLE_LIFECYCLE_STATES:
+        key = f"layer10.particleAvatar.enum.lifecycleState.{value}"
+        assert key in zh
+        assert key in en
+        assert zh[key] != value
+    assert zh["layer10.particleAvatar.enum.transitionStyle.smooth"] == "平滑过渡"
+    assert en["layer10.particleAvatar.enum.transitionStyle.smooth"] == (
+        "Smooth transition"
+    )
 
 
 def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_references():

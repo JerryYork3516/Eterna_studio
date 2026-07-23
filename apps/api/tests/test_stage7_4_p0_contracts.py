@@ -159,8 +159,9 @@ def test_required_reference_resolves_local_node_and_field_path():
     resolved = message.split("resolved=", 1)[1]
     # The fixture's required reference, Layer 10's seven static first-presence
     # references, the optional dialogue profile's six authority references,
-    # and the expression-state module's nine semantic references must resolve.
-    assert "required=23" in message
+    # the expression-state module's nine semantic references, and the particle
+    # avatar's two field-scoped A1 references must resolve.
+    assert "required=25" in message
     assert checked == resolved
 
 

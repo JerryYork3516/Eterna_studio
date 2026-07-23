@@ -3995,6 +3995,640 @@ def _interaction_behavior_module() -> ModuleV04:
     )
 
 
+PARTICLE_AVATAR_MODULE_ID = "particle_avatar"
+PARTICLE_AVATAR_OUTPUT_KEY = "particle_mapping_config"
+PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION = (
+    "stage7_4_11_particle_expression_relative_mapping_v1"
+)
+PARTICLE_EXPRESSION_STATES = ("neutral", "calm", "caring", "subdued", "joyful")
+PARTICLE_LIFECYCLE_STATES = ("idle", "thinking", "speaking", "loading", "error", "exit")
+PARTICLE_AVATAR_NODE_IDS = {
+    "config_input": "particle_visual_config_input",
+    "base_color_resolution": "particle_base_color_resolution",
+    "user_color_override": "particle_user_color_override_rules",
+    "expression_relative_mapping": "particle_expression_state_relative_mapping",
+    "expression_intensity": "particle_expression_intensity_adaptation",
+    "lifecycle_priority": "particle_lifecycle_priority_validation",
+    "parameter_range": "particle_parameter_range_validation",
+    "state_transition": "particle_state_transition_rules",
+    "output": "particle_mapping_config_output",
+    "reference_output": "particle_mapping_reference_output",
+}
+PARTICLE_RELATIVE_PARAMETER_RANGES = {
+    "brightness_multiplier": (0.7, 1.25),
+    "saturation_multiplier": (0.65, 1.2),
+    "color_temperature_offset": (-0.15, 0.15),
+    "energy_multiplier": (0.7, 1.25),
+    "motion_speed_multiplier": (0.75, 1.2),
+    "diffusion_multiplier": (0.75, 1.25),
+}
+PARTICLE_RELATIVE_MAPPING_DEFAULTS = {
+    "neutral": {
+        "brightness_multiplier": 1.0,
+        "saturation_multiplier": 1.0,
+        "color_temperature_offset": 0.0,
+        "energy_multiplier": 1.0,
+        "motion_speed_multiplier": 1.0,
+        "diffusion_multiplier": 1.0,
+    },
+    "calm": {
+        "brightness_multiplier": 0.96,
+        "saturation_multiplier": 0.9,
+        "color_temperature_offset": -0.03,
+        "energy_multiplier": 0.88,
+        "motion_speed_multiplier": 0.86,
+        "diffusion_multiplier": 0.92,
+    },
+    "caring": {
+        "brightness_multiplier": 1.06,
+        "saturation_multiplier": 1.04,
+        "color_temperature_offset": 0.05,
+        "energy_multiplier": 1.02,
+        "motion_speed_multiplier": 0.94,
+        "diffusion_multiplier": 1.02,
+    },
+    "subdued": {
+        "brightness_multiplier": 0.82,
+        "saturation_multiplier": 0.75,
+        "color_temperature_offset": -0.08,
+        "energy_multiplier": 0.78,
+        "motion_speed_multiplier": 0.8,
+        "diffusion_multiplier": 0.86,
+    },
+    "joyful": {
+        "brightness_multiplier": 1.15,
+        "saturation_multiplier": 1.12,
+        "color_temperature_offset": 0.08,
+        "energy_multiplier": 1.18,
+        "motion_speed_multiplier": 1.12,
+        "diffusion_multiplier": 1.14,
+    },
+}
+
+
+def _particle_avatar_module() -> ModuleV04:
+    """Layer 10 compile-time particle appearance rules; never renders particles."""
+
+    module_id = PARTICLE_AVATAR_MODULE_ID
+    i18n_prefix = "layer10.particleAvatar"
+    parameter_suffixes = {
+        "brightness_multiplier": "brightnessMultiplier",
+        "saturation_multiplier": "saturationMultiplier",
+        "color_temperature_offset": "colorTemperatureOffset",
+        "energy_multiplier": "energyMultiplier",
+        "motion_speed_multiplier": "motionSpeedMultiplier",
+        "diffusion_multiplier": "diffusionMultiplier",
+    }
+
+    def field(
+        field_key: str,
+        field_value: object,
+        field_type: str,
+        suffix: str,
+        *,
+        required: bool = False,
+        enum_options: list[Dict[str, str]] | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        group: str = "",
+        validation_key: str = "",
+    ) -> Dict[str, object]:
+        item: Dict[str, object] = {
+            "field_key": field_key,
+            "field_name": field_key,
+            "field_value": field_value,
+            "field_type": field_type,
+            "description": f"{i18n_prefix}.field.{suffix}.description",
+            "dr_mapping": f"payload.modules.{module_id}.config.{field_key}",
+            "reference_enabled": False,
+            "required": required,
+            "field_name_custom": False,
+            "description_custom": False,
+            "i18n_keys": {
+                "label": f"{i18n_prefix}.field.{suffix}.label",
+                "description": f"{i18n_prefix}.field.{suffix}.description",
+                "placeholder": f"{i18n_prefix}.field.{suffix}.placeholder",
+                "help": f"{i18n_prefix}.field.{suffix}.help",
+                "default": f"{i18n_prefix}.field.{suffix}.default",
+            },
+        }
+        if enum_options is not None:
+            item["enum_options"] = enum_options
+        if minimum is not None:
+            item["minimum"] = minimum
+        if maximum is not None:
+            item["maximum"] = maximum
+        if group:
+            item["field_group"] = group
+        if validation_key:
+            item["i18n_keys"]["validation_error"] = (  # type: ignore[index]
+                f"{i18n_prefix}.validation.{validation_key}"
+            )
+            item["i18n_keys"]["range"] = (  # type: ignore[index]
+                f"{i18n_prefix}.range.{validation_key}"
+            )
+        return item
+
+    color_fields = [
+        field(
+            "user_current_base_color",
+            "",
+            "text",
+            "userCurrentBaseColor",
+            group="baseColor",
+            validation_key="hexColor",
+        ),
+        field(
+            "resident_default_base_color",
+            "#7aa2f7",
+            "text",
+            "residentDefaultBaseColor",
+            group="baseColor",
+            validation_key="hexColor",
+        ),
+        field(
+            "primary_color",
+            "",
+            "text",
+            "primaryColor",
+            group="baseColor",
+            validation_key="hexColor",
+        ),
+        field(
+            "secondary_color",
+            "",
+            "text",
+            "secondaryColor",
+            group="baseColor",
+            validation_key="hexColor",
+        ),
+        field(
+            "highlight_color",
+            "",
+            "text",
+            "highlightColor",
+            group="baseColor",
+            validation_key="hexColor",
+        ),
+        field(
+            "user_color_override_rule",
+            "preserve_user_current_base_color",
+            "text",
+            "userColorOverrideRule",
+            required=True,
+            group="baseColor",
+            enum_options=[
+                {
+                    "value": "preserve_user_current_base_color",
+                    "label_key": f"{i18n_prefix}.enum.userColorOverride.preserve",
+                }
+            ],
+        ),
+        field(
+            "missing_color_fallback_rule",
+            "resident_default_then_particle_core_gray_white",
+            "text",
+            "missingColorFallbackRule",
+            required=True,
+            group="baseColor",
+            enum_options=[
+                {
+                    "value": "resident_default_then_particle_core_gray_white",
+                    "label_key": f"{i18n_prefix}.enum.missingColorFallback.residentThenCore",
+                }
+            ],
+        ),
+    ]
+    relative_fields = [
+        field(
+            f"{state}_{parameter}",
+            default_values[parameter],
+            "number",
+            f"relative.{state}.{parameter_suffixes[parameter]}",
+            required=True,
+            minimum=PARTICLE_RELATIVE_PARAMETER_RANGES[parameter][0],
+            maximum=PARTICLE_RELATIVE_PARAMETER_RANGES[parameter][1],
+            group=f"expressionState.{state}",
+            validation_key=parameter_suffixes[parameter],
+        )
+        for state, default_values in PARTICLE_RELATIVE_MAPPING_DEFAULTS.items()
+        for parameter in PARTICLE_RELATIVE_PARAMETER_RANGES
+    ]
+    transition_fields = [
+        field(
+            "transition_duration",
+            0.6,
+            "number",
+            "transitionDuration",
+            required=True,
+            minimum=0.0,
+            maximum=10.0,
+            group="transition",
+            validation_key="transitionDuration",
+        ),
+        field(
+            "minimum_hold_duration",
+            0.35,
+            "number",
+            "minimumHoldDuration",
+            required=True,
+            minimum=0.0,
+            maximum=10.0,
+            group="transition",
+            validation_key="minimumHoldDuration",
+        ),
+        field(
+            "transition_style",
+            "smooth",
+            "text",
+            "transitionStyle",
+            required=True,
+            group="transition",
+            enum_options=[
+                {
+                    "value": "smooth",
+                    "label_key": f"{i18n_prefix}.enum.transitionStyle.smooth",
+                }
+            ],
+        ),
+    ]
+    fields = [*color_fields, *relative_fields, *transition_fields]
+
+    references = [
+        {
+            "reference_id": "particle_expression_state",
+            "source_layer_id": "layer_8",
+            "source_module_id": DETAIL_BEHAVIOR_MODULE_ID,
+            "source_node_id": EXPRESSION_STATE_NODE_IDS["reference_output"],
+            "source_scope": "field",
+            "source_field_paths": ["expression_state"],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"],
+            "usage_key": f"{i18n_prefix}.reference.expressionState.usage",
+        },
+        {
+            "reference_id": "particle_expression_intensity",
+            "source_layer_id": "layer_8",
+            "source_module_id": DETAIL_BEHAVIOR_MODULE_ID,
+            "source_node_id": EXPRESSION_STATE_NODE_IDS["reference_output"],
+            "source_scope": "field",
+            "source_field_paths": ["expression_intensity"],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": PARTICLE_AVATAR_NODE_IDS["expression_intensity"],
+            "usage_key": f"{i18n_prefix}.reference.expressionIntensity.usage",
+        },
+    ]
+    base_color_config = {
+        "priority": [
+            "user_current_base_color",
+            "resident_default_base_color",
+            "particle_core_default_gray_white",
+        ],
+        "user_current_base_color": "",
+        "resident_default_base_color": "#7aa2f7",
+        "primary_color": "",
+        "secondary_color": "",
+        "highlight_color": "",
+        "user_color_override_rule": "preserve_user_current_base_color",
+        "missing_color_fallback_rule": "resident_default_then_particle_core_gray_white",
+        "expression_changes_are_relative_to_resolved_base": True,
+        "expression_may_replace_user_base_color": False,
+    }
+    relative_mapping_config = {
+        "states": list(PARTICLE_EXPRESSION_STATES),
+        "parameters": list(PARTICLE_RELATIVE_PARAMETER_RANGES),
+        "mapping_kind": "relative_parameters_only",
+        "state_mappings": deepcopy(PARTICLE_RELATIVE_MAPPING_DEFAULTS),
+        "neutral_uses_identity_multipliers": True,
+        "fixed_state_colors_allowed": False,
+        "invalid_state_fallback": "neutral",
+    }
+    intensity_config = {
+        "source_reference_id": "particle_expression_intensity",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "zero_behavior": "do_not_apply_expression_change",
+        "one_behavior": "apply_full_relative_change",
+        "intermediate_behavior": "aftelle_interpolates_base_to_target",
+        "interpolation_executor": "aftelle",
+        "studio_executes_interpolation": False,
+    }
+    lifecycle_config = {
+        "lifecycle_states": list(PARTICLE_LIFECYCLE_STATES),
+        "expression_states": list(PARTICLE_EXPRESSION_STATES),
+        "override_states": ["error", "loading", "exit"],
+        "composable_states": ["idle", "thinking", "speaking"],
+        "state_domains_separate": True,
+        "combined_state_enum_forbidden": True,
+    }
+    range_config = {
+        parameter: {"minimum": limits[0], "maximum": limits[1]}
+        for parameter, limits in PARTICLE_RELATIVE_PARAMETER_RANGES.items()
+    }
+    transition_config = {
+        "transition_duration": 0.6,
+        "minimum_hold_duration": 0.35,
+        "transition_style": "smooth",
+        "transition_style_options": ["smooth"],
+        "same_state_retriggers_transition": False,
+        "new_state_continues_from_current_visual": True,
+        "minimum_hold_prevents_flicker": True,
+        "invalid_state_fallback": "neutral",
+        "uses_accumulated_idle_time_as_progress": False,
+        "transition_executor": "aftelle",
+        "studio_stores_rules_only": True,
+    }
+    output = {
+        "base_color_config": base_color_config,
+        "expression_relative_mapping": relative_mapping_config,
+        "expression_intensity_rule": intensity_config,
+        "lifecycle_priority": lifecycle_config,
+        "parameter_ranges": range_config,
+        "transition_rules": transition_config,
+    }
+
+    reference_ids_by_target = {
+        target_id: [
+            str(reference["reference_id"])
+            for reference in references
+            if reference["target_node_id"] == target_id
+        ]
+        for target_id in {
+            str(reference["target_node_id"])
+            for reference in references
+        }
+    }
+    node_specs = [
+        (
+            "config_input",
+            "reference_input",
+            {
+                "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                "mode": "generic_fields",
+                "fields": fields,
+                "references": references,
+                "configuration_only": True,
+            },
+            "configInput",
+        ),
+        (
+            "base_color_resolution",
+            "text_config",
+            {
+                "config_mode": "particle_base_color_resolution",
+                **base_color_config,
+                "final_color_calculation": False,
+            },
+            "baseColorResolution",
+        ),
+        (
+            "user_color_override",
+            "text_config",
+            {
+                "config_mode": "particle_user_color_override_rules",
+                "user_color_override_rule": base_color_config["user_color_override_rule"],
+                "missing_color_fallback_rule": base_color_config["missing_color_fallback_rule"],
+                "user_override_has_priority": True,
+                "expression_may_replace_user_base_color": False,
+            },
+            "userColorOverride",
+        ),
+        (
+            "expression_relative_mapping",
+            "text_config",
+            {
+                "config_mode": "particle_expression_state_relative_mapping",
+                "reference_ids": reference_ids_by_target[
+                    PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"]
+                ],
+                **relative_mapping_config,
+            },
+            "expressionRelativeMapping",
+        ),
+        (
+            "expression_intensity",
+            "text_config",
+            {
+                "config_mode": "particle_expression_intensity_adaptation",
+                "reference_ids": reference_ids_by_target[
+                    PARTICLE_AVATAR_NODE_IDS["expression_intensity"]
+                ],
+                **intensity_config,
+            },
+            "expressionIntensity",
+        ),
+        (
+            "lifecycle_priority",
+            "validation",
+            {
+                "config_mode": "particle_lifecycle_priority_validation",
+                **lifecycle_config,
+                "no_runtime_validation": True,
+            },
+            "lifecyclePriority",
+        ),
+        (
+            "parameter_range",
+            "validation",
+            {
+                "config_mode": "particle_parameter_range_validation",
+                "parameter_ranges": range_config,
+                "clamp_on_save": True,
+                "clamp_legacy_values": True,
+                "reject_out_of_range": True,
+                "validation_error_key": f"{i18n_prefix}.validation.relativeParameterOutOfRange",
+                "no_runtime_validation": True,
+            },
+            "parameterRange",
+        ),
+        (
+            "state_transition",
+            "text_config",
+            {
+                "config_mode": "particle_state_transition_rules",
+                **transition_config,
+            },
+            "stateTransition",
+        ),
+        (
+            "output",
+            "module_output",
+            {
+                "input": PARTICLE_AVATAR_NODE_IDS["state_transition"],
+                "output_key": PARTICLE_AVATAR_OUTPUT_KEY,
+                "output_schema": {
+                    "type": "object",
+                    "additional_properties": False,
+                    "fields": {
+                        "base_color_config": {"type": "object"},
+                        "expression_relative_mapping": {"type": "object"},
+                        "expression_intensity_rule": {"type": "object"},
+                        "lifecycle_priority": {"type": "object"},
+                        "parameter_ranges": {"type": "object"},
+                        "transition_rules": {"type": "object"},
+                    },
+                },
+                "configuration_only": True,
+                "contains_final_particle_parameters": False,
+            },
+            "output",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": PARTICLE_AVATAR_NODE_IDS["output"],
+                "export_name": "",
+                "export_name_key": f"{i18n_prefix}.referenceOutput.exportName",
+                "export_description": "",
+                "export_description_key": f"{i18n_prefix}.referenceOutput.exportDescription",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [
+                    {
+                        "field_key": PARTICLE_AVATAR_OUTPUT_KEY,
+                        "field_path": PARTICLE_AVATAR_OUTPUT_KEY,
+                        "label_key": f"{i18n_prefix}.referenceOutput.field.mappingConfig",
+                        "description_key": (
+                            f"{i18n_prefix}.referenceOutput.field.mappingConfig.description"
+                        ),
+                        "value_type": "object",
+                        "required": True,
+                    }
+                ],
+                "authority_source_type": "derived_config",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "referenceOutput",
+        ),
+    ]
+    positions = {
+        role: {"x": index * 360, "y": 120}
+        for index, (role, _node_type, _params, _suffix) in enumerate(node_specs)
+    }
+    metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "no_execution": True,
+        "no_model_call": True,
+        "no_final_particle_calculation": True,
+    }
+    nodes = [
+        {
+            "node_id": PARTICLE_AVATAR_NODE_IDS[role],
+            "node_type": node_type,
+            "module_id": module_id,
+            "layer_id": "layer_10",
+            "position": positions[role],
+            "params": params,
+            "i18n_keys": {
+                "name": f"{i18n_prefix}.node.{suffix}.title",
+                "description": f"{i18n_prefix}.node.{suffix}.description",
+                "type_name": f"node.type.{node_type}",
+            },
+            "outputs": {PARTICLE_AVATAR_OUTPUT_KEY: output} if role == "output" else {},
+            "metadata": metadata,
+        }
+        for role, node_type, params, suffix in node_specs
+    ]
+    main_chain = [role for role, _node_type, _params, _suffix in node_specs]
+    edge_pairs = list(zip(main_chain, main_chain[1:])) + [
+        ("config_input", "expression_relative_mapping"),
+        ("config_input", "expression_intensity"),
+    ]
+    edges = [
+        {
+            "edge_id": f"{PARTICLE_AVATAR_NODE_IDS[source]}_to_{PARTICLE_AVATAR_NODE_IDS[target]}",
+            "source": PARTICLE_AVATAR_NODE_IDS[source],
+            "source_port": "p_out",
+            "target": PARTICLE_AVATAR_NODE_IDS[target],
+            "target_port": "p_in",
+        }
+        for source, target in edge_pairs
+    ]
+
+    return _module(
+        module_id,
+        "multimodal",
+        "Particle Avatar",
+        "layer_10",
+        status=ProtocolStatus.ready,
+        slot_type=SlotType.avatar,
+        category="multimodal",
+        is_placeholder=True,
+        color_status="green",
+        tags=[
+            "multimodal",
+            "particle_avatar",
+            "visual_rule_config",
+            "relative_expression_mapping",
+            "stage7_4_11",
+        ],
+        module_graph={
+            "shell_version": "module_shell_v1",
+            "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+            "nodes": nodes,
+            "edges": edges,
+            "output_key": PARTICLE_AVATAR_OUTPUT_KEY,
+            "compile_time_only": True,
+        },
+        output_schema=[
+            {
+                "key": PARTICLE_AVATAR_OUTPUT_KEY,
+                "type": "object",
+                "required": True,
+                "description": f"{i18n_prefix}.module.output",
+            }
+        ],
+        ui_config={
+            "shell_version": "module_shell_v1",
+            "classification": "visual_rule_config",
+            "node_width": 360,
+        },
+        i18n_keys={
+            "display_name": f"{i18n_prefix}.module.title",
+            "description": f"{i18n_prefix}.module.description",
+            "output": f"{i18n_prefix}.module.output",
+            "module_type": f"{i18n_prefix}.module.type",
+        },
+        outputs={PARTICLE_AVATAR_OUTPUT_KEY: output},
+        config={
+            "shell_version": "module_shell_v1",
+            "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+            "module_class": "visual_rule_config",
+            "module_type_label_key": f"{i18n_prefix}.module.type",
+            "missing_reference_sources": [
+                "lifecycle_state_source",
+                "particle_base_color_source",
+            ],
+            "base_color_priority": base_color_config["priority"],
+            "expression_states": list(PARTICLE_EXPRESSION_STATES),
+            "lifecycle_states": list(PARTICLE_LIFECYCLE_STATES),
+            "relative_parameter_ranges": range_config,
+            "transition_style_options": ["smooth"],
+            "edit_scope": "developer_only",
+            "update_level": "versioned_core",
+            "requires_recompile": True,
+            "compile_time_only": True,
+            "visual_rule_config_only": True,
+            "studio_validation_and_clamping": True,
+            "no_runtime_capability": True,
+            "no_provider_binding": True,
+            "no_model_call": True,
+            "no_final_color_calculation": True,
+            "no_final_particle_parameter_calculation": True,
+            "no_visual_interpolation": True,
+            "no_preview": True,
+        },
+        mock_only=True,
+        no_execution=True,
+    )
+
+
 def _visual_style_module() -> ModuleV04:
     """Layer 10's compile-time first-greeting and first-presence configuration."""
 
@@ -11948,7 +12582,7 @@ MODULE_CATALOG: List[ModuleV04] = [
     _module("tts_provider_router", "multimodal_router", "TTS Provider Router", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.tts, category="multimodal", is_placeholder=True, color_status="green"),
     _module("elevenlabs_slot", "multimodal_slot", "ElevenLabs Slot", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.tts, category="multimodal", is_placeholder=True, color_status="green"),
     _module("volcano_tts_slot", "multimodal_slot", "Volcano TTS Slot", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.tts, category="multimodal", is_placeholder=True, color_status="green"),
-    _module("particle_avatar", "multimodal", "Particle Avatar", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.avatar, category="multimodal", is_placeholder=True, color_status="green"),
+    _particle_avatar_module(),
     _module("ar_avatar_slot", "multimodal_slot", "AR Avatar Slot", "layer_10", status=ProtocolStatus.ready, slot_type=SlotType.ar, category="multimodal", is_placeholder=True, color_status="green"),
     _module("appearance_profile", "multimodal", "Appearance Profile", "layer_10", status=ProtocolStatus.mock, category="multimodal", color_status="amber"),
     _module("motion_profile", "multimodal", "Motion Profile", "layer_10", status=ProtocolStatus.mock, category="multimodal", color_status="amber"),

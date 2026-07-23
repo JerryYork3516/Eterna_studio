@@ -359,6 +359,10 @@ function layer8EmotionalExpressionPrefix(moduleId?: string) {
   return moduleId === "emotion_reaction" ? "layer8.emotionalExpression" : "";
 }
 
+function layer10ParticleAvatarPrefix(moduleId?: string) {
+  return moduleId === "particle_avatar" ? "layer10.particleAvatar" : "";
+}
+
 function stage748ConfigPrefix(moduleId?: string) {
   if (moduleId === "interaction_strategy") return "stage7_4_8.firstInteraction";
   if (moduleId === "visual_style") return "stage7_4_8.expression";
@@ -371,7 +375,7 @@ function stage749ConfigPrefix(moduleId?: string) {
 }
 
 function usesLocalizedStructuredIds(moduleId?: string) {
-  return isLayer11Module(moduleId) || Boolean(layer8EmotionalExpressionPrefix(moduleId)) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId)) || Boolean(stage749ConfigPrefix(moduleId));
+  return isLayer11Module(moduleId) || Boolean(layer8EmotionalExpressionPrefix(moduleId)) || Boolean(layer10ParticleAvatarPrefix(moduleId)) || Boolean(layer12CoreParamPrefix(moduleId)) || Boolean(stage748ConfigPrefix(moduleId)) || Boolean(stage749ConfigPrefix(moduleId));
 }
 
 function localizedCoreKey(language: Language, key: string, moduleId?: string) {
@@ -381,6 +385,11 @@ function localizedCoreKey(language: Language, key: string, moduleId?: string) {
   const layer8ExpressionPrefix = layer8EmotionalExpressionPrefix(moduleId);
   if (layer8ExpressionPrefix) {
     const localized = translateIfPresent(language, `${layer8ExpressionPrefix}.key.${key}`);
+    if (localized) return localized;
+  }
+  const layer10ParticlePrefix = layer10ParticleAvatarPrefix(moduleId);
+  if (layer10ParticlePrefix) {
+    const localized = translateIfPresent(language, `${layer10ParticlePrefix}.key.${key}`);
     if (localized) return localized;
   }
   const layer12Prefix = layer12CoreParamPrefix(moduleId);
@@ -413,6 +422,11 @@ function localizedCoreValue(language: Language, value: string, moduleId?: string
   const layer8ExpressionPrefix = layer8EmotionalExpressionPrefix(moduleId);
   if (layer8ExpressionPrefix) {
     const localized = translateIfPresent(language, `${layer8ExpressionPrefix}.value.${value}`);
+    if (localized) return localized;
+  }
+  const layer10ParticlePrefix = layer10ParticleAvatarPrefix(moduleId);
+  if (layer10ParticlePrefix) {
+    const localized = translateIfPresent(language, `${layer10ParticlePrefix}.value.${value}`);
     if (localized) return localized;
   }
   const layer12Prefix = layer12CoreParamPrefix(moduleId);

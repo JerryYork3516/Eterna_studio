@@ -25,6 +25,8 @@ export const DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION =
   "stage7_4_10_few_shot_resident_name_decoupling_v1";
 export const EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION =
   "stage7_4_11_expression_state_semantics_v1";
+export const PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION =
+  "stage7_4_11_particle_expression_relative_mapping_v1";
 
 const EXPRESSION_CONTEXT_INPUT_NODE_ID = "expression_context_input";
 const RESIDENT_EXPRESSION_NOTES_FIELD_KEY = "resident_expression_notes";
@@ -37,6 +39,72 @@ const LEGACY_EXPRESSION_NODE_INDEX = new Map<string, number>([
   ["detail_behavior_boundary_limits", 4],
   ["detail_behavior_validation", 6],
   ["detail_behavior_output_expression", 7],
+]);
+const PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID = "particle_visual_config_input";
+const PARTICLE_RESIDENT_DEFAULT_BASE_COLOR_FIELD_KEY = "resident_default_base_color";
+const LEGACY_PARTICLE_BASE_COLOR_FIELD_KEYS = new Set(["color", "base_color"]);
+const PARTICLE_RELATIVE_FIELD_RANGES: Array<{
+  suffix: string;
+  minimum: number;
+  maximum: number;
+}> = [
+  { suffix: "_brightness_multiplier", minimum: 0.7, maximum: 1.25 },
+  { suffix: "_saturation_multiplier", minimum: 0.65, maximum: 1.2 },
+  { suffix: "_color_temperature_offset", minimum: -0.15, maximum: 0.15 },
+  { suffix: "_energy_multiplier", minimum: 0.7, maximum: 1.25 },
+  { suffix: "_motion_speed_multiplier", minimum: 0.75, maximum: 1.2 },
+  { suffix: "_diffusion_multiplier", minimum: 0.75, maximum: 1.25 },
+];
+const LEGACY_PARTICLE_DIRECT_DATA_RESERVED_KEYS = new Set([
+  "parent_module",
+  "catalog_preconfigured",
+  "module_instance_id",
+  "catalog_module_id",
+  "catalog_node_id",
+  "node_type",
+  "layer_id",
+  "module_id",
+  "params",
+  "fields",
+  "outputs",
+  "metadata",
+  "i18n_keys",
+  "ui_name",
+  "ui_color",
+  "ui_tags",
+  "ui_group",
+  "references",
+  "available_modules",
+  "source_layer_id",
+  "source_module_id",
+  "source_node_id",
+  "source_field_path",
+  "reference_type",
+  "required",
+  "export_name",
+  "export_description",
+  "export_scope",
+  "export_scopes",
+  "export_fields",
+]);
+const LEGACY_PARTICLE_PARAM_RESERVED_KEYS = new Set([
+  "fields",
+  "legacy_fields",
+  "legacy_data_fields",
+  "field_registry",
+  "mode",
+  "content_revision",
+  "references",
+  "configuration_only",
+  "config_mode",
+  "input",
+  "outputs",
+  "output_key",
+  "output_schema",
+  "reference_input",
+  "reference_ids",
+  "checkbox_config",
+  "checklist_config",
 ]);
 
 const DIALOGUE_RUNTIME_PROFILE_MIGRATED_EXAMPLE_IDS = new Set([
@@ -640,6 +708,350 @@ export function migrateExpressionStateSemanticsGraph(
       );
     }
     setExpressionGraphNodeFields(nextNode, mergedFields);
+    return nextNode;
+  });
+
+  const value = {
+    nodes,
+    edges: cloneJsonValue(seed.edges),
+  };
+  return {
+    value,
+    migrated: stableComparableValue(value) !== stableComparableValue(stored),
+  };
+}
+
+export type ParticleExpressionRelativeMappingGraph = {
+  nodes: unknown[];
+  edges: unknown[];
+};
+
+function particleGraphSchemaNode(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const outerData = isRecord(value.data) ? value.data : {};
+  return isRecord(outerData.schemaNode) ? outerData.schemaNode : value;
+}
+
+function particleGraphNodeData(value: unknown): Record<string, unknown> {
+  const schemaNode = particleGraphSchemaNode(value);
+  return schemaNode && isRecord(schemaNode.data) ? schemaNode.data : {};
+}
+
+function particleGraphCatalogNodeId(value: unknown): string {
+  const schemaNode = particleGraphSchemaNode(value);
+  const data = particleGraphNodeData(value);
+  return normalizeCatalogNodeId(
+    data.catalog_node_id || schemaNode?.node_id || (isRecord(value) ? value.id : "")
+  );
+}
+
+function particleGraphNodeParams(value: unknown): Record<string, unknown> {
+  const data = particleGraphNodeData(value);
+  return isRecord(data.params) ? data.params : {};
+}
+
+function particleGraphNodeFields(value: unknown): Record<string, unknown>[] {
+  const data = particleGraphNodeData(value);
+  const params = particleGraphNodeParams(value);
+  if (Array.isArray(params.fields)) {
+    return params.fields.filter(isRecord);
+  }
+  return Array.isArray(data.fields) ? data.fields.filter(isRecord) : [];
+}
+
+function particleFieldKey(field: Record<string, unknown>): string {
+  return String(field.field_key || field.field_id || "");
+}
+
+function particleFieldValue(field: Record<string, unknown>): unknown {
+  return "field_value" in field ? field.field_value : field.value;
+}
+
+function setParticleFieldValue(field: Record<string, unknown>, value: unknown) {
+  const valueKey = "field_value" in field ? "field_value" : "value";
+  return { ...field, [valueKey]: cloneJsonValue(value) };
+}
+
+function particleGraphNodePosition(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (isRecord(value.position)) {
+    return value.position;
+  }
+  const schemaNode = particleGraphSchemaNode(value);
+  return schemaNode && isRecord(schemaNode.position) ? schemaNode.position : null;
+}
+
+function particleGraphNodeUiName(value: unknown): string {
+  const data = particleGraphNodeData(value);
+  return typeof data.ui_name === "string" ? data.ui_name : "";
+}
+
+function setParticleGraphNodePosition(
+  value: Record<string, unknown>,
+  position: Record<string, unknown>
+) {
+  value.position = cloneJsonValue(position);
+  const schemaNode = particleGraphSchemaNode(value);
+  if (schemaNode && schemaNode !== value) {
+    schemaNode.position = cloneJsonValue(position);
+  }
+}
+
+function setParticleGraphNodeUiName(value: Record<string, unknown>, uiName: string) {
+  const schemaNode = particleGraphSchemaNode(value);
+  if (!schemaNode) {
+    return;
+  }
+  const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+  data.ui_name = uiName;
+  schemaNode.data = data;
+}
+
+function setParticleGraphNodeFields(
+  value: Record<string, unknown>,
+  fields: Record<string, unknown>[]
+) {
+  const schemaNode = particleGraphSchemaNode(value);
+  if (!schemaNode) {
+    return;
+  }
+  const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+  const params = isRecord(data.params) ? { ...data.params } : {};
+  params.fields = cloneJsonValue(fields);
+  data.params = params;
+  if (Array.isArray(data.fields)) {
+    data.fields = cloneJsonValue(fields);
+  }
+  schemaNode.data = data;
+}
+
+function particleValueIsMissing(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === "string" && value === "");
+}
+
+function particleLegacyBaseColor(nodes: unknown[], fields: Record<string, unknown>[]): unknown {
+  for (const fieldKey of ["base_color", "color"]) {
+    const field = fields.find(
+      (candidate) =>
+        particleFieldKey(candidate) === fieldKey &&
+        !particleValueIsMissing(particleFieldValue(candidate))
+    );
+    if (field) {
+      return particleFieldValue(field);
+    }
+    for (const node of nodes) {
+      const data = particleGraphNodeData(node);
+      const params = particleGraphNodeParams(node);
+      for (const source of [data, params]) {
+        if (!particleValueIsMissing(source[fieldKey])) {
+          return source[fieldKey];
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function particleCustomFieldType(value: unknown): string {
+  if (typeof value === "number") {
+    return "number";
+  }
+  if (typeof value === "boolean") {
+    return "boolean";
+  }
+  if (Array.isArray(value)) {
+    return "list";
+  }
+  if (isRecord(value)) {
+    return "object";
+  }
+  return typeof value === "string" && (value.length > 80 || value.includes("\n"))
+    ? "long_text"
+    : "text";
+}
+
+function particleLegacyDirectCustomFields(
+  nodes: unknown[],
+  knownFieldKeys: Set<string>
+): Record<string, unknown>[] {
+  const fields: Record<string, unknown>[] = [];
+  const captured = new Set(knownFieldKeys);
+  const capture = (fieldKey: string, value: unknown) => {
+    if (
+      !fieldKey ||
+      captured.has(fieldKey) ||
+      LEGACY_PARTICLE_BASE_COLOR_FIELD_KEYS.has(fieldKey) ||
+      particleValueIsMissing(value)
+    ) {
+      return;
+    }
+    captured.add(fieldKey);
+    fields.push({
+      field_key: fieldKey,
+      field_name: fieldKey,
+      field_value: cloneJsonValue(value),
+      field_type: particleCustomFieldType(value),
+      description: "",
+      dr_mapping: `payload.modules.particle_avatar.config.${fieldKey}`,
+      reference_enabled: false,
+      required: false,
+      field_name_custom: true,
+      description_custom: true,
+    });
+  };
+  const captureUnique = (baseFieldKey: string, value: unknown) => {
+    if (particleValueIsMissing(value)) {
+      return;
+    }
+    let fieldKey = baseFieldKey;
+    let suffix = 2;
+    while (captured.has(fieldKey)) {
+      fieldKey = `${baseFieldKey}_${suffix}`;
+      suffix += 1;
+    }
+    capture(fieldKey, value);
+  };
+
+  for (const node of nodes) {
+    const data = particleGraphNodeData(node);
+    for (const [fieldKey, value] of Object.entries(data)) {
+      if (!LEGACY_PARTICLE_DIRECT_DATA_RESERVED_KEYS.has(fieldKey)) {
+        capture(fieldKey, value);
+      }
+    }
+    const params = particleGraphNodeParams(node);
+    for (const [fieldKey, value] of Object.entries(params)) {
+      if (!LEGACY_PARTICLE_PARAM_RESERVED_KEYS.has(fieldKey)) {
+        capture(fieldKey, value);
+      }
+    }
+    for (const configKey of ["checkbox_config", "checklist_config"]) {
+      const config = params[configKey];
+      if (isRecord(config)) {
+        captureUnique("legacy_custom_text", config.custom_text);
+      }
+    }
+  }
+  return fields;
+}
+
+function normalizeParticleRelativeFields(
+  fields: Record<string, unknown>[],
+  seedFields: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  const seedByKey = new Map(seedFields.map((field) => [particleFieldKey(field), field]));
+  return fields.map((field) => {
+    const fieldKey = particleFieldKey(field);
+    const seedField = seedByKey.get(fieldKey);
+    if (!seedField) {
+      return field;
+    }
+    const limits = PARTICLE_RELATIVE_FIELD_RANGES.find(({ suffix }) =>
+      fieldKey.endsWith(suffix)
+    );
+    if (!limits) {
+      return field;
+    }
+    const current = particleFieldValue(field);
+    const parsed =
+      typeof current === "number"
+        ? current
+        : typeof current === "string" && current.trim()
+          ? Number(current)
+          : Number.NaN;
+    const seedDefault = particleFieldValue(seedField);
+    const normalized = Number.isFinite(parsed)
+      ? Math.min(limits.maximum, Math.max(limits.minimum, parsed))
+      : seedDefault;
+    return setParticleFieldValue(field, normalized);
+  });
+}
+
+/**
+ * Rebuild the catalog-owned Stage 7.4.11 particle configuration graph once.
+ * Catalog structure comes from the seed; resident-authored values and editor
+ * layout remain resident-owned.
+ */
+export function migrateParticleExpressionRelativeMappingGraph(
+  stored: ParticleExpressionRelativeMappingGraph,
+  seed: ParticleExpressionRelativeMappingGraph
+): { value: ParticleExpressionRelativeMappingGraph; migrated: boolean } {
+  const seedInput = seed.nodes.find(
+    (node) => particleGraphCatalogNodeId(node) === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID
+  );
+  const seedRevision = particleGraphNodeParams(seedInput).content_revision;
+  if (seedRevision !== PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+
+  const storedInput = stored.nodes.find(
+    (node) => particleGraphCatalogNodeId(node) === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID
+  );
+  if (particleGraphNodeParams(storedInput).content_revision === seedRevision) {
+    return { value: stored, migrated: false };
+  }
+
+  const storedByCatalogId = new Map(
+    stored.nodes
+      .map((node) => [particleGraphCatalogNodeId(node), node] as const)
+      .filter(([nodeId]) => Boolean(nodeId))
+  );
+  const allStoredFields = stored.nodes.flatMap(particleGraphNodeFields);
+  const storedFieldByKey = new Map<string, Record<string, unknown>>();
+  for (const field of allStoredFields) {
+    const fieldKey = particleFieldKey(field);
+    if (fieldKey && !storedFieldByKey.has(fieldKey)) {
+      storedFieldByKey.set(fieldKey, field);
+    }
+  }
+  const existingFields = [
+    ...storedFieldByKey.values(),
+    ...particleLegacyDirectCustomFields(stored.nodes, new Set(storedFieldByKey.keys())),
+  ].filter((field) => !LEGACY_PARTICLE_BASE_COLOR_FIELD_KEYS.has(particleFieldKey(field)));
+  const residentDefaultField = existingFields.find(
+    (field) =>
+      particleFieldKey(field) === PARTICLE_RESIDENT_DEFAULT_BASE_COLOR_FIELD_KEY
+  );
+  const hasResidentDefaultBaseColor =
+    residentDefaultField !== undefined &&
+    !particleValueIsMissing(particleFieldValue(residentDefaultField));
+  const legacyBaseColor = particleLegacyBaseColor(stored.nodes, allStoredFields);
+
+  const nodes = seed.nodes.map((seedNode, seedIndex) => {
+    const nextNode = cloneJsonValue(seedNode) as Record<string, unknown>;
+    const catalogNodeId = particleGraphCatalogNodeId(seedNode);
+    const currentNode = storedByCatalogId.get(catalogNodeId) ?? stored.nodes[seedIndex];
+    const currentPosition = particleGraphNodePosition(currentNode);
+    if (currentPosition) {
+      setParticleGraphNodePosition(nextNode, currentPosition);
+    }
+    const uiName = particleGraphNodeUiName(currentNode);
+    if (uiName) {
+      setParticleGraphNodeUiName(nextNode, uiName);
+    }
+
+    const nodeSeedFields = particleGraphNodeFields(seedNode);
+    if (!nodeSeedFields.length) {
+      return nextNode;
+    }
+    let mergedFields = mergeCatalogFieldsPreservingValues(nodeSeedFields, existingFields);
+    if (
+      catalogNodeId === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID &&
+      !hasResidentDefaultBaseColor &&
+      !particleValueIsMissing(legacyBaseColor)
+    ) {
+      mergedFields = mergedFields.map((field) =>
+        particleFieldKey(field) === PARTICLE_RESIDENT_DEFAULT_BASE_COLOR_FIELD_KEY
+          ? setParticleFieldValue(field, legacyBaseColor)
+          : field
+      );
+    }
+    mergedFields = normalizeParticleRelativeFields(mergedFields, nodeSeedFields);
+    setParticleGraphNodeFields(nextNode, mergedFields);
     return nextNode;
   });
 

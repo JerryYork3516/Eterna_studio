@@ -20,6 +20,7 @@ import { translate } from "@/i18n";
 import {
   filterDanglingModuleGraphEdges,
   migrateExpressionStateSemanticsGraph,
+  migrateParticleExpressionRelativeMappingGraph,
   mergeCatalogReferenceDeclarations,
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
@@ -47,6 +48,7 @@ const DIALOGUE_RUNTIME_PROFILE_REFERENCE_INPUT_ID = "dialogue_runtime_profile_re
 const DIALOGUE_RUNTIME_PROFILE_OUTPUT_ID = "dialogue_runtime_profile_output";
 const DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config";
 const EXPRESSION_STATE_GRAPH_ID = "layer_8::emotion_reaction";
+const PARTICLE_AVATAR_GRAPH_ID = "layer_10::particle_avatar";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
@@ -60,6 +62,7 @@ const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "reflection_summary",
   "self_evaluation",
   "growth_plan",
+  "particle_avatar",
   "visual_style",
 ]);
 const LAYER12_CONTENT_SEED_MODULE_IDS = new Set([
@@ -2117,6 +2120,28 @@ function migrateExpressionStateSemanticsSeed(
   };
 }
 
+function migrateParticleExpressionRelativeMappingSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (graph.moduleNodeId !== PARTICLE_AVATAR_GRAPH_ID || !initialNodes?.length) {
+    return null;
+  }
+  const migration = migrateParticleExpressionRelativeMappingGraph(
+    { nodes: graph.nodes, edges: graph.edges },
+    { nodes: initialNodes, edges: initialEdges ?? [] }
+  );
+  if (!migration.migrated) {
+    return null;
+  }
+  return {
+    ...graph,
+    nodes: migration.value.nodes as WorkflowNode[],
+    edges: migration.value.edges as WorkflowEdge[],
+  };
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
@@ -2124,18 +2149,39 @@ function mergeCatalogSeed(
 ): ModuleGraph | null {
   const expressionMigrated = migrateExpressionStateSemanticsSeed(graph, initialNodes, initialEdges);
   const graphAfterExpressionMigration = expressionMigrated ?? graph;
-  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(graphAfterExpressionMigration, initialNodes);
-  const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
-    dialogueReferenceMerged ?? graphAfterExpressionMigration,
+  const particleMigrated = migrateParticleExpressionRelativeMappingSeed(
+    graphAfterExpressionMigration,
+    initialNodes,
+    initialEdges
+  );
+  const graphAfterParticleMigration = particleMigrated ?? graphAfterExpressionMigration;
+  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(
+    graphAfterParticleMigration,
     initialNodes
   );
-  const graphAfterDialogueMerge = dialogueContentMigrated ?? dialogueReferenceMerged ?? graphAfterExpressionMigration;
+  const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
+    dialogueReferenceMerged ?? graphAfterParticleMigration,
+    initialNodes
+  );
+  const graphAfterDialogueMerge =
+    dialogueContentMigrated ??
+    dialogueReferenceMerged ??
+    graphAfterParticleMigration;
   const referenceMerged = mergeLayer12ReferenceSeed(graphAfterDialogueMerge, initialNodes, initialEdges);
   const graphAfterReferenceMerge = referenceMerged ?? graphAfterDialogueMerge;
   const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
   const contentMerged = mergeLayer12ContentSeed(fieldMerged ?? graphAfterReferenceMerge, initialNodes);
   const layoutMerged = mergeCatalogLayoutSeed(contentMerged ?? fieldMerged ?? graphAfterReferenceMerge, initialNodes, initialEdges);
-  return layoutMerged ?? contentMerged ?? fieldMerged ?? referenceMerged ?? dialogueContentMigrated ?? dialogueReferenceMerged ?? expressionMigrated;
+  return (
+    layoutMerged ??
+    contentMerged ??
+    fieldMerged ??
+    referenceMerged ??
+    dialogueContentMigrated ??
+    dialogueReferenceMerged ??
+    particleMigrated ??
+    expressionMigrated
+  );
 }
 
 function layerModuleIdentity(moduleNodeId: string, registry: Record<string, ModuleInstance>) {
@@ -3222,7 +3268,8 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       if (
         moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
         moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
-        moduleNodeId === EXPRESSION_STATE_GRAPH_ID
+        moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
+        moduleNodeId === PARTICLE_AVATAR_GRAPH_ID
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
@@ -3259,7 +3306,8 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       if (
         moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
         moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
-        moduleNodeId === EXPRESSION_STATE_GRAPH_ID
+        moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
+        moduleNodeId === PARTICLE_AVATAR_GRAPH_ID
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }

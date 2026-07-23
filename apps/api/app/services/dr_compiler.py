@@ -24,6 +24,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -115,6 +116,11 @@ from ..registry.module_catalog import (
     MEMORY_PROVIDER_ROUTER_OUTPUT_KEY,
     MEMORY_UPDATE_MODULE_ID,
     MEMORY_UPDATE_OUTPUT_KEY,
+    PARTICLE_AVATAR_MODULE_ID,
+    PARTICLE_AVATAR_OUTPUT_KEY,
+    PARTICLE_EXPRESSION_STATES,
+    PARTICLE_RELATIVE_MAPPING_DEFAULTS,
+    PARTICLE_RELATIVE_PARAMETER_RANGES,
     PREFERENCE_MEMORY_MODULE_ID,
     PREFERENCE_MEMORY_OUTPUT_KEY,
     RELATIONSHIP_MEMORY_MODULE_ID,
@@ -2442,6 +2448,152 @@ def _normalize_visual_style_reference_sources(collection: Dict[str, Any]) -> Non
         config = module.get("config") if isinstance(module.get("config"), dict) else {}
         config["reference_sources"] = deepcopy(canonical_declarations)
         module["config"] = config
+
+
+def _synchronize_particle_avatar_module_output(
+    collection: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Project saved Layer 10 fields into declarative particle rules only."""
+
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict)
+            and candidate.get("module_id") == PARTICLE_AVATAR_MODULE_ID
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return None
+
+    catalog_module = next(
+        (
+            candidate.model_dump(mode="json")
+            for candidate in get_module_catalog()
+            if candidate.module_id == PARTICLE_AVATAR_MODULE_ID
+        ),
+        None,
+    )
+    if not isinstance(catalog_module, dict):
+        return None
+    output = _compiled_module_output(catalog_module, PARTICLE_AVATAR_OUTPUT_KEY)
+    if not output:
+        return None
+
+    field_records: Dict[str, Dict[str, Any]] = {}
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_key = _nonempty_str(field.get("field_key")) or _nonempty_str(
+                field.get("field_id")
+            )
+            if field_key and field_key not in field_records:
+                field_records[field_key] = field
+
+    def configured_value(field_key: str, fallback: Any) -> Any:
+        field = field_records.get(field_key)
+        if not field:
+            return deepcopy(fallback)
+        return deepcopy(
+            field.get("value") if "value" in field else field.get("field_value")
+        )
+
+    def update_compiled_field(field_key: str, value: Any) -> None:
+        field = field_records.get(field_key)
+        if not field:
+            return
+        value_key = "value" if "value" in field and "field_value" not in field else "field_value"
+        field[value_key] = deepcopy(value)
+
+    def bounded_number(
+        field_key: str, fallback: float, minimum: float, maximum: float
+    ) -> float:
+        raw = configured_value(field_key, fallback)
+        if isinstance(raw, bool):
+            normalized = float(fallback)
+        else:
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError):
+                parsed = float(fallback)
+            normalized = (
+                min(maximum, max(minimum, parsed))
+                if math.isfinite(parsed)
+                else float(fallback)
+            )
+        update_compiled_field(field_key, normalized)
+        return normalized
+
+    base_color_config = _as_dict(output.get("base_color_config"))
+    for field_key in (
+        "user_current_base_color",
+        "resident_default_base_color",
+        "primary_color",
+        "secondary_color",
+        "highlight_color",
+    ):
+        fallback = base_color_config.get(field_key, "")
+        configured = configured_value(field_key, fallback)
+        base_color_config[field_key] = (
+            configured if isinstance(configured, str) else fallback
+        )
+    base_color_config["user_color_override_rule"] = (
+        "preserve_user_current_base_color"
+    )
+    base_color_config["missing_color_fallback_rule"] = (
+        "resident_default_then_particle_core_gray_white"
+    )
+    update_compiled_field(
+        "user_color_override_rule", "preserve_user_current_base_color"
+    )
+    update_compiled_field(
+        "missing_color_fallback_rule",
+        "resident_default_then_particle_core_gray_white",
+    )
+    output["base_color_config"] = base_color_config
+
+    relative_config = _as_dict(output.get("expression_relative_mapping"))
+    relative_defaults = deepcopy(PARTICLE_RELATIVE_MAPPING_DEFAULTS)
+    state_mappings: Dict[str, Dict[str, float]] = {}
+    for state in PARTICLE_EXPRESSION_STATES:
+        state_defaults = relative_defaults[state]
+        state_mappings[state] = {}
+        for parameter, (minimum, maximum) in (
+            PARTICLE_RELATIVE_PARAMETER_RANGES.items()
+        ):
+            field_key = f"{state}_{parameter}"
+            state_mappings[state][parameter] = bounded_number(
+                field_key,
+                float(state_defaults[parameter]),
+                float(minimum),
+                float(maximum),
+            )
+    relative_config["states"] = list(PARTICLE_EXPRESSION_STATES)
+    relative_config["parameters"] = list(PARTICLE_RELATIVE_PARAMETER_RANGES)
+    relative_config["state_mappings"] = state_mappings
+    relative_config["mapping_kind"] = "relative_parameters_only"
+    relative_config["fixed_state_colors_allowed"] = False
+    relative_config["invalid_state_fallback"] = "neutral"
+    output["expression_relative_mapping"] = relative_config
+
+    transition_rules = _as_dict(output.get("transition_rules"))
+    transition_rules["transition_duration"] = bounded_number(
+        "transition_duration", 0.6, 0.0, 10.0
+    )
+    transition_rules["minimum_hold_duration"] = bounded_number(
+        "minimum_hold_duration", 0.35, 0.0, 10.0
+    )
+    transition_rules["transition_style"] = "smooth"
+    transition_rules["transition_style_options"] = ["smooth"]
+    update_compiled_field("transition_style", "smooth")
+    output["transition_rules"] = transition_rules
+
+    _set_compiled_module_output(module, PARTICLE_AVATAR_OUTPUT_KEY, output)
+    return output
 
 
 def _synchronize_first_presence_module_output(
@@ -4863,6 +5015,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     ]
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
+    _synchronize_particle_avatar_module_output(collection)
     _synchronize_layer8_validation_results(collection, findings)
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)

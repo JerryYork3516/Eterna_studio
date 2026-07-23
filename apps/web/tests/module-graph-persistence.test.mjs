@@ -7,6 +7,7 @@ import {
   DIALOGUE_RUNTIME_PROFILE_ID,
   DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
   EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION,
+  PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
   LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
   LINXUAN_RESIDENT_ID,
   mergeCatalogReferenceDeclarations,
@@ -15,6 +16,7 @@ import {
   migrateDialogueRuntimeProfileId,
   migrateDialogueRuntimeProfileContentCopies,
   migrateExpressionStateSemanticsGraph,
+  migrateParticleExpressionRelativeMappingGraph,
   normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
   migrateLinxuanFirstGreetingValue,
@@ -1795,6 +1797,314 @@ test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resid
   assert.match(
     bridgeSource,
     /moduleNodeId === EXPRESSION_STATE_GRAPH_ID[\s\S]*?saveModuleGraphState\(moduleNodeId, mergedGraph\.nodes, mergedGraph\.edges\)/s
+  );
+});
+
+test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves resident visual content", () => {
+  const instanceId = "layer_10::particle_avatar";
+  const nodeIds = [
+    "particle_visual_config_input",
+    "particle_base_color_resolution",
+    "particle_user_color_override_rules",
+    "particle_expression_state_relative_mapping",
+    "particle_expression_intensity_adaptation",
+    "particle_lifecycle_priority_validation",
+    "particle_parameter_range_validation",
+    "particle_state_transition_rules",
+    "particle_mapping_config_output",
+    "particle_mapping_reference_output",
+  ];
+  const flowId = (nodeId) => `${instanceId}::${nodeId}`;
+  const relativeLimits = {
+    brightness_multiplier: [0.7, 1.25],
+    saturation_multiplier: [0.65, 1.2],
+    color_temperature_offset: [-0.15, 0.15],
+    energy_multiplier: [0.7, 1.25],
+    motion_speed_multiplier: [0.75, 1.2],
+    diffusion_multiplier: [0.75, 1.25],
+  };
+  const relativeDefaults = {
+    neutral: [1, 1, 0, 1, 1, 1],
+    calm: [0.96, 0.9, -0.03, 0.88, 0.86, 0.92],
+    caring: [1.06, 1.04, 0.05, 1.02, 0.94, 1.02],
+    subdued: [0.82, 0.75, -0.08, 0.78, 0.8, 0.86],
+    joyful: [1.15, 1.12, 0.08, 1.18, 1.12, 1.14],
+  };
+  const parameterNames = Object.keys(relativeLimits);
+  const seedFields = [
+    ["user_current_base_color", ""],
+    ["resident_default_base_color", "#7aa2f7"],
+    ["primary_color", ""],
+    ["secondary_color", ""],
+    ["highlight_color", ""],
+  ].map(([field_key, field_value]) => ({
+    field_key,
+    field_value,
+    field_type: "text",
+  }));
+  for (const [state, defaults] of Object.entries(relativeDefaults)) {
+    parameterNames.forEach((parameter, index) => {
+      const [minimum, maximum] = relativeLimits[parameter];
+      seedFields.push({
+        field_key: `${state}_${parameter}`,
+        field_value: defaults[index],
+        field_type: "number",
+        minimum,
+        maximum,
+      });
+    });
+  }
+  seedFields.push(
+    {
+      field_key: "transition_duration",
+      field_value: 0.6,
+      field_type: "number",
+      minimum: 0,
+      maximum: 10,
+    },
+    {
+      field_key: "minimum_hold_duration",
+      field_value: 0.35,
+      field_type: "number",
+      minimum: 0,
+      maximum: 10,
+    },
+    {
+      field_key: "transition_style",
+      field_value: "smooth",
+      field_type: "text",
+    }
+  );
+  const nodeTypes = [
+    "reference_input",
+    "text_config",
+    "text_config",
+    "text_config",
+    "text_config",
+    "validation",
+    "validation",
+    "text_config",
+    "module_output",
+    "reference_output",
+  ];
+  const seedNodes = nodeIds.map((catalogNodeId, index) => {
+    const fields = index === 0 ? JSON.parse(JSON.stringify(seedFields)) : [];
+    return {
+      node_id: flowId(catalogNodeId),
+      type: nodeTypes[index],
+      position: { x: index * 360, y: 120 },
+      data: {
+        catalog_preconfigured: true,
+        catalog_module_id: "particle_avatar",
+        catalog_node_id: catalogNodeId,
+        node_type: nodeTypes[index],
+        params:
+          index === 0
+            ? {
+                mode: "generic_fields",
+                content_revision: PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                fields,
+              }
+            : { config_mode: catalogNodeId },
+        fields: JSON.parse(JSON.stringify(fields)),
+      },
+    };
+  });
+  const seedEdges = nodeIds.slice(0, -1).map((sourceId, index) => ({
+    id: `${sourceId}_to_${nodeIds[index + 1]}`,
+    edge_id: `${sourceId}_to_${nodeIds[index + 1]}`,
+    source: flowId(sourceId),
+    target: flowId(nodeIds[index + 1]),
+  }));
+  seedEdges.push(
+    {
+      id: "particle_visual_config_input_to_particle_expression_state_relative_mapping",
+      edge_id: "particle_visual_config_input_to_particle_expression_state_relative_mapping",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[3]),
+    },
+    {
+      id: "particle_visual_config_input_to_particle_expression_intensity_adaptation",
+      edge_id: "particle_visual_config_input_to_particle_expression_intensity_adaptation",
+      source: flowId(nodeIds[0]),
+      target: flowId(nodeIds[4]),
+    }
+  );
+  const legacyFields = [
+    { field_key: "user_current_base_color", field_value: "#010203" },
+    { field_key: "primary_color", field_value: "#112233" },
+    { field_key: "secondary_color", field_value: "#445566" },
+    { field_key: "highlight_color", field_value: "#778899" },
+    { field_key: "neutral_brightness_multiplier", field_value: 9 },
+    { field_key: "calm_saturation_multiplier", field_value: 0.2 },
+    { field_key: "caring_color_temperature_offset", field_value: "not-a-number" },
+    { field_key: "subdued_energy_multiplier", field_value: -3 },
+    { field_key: "joyful_motion_speed_multiplier", field_value: 8 },
+    { field_key: "neutral_diffusion_multiplier", field_value: 0 },
+    {
+      field_key: "custom_particle_note",
+      field_value: "保留已有粒子配置说明。",
+      field_type: "long_text",
+    },
+  ];
+  const legacyNode = {
+    id: `${instanceId}::legacy_particle_avatar`,
+    type: "workflowNode",
+    position: { x: 720, y: 380 },
+    data: {
+      schemaNode: {
+        node_id: `${instanceId}::legacy_particle_avatar`,
+        type: "particle_avatar",
+        position: { x: 720, y: 380 },
+        data: {
+          catalog_preconfigured: true,
+          catalog_module_id: "particle_avatar",
+          node_type: "particle_avatar",
+          ui_name: "保留的粒子视觉输入",
+          preset: "aurora",
+          color: "#2468ac",
+          density: 0.82,
+          resident_visual_note: { keep: true },
+          params: {
+            fields: legacyFields,
+            custom_strength: 0.44,
+            checkbox_config: { custom_text: "保留旧参数中的用户视觉备注。" },
+          },
+          fields: legacyFields,
+        },
+      },
+    },
+  };
+  const stored = { nodes: [legacyNode], edges: [] };
+  const seed = { nodes: seedNodes, edges: seedEdges };
+
+  const migrated = migrateParticleExpressionRelativeMappingGraph(stored, seed);
+  assert.equal(migrated.migrated, true);
+  assert.equal(migrated.value.nodes.length, 10);
+  assert.equal(migrated.value.edges.length, 11);
+  assert.deepEqual(
+    migrated.value.nodes.map((node) => node.data.catalog_node_id),
+    nodeIds
+  );
+  assert.deepEqual(
+    migrated.value.edges.slice(0, 9).map((edge) => [
+      edge.source.split("::").at(-1),
+      edge.target.split("::").at(-1),
+    ]),
+    nodeIds.slice(0, -1).map((sourceId, index) => [sourceId, nodeIds[index + 1]])
+  );
+
+  const input = migrated.value.nodes[0];
+  assert.equal(
+    input.data.params.content_revision,
+    PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
+  );
+  assert.deepEqual(input.position, legacyNode.position);
+  assert.equal(input.data.ui_name, "保留的粒子视觉输入");
+  const fields = input.data.params.fields;
+  const valueOf = (fieldKey) =>
+    fields.find((field) => field.field_key === fieldKey)?.field_value;
+  assert.equal(valueOf("resident_default_base_color"), "#2468ac");
+  assert.equal(valueOf("user_current_base_color"), "#010203");
+  assert.equal(valueOf("primary_color"), "#112233");
+  assert.equal(valueOf("secondary_color"), "#445566");
+  assert.equal(valueOf("highlight_color"), "#778899");
+  assert.equal(valueOf("neutral_brightness_multiplier"), 1.25);
+  assert.equal(valueOf("calm_saturation_multiplier"), 0.65);
+  assert.equal(valueOf("caring_color_temperature_offset"), 0.05);
+  assert.equal(valueOf("subdued_energy_multiplier"), 0.7);
+  assert.equal(valueOf("joyful_motion_speed_multiplier"), 1.2);
+  assert.equal(valueOf("neutral_diffusion_multiplier"), 0.75);
+  assert.equal(valueOf("custom_particle_note"), "保留已有粒子配置说明。");
+  assert.equal(valueOf("preset"), "aurora");
+  assert.equal(valueOf("density"), 0.82);
+  assert.equal(valueOf("custom_strength"), 0.44);
+  assert.equal(valueOf("legacy_custom_text"), "保留旧参数中的用户视觉备注。");
+  assert.deepEqual(valueOf("resident_visual_note"), { keep: true });
+  assert.equal(valueOf("color"), undefined);
+  assert.equal(seedNodes[0].data.params.fields[1].field_value, "#7aa2f7");
+  for (const [parameter, [minimum, maximum]] of Object.entries(relativeLimits)) {
+    const field = fields.find((candidate) =>
+      candidate.field_key.endsWith(`_${parameter}`)
+    );
+    assert.equal(field.minimum, minimum);
+    assert.equal(field.maximum, maximum);
+  }
+
+  const explicitResidentColor = JSON.parse(JSON.stringify(stored));
+  explicitResidentColor.nodes[0].data.schemaNode.data.params.fields.push({
+    field_key: "resident_default_base_color",
+    field_value: "#abcdef",
+  });
+  const explicitMigration = migrateParticleExpressionRelativeMappingGraph(
+    explicitResidentColor,
+    seed
+  );
+  assert.equal(
+    explicitMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "resident_default_base_color"
+    ).field_value,
+    "#abcdef"
+  );
+
+  const paramsColor = JSON.parse(JSON.stringify(stored));
+  delete paramsColor.nodes[0].data.schemaNode.data.color;
+  paramsColor.nodes[0].data.schemaNode.data.params.color = "#13579b";
+  const paramsColorMigration = migrateParticleExpressionRelativeMappingGraph(
+    paramsColor,
+    seed
+  );
+  assert.equal(
+    paramsColorMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "resident_default_base_color"
+    ).field_value,
+    "#13579b"
+  );
+
+  const fieldBaseColor = JSON.parse(JSON.stringify(stored));
+  delete fieldBaseColor.nodes[0].data.schemaNode.data.color;
+  fieldBaseColor.nodes[0].data.schemaNode.data.params.fields.push({
+    field_key: "base_color",
+    field_value: "#97531f",
+  });
+  const fieldBaseColorMigration = migrateParticleExpressionRelativeMappingGraph(
+    fieldBaseColor,
+    seed
+  );
+  assert.equal(
+    fieldBaseColorMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "resident_default_base_color"
+    ).field_value,
+    "#97531f"
+  );
+
+  const reopened = migrateParticleExpressionRelativeMappingGraph(migrated.value, seed);
+  assert.equal(reopened.migrated, false);
+  assert.equal(reopened.value, migrated.value);
+
+  const bridgeSource = readFileSync(
+    new URL("../src/store/module-state-bridge.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    bridgeSource,
+    /PARTICLE_AVATAR_GRAPH_ID = ["']layer_10::particle_avatar["']/
+  );
+  assert.match(
+    bridgeSource,
+    /function migrateParticleExpressionRelativeMappingSeed[\s\S]*?migrateParticleExpressionRelativeMappingGraph/s
+  );
+  assert.match(
+    bridgeSource,
+    /const expressionMigrated = migrateExpressionStateSemanticsSeed[\s\S]*?const particleMigrated = migrateParticleExpressionRelativeMappingSeed/s
+  );
+  assert.match(
+    bridgeSource,
+    /CATALOG_GRAPH_REPLACE_MODULE_IDS[\s\S]*?["']particle_avatar["']/s
+  );
+  assert.match(
+    bridgeSource,
+    /moduleNodeId === PARTICLE_AVATAR_GRAPH_ID[\s\S]*?saveModuleGraphState\(moduleNodeId, mergedGraph\.nodes, mergedGraph\.edges\)/s
   );
 });
 

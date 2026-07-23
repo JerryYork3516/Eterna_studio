@@ -106,6 +106,116 @@ def test_compiler_reserves_future_and_forced_placeholder_modules_without_mutatin
     assert {route["capability"] for route in dr["payload"]["fallback_routes"]} == _REQUIRED_SLOT_TYPES
 
 
+def test_particle_avatar_compiles_saved_fields_into_declarative_mapping_output():
+    modules = _catalog_modules()
+    particle = next(
+        module for module in modules if module["module_id"] == "particle_avatar"
+    )
+    input_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_visual_config_input"
+    )
+    fields = {
+        field["field_key"]: field for field in input_node["params"]["fields"]
+    }
+    configured_values = {
+        "user_current_base_color": "#123456",
+        "resident_default_base_color": "#234567",
+        "primary_color": "#345678",
+        "secondary_color": "#456789",
+        "highlight_color": "#56789a",
+        "calm_brightness_multiplier": 1.2,
+        "caring_color_temperature_offset": 8.0,
+        "subdued_energy_multiplier": 0.2,
+        "joyful_motion_speed_multiplier": "not-a-number",
+        "transition_duration": 2.4,
+        "minimum_hold_duration": 0.8,
+        "transition_style": "unsupported_flash",
+    }
+    for field_key, value in configured_values.items():
+        fields[field_key]["field_value"] = value
+    before = deepcopy(modules)
+
+    dr = _compiled_dr(modules=modules)
+
+    assert modules == before
+    compiled_particle = next(
+        module
+        for module in dr["payload"]["modules"]
+        if module["module_id"] == "particle_avatar"
+    )
+    assert compiled_particle["status"] == "RESERVED"
+    assert compiled_particle["no_execution"] is True
+    output = compiled_particle["outputs"]["particle_mapping_config"]
+    output_node = next(
+        node
+        for node in compiled_particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_mapping_config_output"
+    )
+    assert output_node["outputs"]["particle_mapping_config"] == output
+
+    base_color = output["base_color_config"]
+    assert base_color["priority"] == [
+        "user_current_base_color",
+        "resident_default_base_color",
+        "particle_core_default_gray_white",
+    ]
+    assert base_color["user_current_base_color"] == "#123456"
+    assert base_color["resident_default_base_color"] == "#234567"
+    assert base_color["primary_color"] == "#345678"
+    assert base_color["secondary_color"] == "#456789"
+    assert base_color["highlight_color"] == "#56789a"
+    assert base_color["expression_may_replace_user_base_color"] is False
+
+    mappings = output["expression_relative_mapping"]["state_mappings"]
+    assert mappings["calm"]["brightness_multiplier"] == 1.2
+    assert mappings["caring"]["color_temperature_offset"] == 0.15
+    assert mappings["subdued"]["energy_multiplier"] == 0.7
+    assert mappings["joyful"]["motion_speed_multiplier"] == 1.12
+    assert set(mappings) == {"neutral", "calm", "caring", "subdued", "joyful"}
+    assert all(
+        set(mapping)
+        == {
+            "brightness_multiplier",
+            "saturation_multiplier",
+            "color_temperature_offset",
+            "energy_multiplier",
+            "motion_speed_multiplier",
+            "diffusion_multiplier",
+        }
+        for mapping in mappings.values()
+    )
+    assert not any(
+        key in mapping
+        for mapping in mappings.values()
+        for key in ("color", "fixed_color", "primary_color", "highlight_color")
+    )
+
+    transition = output["transition_rules"]
+    assert transition["transition_duration"] == 2.4
+    assert transition["minimum_hold_duration"] == 0.8
+    assert transition["transition_style"] == "smooth"
+    assert transition["transition_executor"] == "aftelle"
+    assert transition["studio_stores_rules_only"] is True
+    assert "final_color" not in output
+    assert "final_particle_parameters" not in output
+
+    compiled_input = next(
+        node
+        for node in compiled_particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_visual_config_input"
+    )
+    compiled_fields = {
+        field["field_key"]: field["field_value"]
+        for field in compiled_input["params"]["fields"]
+    }
+    assert compiled_fields["caring_color_temperature_offset"] == 0.15
+    assert compiled_fields["subdued_energy_multiplier"] == 0.7
+    assert compiled_fields["joyful_motion_speed_multiplier"] == 1.12
+    assert compiled_fields["transition_style"] == "smooth"
+
+
 def test_stage_scope_audit_fails_if_ready_future_module_escapes_normalization(monkeypatch):
     monkeypatch.setattr(dr_compiler, "_synchronize_stage_7_4_module_scope", lambda collection: None)
 
