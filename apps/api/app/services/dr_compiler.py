@@ -55,6 +55,7 @@ from ..dr.v3.dr_v0_3_schema import (
     RuntimeRequirementsV03,
     SafetyPolicyV03,
     ScreenCapabilityDeclarationV03,
+    VisualExpressionMappingV03,
     VoiceConfigV03,
     build_runtime_plan_steps,
 )
@@ -134,6 +135,7 @@ from ..dr.v2.validator.capability_validator import (
     build_v03_runtime_contract,
     validate_v03_runtime_contract,
 )
+from .visual_expression_projection import build_visual_expression_mapping
 
 DR_VERSION = "0.1"
 FILE_TYPE = "digital_resident"
@@ -2452,6 +2454,7 @@ def _normalize_visual_style_reference_sources(collection: Dict[str, Any]) -> Non
 
 def _synchronize_particle_avatar_module_output(
     collection: Dict[str, Any],
+    findings: Optional[List[Dict[str, str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Project saved Layer 10 fields into declarative particle rules only."""
 
@@ -2481,6 +2484,7 @@ def _synchronize_particle_avatar_module_output(
     if not output:
         return None
 
+    normalized_paths: set[str] = set()
     field_records: Dict[str, Dict[str, Any]] = {}
     for node in _module_graph_nodes(module):
         params = node.get("params") if isinstance(node.get("params"), dict) else {}
@@ -2513,17 +2517,22 @@ def _synchronize_particle_avatar_module_output(
         field_key: str, fallback: float, minimum: float, maximum: float
     ) -> float:
         raw = configured_value(field_key, fallback)
+        parsed: float | None = None
         if isinstance(raw, bool):
             normalized = float(fallback)
         else:
             try:
                 parsed = float(raw)
             except (TypeError, ValueError):
-                parsed = float(fallback)
+                parsed = None
             normalized = (
                 min(maximum, max(minimum, parsed))
-                if math.isfinite(parsed)
+                if parsed is not None and math.isfinite(parsed)
                 else float(fallback)
+            )
+        if parsed is None or not math.isfinite(parsed) or normalized != parsed:
+            normalized_paths.add(
+                f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.{field_key}"
             )
         update_compiled_field(field_key, normalized)
         return normalized
@@ -2587,12 +2596,30 @@ def _synchronize_particle_avatar_module_output(
     transition_rules["minimum_hold_duration"] = bounded_number(
         "minimum_hold_duration", 0.35, 0.0, 10.0
     )
+    configured_transition_style = configured_value("transition_style", "smooth")
+    if configured_transition_style != "smooth":
+        normalized_paths.add(
+            f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.transition_style"
+        )
     transition_rules["transition_style"] = "smooth"
     transition_rules["transition_style_options"] = ["smooth"]
     update_compiled_field("transition_style", "smooth")
     output["transition_rules"] = transition_rules
 
     _set_compiled_module_output(module, PARTICLE_AVATAR_OUTPUT_KEY, output)
+    if normalized_paths and findings is not None:
+        findings.append(
+            _finding(
+                "WARNING",
+                "DR_VISUAL_EXPRESSION_MAPPING_CLAMPED",
+                (
+                    "Visual expression configuration values were clamped or "
+                    "defaulted before projection: "
+                    + ", ".join(sorted(normalized_paths))
+                ),
+                "visual_expression_mapping",
+            )
+        )
     return output
 
 
@@ -5015,7 +5042,22 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     ]
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
-    _synchronize_particle_avatar_module_output(collection)
+    _synchronize_particle_avatar_module_output(collection, findings)
+    visual_expression_mapping_raw, visual_expression_diagnostics = (
+        build_visual_expression_mapping(collection.get("modules", []))
+    )
+    visual_expression_mapping = VisualExpressionMappingV03.model_validate(
+        visual_expression_mapping_raw
+    ).model_dump(mode="json")
+    for diagnostic in visual_expression_diagnostics:
+        findings.append(
+            _finding(
+                "WARNING",
+                diagnostic["code"],
+                diagnostic["message"],
+                diagnostic["path"],
+            )
+        )
     _synchronize_layer8_validation_results(collection, findings)
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
@@ -5152,6 +5194,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "not_executable": True,
         "manifest": manifest,
         "payload": payload,
+        "visual_expression_mapping": visual_expression_mapping,
         "compile_info": compile_info,
     }
     dr.update(_v03_compatibility_aliases(payload, resident, blueprint, resident_id))

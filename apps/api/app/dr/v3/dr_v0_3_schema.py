@@ -182,6 +182,71 @@ class AuditReportV03(V03BaseModel):
     summary: Dict[str, int] = Field(default_factory=dict)
 
 
+class VisualExpressionIntensityRangeV03(V03BaseModel):
+    minimum: float = Field(ge=0.0, le=1.0)
+    maximum: float = Field(ge=0.0, le=1.0)
+
+
+class VisualExpressionBaseColorPolicyV03(V03BaseModel):
+    priority: List[str] = Field(default_factory=list)
+    resident_default_base_color: Optional[str] = None
+    particle_core_fallback: Literal["default_gray_white"] = "default_gray_white"
+
+
+class ParticleCoreRelativeMappingV03(V03BaseModel):
+    brightness_multiplier: float = Field(ge=0.7, le=1.25)
+    saturation_multiplier: float = Field(ge=0.65, le=1.2)
+    temperature_shift: float = Field(ge=-0.15, le=0.15)
+    energy_multiplier: float = Field(ge=0.7, le=1.25)
+    motion_speed_multiplier: float = Field(ge=0.75, le=1.2)
+    diffusion_multiplier: float = Field(ge=0.75, le=1.25)
+
+
+class VisualExpressionTransitionPolicyV03(V03BaseModel):
+    transition_duration: float = Field(ge=0.0)
+    minimum_hold_duration: float = Field(ge=0.0)
+    transition_style: Literal["smooth"] = "smooth"
+    repeat_same_state_restarts_transition: bool = False
+    continue_from_current_visual_value: bool = True
+
+
+class VisualExpressionLifecyclePriorityV03(V03BaseModel):
+    override_states: List[str] = Field(default_factory=list)
+    composable_states: List[str] = Field(default_factory=list)
+
+
+class VisualExpressionFallbackPolicyV03(V03BaseModel):
+    invalid_state: Literal["neutral"] = "neutral"
+    missing_state: Literal["neutral"] = "neutral"
+    clamp_intensity: bool = True
+    clamp_mapping_values: bool = True
+
+
+class AbstractBustMappingV03(V03BaseModel):
+    status: Literal["reserved"] = "reserved"
+
+
+class VisualExpressionMappingV03(V03BaseModel):
+    protocol_version: Literal["1.0"] = "1.0"
+    content_revision: Literal[
+        "stage7_4_11_visual_expression_projection_v1"
+    ] = "stage7_4_11_visual_expression_projection_v1"
+    allowed_states: List[
+        Literal["neutral", "calm", "caring", "subdued", "joyful"]
+    ] = Field(default_factory=list)
+    default_state: Literal["neutral"] = "neutral"
+    intensity_range: VisualExpressionIntensityRangeV03
+    base_color_policy: VisualExpressionBaseColorPolicyV03
+    particle_core_mapping: Dict[
+        Literal["neutral", "calm", "caring", "subdued", "joyful"],
+        ParticleCoreRelativeMappingV03,
+    ] = Field(default_factory=dict)
+    transition_policy: VisualExpressionTransitionPolicyV03
+    lifecycle_priority: VisualExpressionLifecyclePriorityV03
+    fallback_policy: VisualExpressionFallbackPolicyV03
+    abstract_bust_mapping: AbstractBustMappingV03
+
+
 class DRPayloadV03(V03BaseModel):
     resident_identity: ResidentIdentityV03
     resident_blueprint: ResidentBlueprintV03
@@ -217,6 +282,7 @@ class DRDocumentV03(V03BaseModel):
     not_executable: bool = True
     manifest: DRManifestV03
     payload: DRPayloadV03
+    visual_expression_mapping: Optional[VisualExpressionMappingV03] = None
     compile_info: CompileInfoV03
     audit_report: AuditReportV03
     # Backward-compatible legacy aliases for consumers that still inspect the
