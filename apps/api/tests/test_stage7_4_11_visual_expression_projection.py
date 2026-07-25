@@ -38,6 +38,15 @@ _RANGES = {
     "motion_speed_multiplier": (0.75, 1.2),
     "diffusion_multiplier": (0.75, 1.25),
 }
+_PARAMETER_RANGES = {
+    "expression_intensity": {"minimum": 0.0, "maximum": 1.0},
+    "brightness_multiplier": {"minimum": 0.7, "maximum": 1.25},
+    "saturation_multiplier": {"minimum": 0.65, "maximum": 1.2},
+    "temperature_shift": {"minimum": -0.15, "maximum": 0.15},
+    "energy_multiplier": {"minimum": 0.7, "maximum": 1.25},
+    "motion_speed_multiplier": {"minimum": 0.75, "maximum": 1.2},
+    "diffusion_multiplier": {"minimum": 0.75, "maximum": 1.25},
+}
 
 
 def _workflow() -> dict:
@@ -99,6 +108,26 @@ def test_a1_a2_compile_to_stable_top_level_visual_expression_mapping():
     assert projection["allowed_states"] == _STATES
     assert projection["default_state"] == "neutral"
     assert projection["intensity_range"] == {"minimum": 0.0, "maximum": 1.0}
+    assert projection["parameter_ranges"] == _PARAMETER_RANGES
+    assert list(projection["parameter_ranges"]) == list(_PARAMETER_RANGES)
+    assert projection["state_selection_policy"] == {
+        "selection_source": "runtime_core",
+        "state_field": "expression_state",
+        "intensity_field": "expression_intensity",
+        "allowed_states": _STATES,
+        "default_state": "neutral",
+        "missing_state_fallback": "neutral",
+        "invalid_state_fallback": "neutral",
+        "single_state_per_turn": True,
+        "resident_expression_only": True,
+        "user_emotion_diagnosis": False,
+        "renderer_parameters_allowed": False,
+        "lifecycle_state_separated": True,
+    }
+    assert (
+        projection["state_selection_policy"]["allowed_states"]
+        == projection["allowed_states"]
+    )
     assert projection["fallback_policy"] == {
         "invalid_state": "neutral",
         "missing_state": "neutral",
@@ -168,6 +197,70 @@ def test_a1_a2_compile_to_stable_top_level_visual_expression_mapping():
     assert dr["payload"]["lattice_config"]["emotion"] == "neutral"
     assert dr["lattice_config"] == dr["payload"]["lattice_config"]
     VisualExpressionMappingV03.model_validate(projection)
+
+
+def test_aftelle_projection_completion_preserves_frozen_mapping_and_contract():
+    first = _compile()["compiled_dr"]
+    second = _compile()["compiled_dr"]
+    projection = first["visual_expression_mapping"]
+    mapping = projection["particle_core_mapping"]
+    policy = projection["state_selection_policy"]
+
+    assert projection == second["visual_expression_mapping"]
+    assert projection["content_revision"] == (
+        "stage7_4_11_aftelle_projection_completion_v1"
+    )
+    assert projection["parameter_ranges"] == _PARAMETER_RANGES
+    assert policy["selection_source"] == "runtime_core"
+    assert policy["state_field"] == "expression_state"
+    assert policy["intensity_field"] == "expression_intensity"
+    assert policy["allowed_states"] == projection["allowed_states"] == _STATES
+    assert policy["default_state"] == "neutral"
+    assert policy["missing_state_fallback"] == "neutral"
+    assert policy["invalid_state_fallback"] == "neutral"
+    assert policy["single_state_per_turn"] is True
+    assert policy["resident_expression_only"] is True
+    assert policy["user_emotion_diagnosis"] is False
+    assert policy["renderer_parameters_allowed"] is False
+    assert policy["lifecycle_state_separated"] is True
+    assert mapping["caring"]["brightness_multiplier"] == 1.06
+    assert mapping["subdued"]["energy_multiplier"] == 0.78
+    assert mapping["joyful"]["diffusion_multiplier"] == 1.14
+    assert first["dr_version"] == "0.3"
+    assert first["dr_schema_version"] == "0.3.0"
+    assert first["manifest"]["required_capabilities"] == [
+        "llm",
+        "memory",
+        "lattice",
+    ]
+
+
+def test_legacy_projection_without_a6_fields_remains_loadable():
+    current = _compile()["compiled_dr"]
+    legacy = deepcopy(current)
+    legacy_projection = legacy["visual_expression_mapping"]
+    legacy_projection["content_revision"] = (
+        "stage7_4_11_visual_expression_projection_v1"
+    )
+    legacy_projection.pop("parameter_ranges")
+    legacy_projection.pop("state_selection_policy")
+
+    parsed_legacy = VisualExpressionMappingV03.model_validate(
+        legacy_projection
+    )
+    assert parsed_legacy.parameter_ranges is None
+    assert parsed_legacy.state_selection_policy is None
+
+    loaded = mock_load_dr_v0_3(legacy)
+    assert loaded["loaded"] is True
+    assert loaded["visual_expression_mapping"]["parameter_ranges"] == (
+        _PARAMETER_RANGES
+    )
+    assert loaded["visual_expression_mapping"]["state_selection_policy"][
+        "allowed_states"
+    ] == _STATES
+    assert "parameter_ranges" not in legacy_projection
+    assert "state_selection_policy" not in legacy_projection
 
 
 def test_particle_mapping_current_node_synchronizes_output_and_top_projection():

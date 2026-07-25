@@ -17,7 +17,7 @@ from ..registry.module_catalog import (
 )
 
 VISUAL_EXPRESSION_PROJECTION_CONTENT_REVISION = (
-    "stage7_4_11_visual_expression_projection_v1"
+    "stage7_4_11_aftelle_projection_completion_v1"
 )
 VISUAL_EXPRESSION_PROJECTION_PROTOCOL_VERSION = "1.0"
 VISUAL_EXPRESSION_ALLOWED_STATES = tuple(EXPRESSION_STATE_VALUES)
@@ -391,6 +391,17 @@ def build_visual_expression_mapping(
                 f"visual_expression_mapping.particle_core_mapping.range.{source_key}"
             )
 
+    parameter_ranges = {
+        "expression_intensity": deepcopy(intensity_range),
+    }
+    for output_key, spec in VISUAL_EXPRESSION_PARAMETER_SPECS.items():
+        source_key = str(spec["source_key"])
+        minimum, maximum = source_ranges[source_key]
+        parameter_ranges[output_key] = {
+            "minimum": minimum,
+            "maximum": maximum,
+        }
+
     particle_core_mapping: Dict[str, Dict[str, float]] = {}
     for state in VISUAL_EXPRESSION_ALLOWED_STATES:
         projected_state: Dict[str, float] = {}
@@ -481,6 +492,21 @@ def build_visual_expression_mapping(
         "allowed_states": allowed_states,
         "default_state": default_state,
         "intensity_range": intensity_range,
+        "parameter_ranges": parameter_ranges,
+        "state_selection_policy": {
+            "selection_source": "runtime_core",
+            "state_field": "expression_state",
+            "intensity_field": "expression_intensity",
+            "allowed_states": list(allowed_states),
+            "default_state": default_state,
+            "missing_state_fallback": default_state,
+            "invalid_state_fallback": default_state,
+            "single_state_per_turn": True,
+            "resident_expression_only": True,
+            "user_emotion_diagnosis": False,
+            "renderer_parameters_allowed": False,
+            "lifecycle_state_separated": True,
+        },
         "base_color_policy": {
             "priority": base_color_priority,
             "resident_default_base_color": resident_default_base_color,

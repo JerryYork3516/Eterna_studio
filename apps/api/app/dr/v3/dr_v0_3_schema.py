@@ -187,6 +187,38 @@ class VisualExpressionIntensityRangeV03(V03BaseModel):
     maximum: float = Field(ge=0.0, le=1.0)
 
 
+class VisualExpressionParameterRangeV03(V03BaseModel):
+    minimum: float
+    maximum: float
+
+
+class VisualExpressionParameterRangesV03(V03BaseModel):
+    expression_intensity: VisualExpressionParameterRangeV03
+    brightness_multiplier: VisualExpressionParameterRangeV03
+    saturation_multiplier: VisualExpressionParameterRangeV03
+    temperature_shift: VisualExpressionParameterRangeV03
+    energy_multiplier: VisualExpressionParameterRangeV03
+    motion_speed_multiplier: VisualExpressionParameterRangeV03
+    diffusion_multiplier: VisualExpressionParameterRangeV03
+
+
+class VisualExpressionStateSelectionPolicyV03(V03BaseModel):
+    selection_source: Literal["runtime_core"] = "runtime_core"
+    state_field: Literal["expression_state"] = "expression_state"
+    intensity_field: Literal["expression_intensity"] = "expression_intensity"
+    allowed_states: List[
+        Literal["neutral", "calm", "caring", "subdued", "joyful"]
+    ] = Field(default_factory=list)
+    default_state: Literal["neutral"] = "neutral"
+    missing_state_fallback: Literal["neutral"] = "neutral"
+    invalid_state_fallback: Literal["neutral"] = "neutral"
+    single_state_per_turn: bool = True
+    resident_expression_only: bool = True
+    user_emotion_diagnosis: bool = False
+    renderer_parameters_allowed: bool = False
+    lifecycle_state_separated: bool = True
+
+
 class VisualExpressionBaseColorPolicyV03(V03BaseModel):
     priority: List[str] = Field(default_factory=list)
     resident_default_base_color: Optional[str] = None
@@ -229,13 +261,18 @@ class AbstractBustMappingV03(V03BaseModel):
 class VisualExpressionMappingV03(V03BaseModel):
     protocol_version: Literal["1.0"] = "1.0"
     content_revision: Literal[
-        "stage7_4_11_visual_expression_projection_v1"
-    ] = "stage7_4_11_visual_expression_projection_v1"
+        "stage7_4_11_visual_expression_projection_v1",
+        "stage7_4_11_aftelle_projection_completion_v1",
+    ] = "stage7_4_11_aftelle_projection_completion_v1"
     allowed_states: List[
         Literal["neutral", "calm", "caring", "subdued", "joyful"]
     ] = Field(default_factory=list)
     default_state: Literal["neutral"] = "neutral"
     intensity_range: VisualExpressionIntensityRangeV03
+    parameter_ranges: Optional[VisualExpressionParameterRangesV03] = None
+    state_selection_policy: Optional[
+        VisualExpressionStateSelectionPolicyV03
+    ] = None
     base_color_policy: VisualExpressionBaseColorPolicyV03
     particle_core_mapping: Dict[
         Literal["neutral", "calm", "caring", "subdued", "joyful"],
