@@ -10,7 +10,10 @@ from app.dr.v3.dr_v0_3_schema import (
     DRDocumentV03,
     VisualExpressionMappingV03,
 )
-from app.registry.module_catalog import get_module_catalog
+from app.registry.module_catalog import (
+    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
+    get_module_catalog,
+)
 from app.services.dr_compiler import compile_dr_result_v0_3, mock_load_dr_v0_3
 from app.services.visual_expression_projection import (
     VISUAL_EXPRESSION_PROJECTION_CONTENT_REVISION,
@@ -167,6 +170,230 @@ def test_a1_a2_compile_to_stable_top_level_visual_expression_mapping():
     VisualExpressionMappingV03.model_validate(projection)
 
 
+def test_particle_mapping_current_node_synchronizes_output_and_top_projection():
+    modules = _modules()
+    particle = next(
+        module for module in modules if module["module_id"] == "particle_avatar"
+    )
+    input_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_visual_config_input"
+    )
+    mapping_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_expression_state_relative_mapping"
+    )
+    output_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_mapping_config_output"
+    )
+    expected_internal = deepcopy(mapping_node["params"]["state_mappings"])
+    identity_internal = {
+        "brightness_multiplier": 1.0,
+        "saturation_multiplier": 1.0,
+        "color_temperature_offset": 0.0,
+        "energy_multiplier": 1.0,
+        "motion_speed_multiplier": 1.0,
+        "diffusion_multiplier": 1.0,
+    }
+
+    # Reproduce the regression: stale config-input fields, normalized config,
+    # output mirrors, and legacy copies all contain neutral identities.
+    for field in input_node["params"]["fields"]:
+        field_key = field["field_key"]
+        for state in _STATES[1:]:
+            prefix = f"{state}_"
+            if field_key.startswith(prefix):
+                field["field_value"] = identity_internal[field_key[len(prefix) :]]
+    input_node["params"]["legacy_fields"] = deepcopy(
+        input_node["params"]["fields"]
+    )
+    particle["config"]["expression_relative_mapping"] = {
+        "state_mappings": {
+            state: deepcopy(identity_internal) for state in _STATES
+        }
+    }
+    stale_output = deepcopy(particle["outputs"]["particle_mapping_config"])
+    stale_output["expression_relative_mapping"]["state_mappings"] = {
+        state: deepcopy(identity_internal) for state in _STATES
+    }
+    particle["outputs"]["particle_mapping_config"] = deepcopy(stale_output)
+    output_node["outputs"]["particle_mapping_config"] = deepcopy(stale_output)
+
+    # A field saved on the current mapping node is higher priority even than
+    # the node's older structured mirror.
+    mapping_node["params"]["state_mappings"]["caring"][
+        "brightness_multiplier"
+    ] = 1.0
+    mapping_node["params"]["fields"] = [
+        {
+            "field_key": "caring_brightness_multiplier",
+            "field_value": 1.06,
+        }
+    ]
+    direct_projection, _ = build_visual_expression_mapping([particle])
+    assert (
+        direct_projection["particle_core_mapping"]["caring"][
+            "brightness_multiplier"
+        ]
+        == 1.06
+    )
+    assert (
+        direct_projection["particle_core_mapping"]["subdued"][
+            "energy_multiplier"
+        ]
+        == 0.78
+    )
+    assert (
+        direct_projection["particle_core_mapping"]["joyful"][
+            "diffusion_multiplier"
+        ]
+        == 1.14
+    )
+
+    first = _compile(modules)
+    second = _compile(modules)
+    dr = first["compiled_dr"]
+    compiled_particle = next(
+        module
+        for module in dr["payload"]["modules"]
+        if module["module_id"] == "particle_avatar"
+    )
+    compiled_mapping_node = next(
+        node
+        for node in compiled_particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_expression_state_relative_mapping"
+    )
+    compiled_output = compiled_particle["outputs"]["particle_mapping_config"]
+    compiled_output_node = next(
+        node
+        for node in compiled_particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_mapping_config_output"
+    )
+    output_mapping = compiled_output["expression_relative_mapping"][
+        "state_mappings"
+    ]
+    normalized_config_mapping = compiled_particle["config"][
+        "expression_relative_mapping"
+    ]["state_mappings"]
+    top_mapping = dr["visual_expression_mapping"]["particle_core_mapping"]
+    expected_internal["caring"]["brightness_multiplier"] = 1.06
+
+    assert compiled_mapping_node["params"]["state_mappings"] == expected_internal
+    assert normalized_config_mapping == expected_internal
+    assert output_mapping == expected_internal
+    assert (
+        compiled_output_node["outputs"]["particle_mapping_config"][
+            "expression_relative_mapping"
+        ]["state_mappings"]
+        == expected_internal
+    )
+    assert top_mapping == {
+        state: {
+            (
+                "temperature_shift"
+                if parameter == "color_temperature_offset"
+                else parameter
+            ): value
+            for parameter, value in values.items()
+        }
+        for state, values in expected_internal.items()
+    }
+    neutral = top_mapping["neutral"]
+    assert all(top_mapping[state] != neutral for state in _STATES[1:])
+    assert top_mapping["caring"]["brightness_multiplier"] == 1.06
+    assert top_mapping["subdued"]["energy_multiplier"] == 0.78
+    assert top_mapping["joyful"]["diffusion_multiplier"] == 1.14
+    assert (
+        compiled_particle["config"]["source_priority_revision"]
+        == PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+    )
+    assert (
+        compiled_mapping_node["params"]["source_priority_revision"]
+        == PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+    )
+    assert (
+        dr["visual_expression_mapping"]
+        == second["compiled_dr"]["visual_expression_mapping"]
+    )
+    module_ids = [module["module_id"] for module in dr["payload"]["modules"]]
+    node_ids = [
+        node["node_id"] for node in compiled_particle["module_graph"]["nodes"]
+    ]
+    assert len(module_ids) == len(set(module_ids))
+    assert len(node_ids) == len(set(node_ids))
+
+
+def test_particle_mapping_uses_normalized_config_then_safe_default_only_when_missing():
+    modules = _modules()
+    particle = next(
+        module for module in modules if module["module_id"] == "particle_avatar"
+    )
+    input_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_visual_config_input"
+    )
+    mapping_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_expression_state_relative_mapping"
+    )
+    output_node = next(
+        node
+        for node in particle["module_graph"]["nodes"]
+        if node["node_id"] == "particle_mapping_config_output"
+    )
+
+    del mapping_node["params"]["state_mappings"]["caring"][
+        "brightness_multiplier"
+    ]
+    del mapping_node["params"]["state_mappings"]["calm"][
+        "brightness_multiplier"
+    ]
+    input_node["params"]["fields"] = [
+        field
+        for field in input_node["params"]["fields"]
+        if field["field_key"]
+        not in {
+            "caring_brightness_multiplier",
+            "calm_brightness_multiplier",
+        }
+    ]
+    particle["config"]["expression_relative_mapping"] = {
+        "state_mappings": {
+            "caring": {"brightness_multiplier": 1.08},
+        }
+    }
+    for output in (
+        particle["outputs"]["particle_mapping_config"],
+        output_node["outputs"]["particle_mapping_config"],
+    ):
+        del output["expression_relative_mapping"]["state_mappings"]["calm"][
+            "brightness_multiplier"
+        ]
+        output["expression_relative_mapping"]["state_mappings"]["caring"][
+            "brightness_multiplier"
+        ] = 1.0
+    particle["config"].pop("validation_compatibility_revision", None)
+    particle["module_graph"].pop("validation_compatibility_revision", None)
+    for node in particle["module_graph"]["nodes"]:
+        node.get("params", {}).pop(
+            "validation_compatibility_revision", None
+        )
+
+    result = _compile(modules)
+    mapping = result["compiled_dr"]["visual_expression_mapping"][
+        "particle_core_mapping"
+    ]
+
+    assert mapping["caring"]["brightness_multiplier"] == 1.08
+    assert mapping["calm"]["brightness_multiplier"] == 1.0
+
+
 def test_projection_reads_saved_a2_fields_without_calculating_final_color():
     modules = _modules()
     fields = _particle_fields(modules)
@@ -211,6 +438,15 @@ def test_projection_reads_saved_a2_fields_without_calculating_final_color():
 
 def test_legacy_out_of_range_values_are_clamped_and_localized_diagnostic_exists():
     modules = _modules()
+    particle_module = next(
+        item for item in modules if item["module_id"] == "particle_avatar"
+    )
+    particle_module["config"].pop("validation_compatibility_revision", None)
+    particle_module["module_graph"].pop(
+        "validation_compatibility_revision", None
+    )
+    for node in particle_module["module_graph"]["nodes"]:
+        node.get("params", {}).pop("validation_compatibility_revision", None)
     fields = _particle_fields(modules)
     fields["calm_brightness_multiplier"]["field_value"] = 9.0
     fields["caring_saturation_multiplier"]["field_value"] = -2.0
@@ -226,7 +462,7 @@ def test_legacy_out_of_range_values_are_clamped_and_localized_diagnostic_exists(
     assert mapping["calm"]["brightness_multiplier"] == 1.25
     assert mapping["caring"]["saturation_multiplier"] == 0.65
     assert mapping["subdued"]["temperature_shift"] == 0.15
-    assert mapping["joyful"]["energy_multiplier"] == 1.18
+    assert mapping["joyful"]["energy_multiplier"] == 1.0
     assert mapping["calm"]["motion_speed_multiplier"] == 1.2
     assert mapping["subdued"]["diffusion_multiplier"] == 0.75
     assert list(mapping) == _STATES

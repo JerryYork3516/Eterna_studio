@@ -7,7 +7,9 @@ import {
   DIALOGUE_RUNTIME_PROFILE_ID,
   DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
   EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION,
+  EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION,
   PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+  PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
   LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
   LINXUAN_RESIDENT_ID,
   mergeCatalogReferenceDeclarations,
@@ -1618,6 +1620,8 @@ test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resid
           ? {
               mode: "generic_fields",
               content_revision: EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION,
+              validation_compatibility_revision:
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION,
               fields,
             }
           : { semantic_rule: catalogNodeId },
@@ -1752,6 +1756,10 @@ test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resid
 
   const input = migrated.value.nodes[0];
   assert.equal(input.data.params.content_revision, EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION);
+  assert.equal(
+    input.data.params.validation_compatibility_revision,
+    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+  );
   assert.deepEqual(input.position, legacyNodes[0].position);
   assert.equal(input.data.ui_name, "保留的表达上下文名称");
   const migratedFields = input.data.params.fields;
@@ -1778,11 +1786,42 @@ test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resid
   const normalized = migrateExpressionStateSemanticsGraph(invalidStored, seed);
   const normalizedFields = normalized.value.nodes[0].data.params.fields;
   assert.equal(normalizedFields.find((field) => field.field_key === "expression_state").field_value, "neutral");
-  assert.equal(normalizedFields.find((field) => field.field_key === "expression_intensity").field_value, 0);
+  assert.equal(normalizedFields.find((field) => field.field_key === "expression_intensity").field_value, 1);
   assert.equal(
     normalizedFields.find((field) => field.field_key === "resident_expression_notes").field_value,
     "既有居民表达备注。\n\n先听完居民表达，再选择合适状态。\n\n关系紧张时降低表达强度。"
   );
+
+  const caseStored = JSON.parse(JSON.stringify(stored));
+  const caseFields = caseStored.nodes[0].data.schemaNode.data.params.fields;
+  caseFields.find((field) => field.field_key === "expression_state").field_value = " CaLm ";
+  caseFields.find((field) => field.field_key === "expression_intensity").field_value = -4;
+  const caseNormalized = migrateExpressionStateSemanticsGraph(caseStored, seed);
+  const caseNormalizedFields = caseNormalized.value.nodes[0].data.params.fields;
+  assert.equal(
+    caseNormalizedFields.find((field) => field.field_key === "expression_state").field_value,
+    "calm"
+  );
+  assert.equal(
+    caseNormalizedFields.find((field) => field.field_key === "expression_intensity").field_value,
+    0
+  );
+  for (const lifecycleState of ["thinking", "speaking", "loading", "error"]) {
+    const lifecycleStored = JSON.parse(JSON.stringify(stored));
+    lifecycleStored.nodes[0].data.schemaNode.data.params.fields.find(
+      (field) => field.field_key === "expression_state"
+    ).field_value = lifecycleState;
+    const lifecycleNormalized = migrateExpressionStateSemanticsGraph(
+      lifecycleStored,
+      seed
+    );
+    assert.equal(
+      lifecycleNormalized.value.nodes[0].data.params.fields.find(
+        (field) => field.field_key === "expression_state"
+      ).field_value,
+      "neutral"
+    );
+  }
 
   const reopened = migrateExpressionStateSemanticsGraph(migrated.value, seed);
   assert.equal(reopened.migrated, false);
@@ -1903,9 +1942,21 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
             ? {
                 mode: "generic_fields",
                 content_revision: PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                source_priority_revision:
+                  PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
+                validation_compatibility_revision:
+                  EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION,
                 fields,
               }
-            : { config_mode: catalogNodeId },
+            : {
+                config_mode: catalogNodeId,
+                ...(index === 3
+                  ? {
+                      source_priority_revision:
+                        PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
+                    }
+                  : {}),
+              },
         fields: JSON.parse(JSON.stringify(fields)),
       },
     };
@@ -1941,6 +1992,9 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
     { field_key: "subdued_energy_multiplier", field_value: -3 },
     { field_key: "joyful_motion_speed_multiplier", field_value: 8 },
     { field_key: "neutral_diffusion_multiplier", field_value: 0 },
+    { field_key: "transition_duration", field_value: -5 },
+    { field_key: "minimum_hold_duration", field_value: "not-a-number" },
+    { field_key: "transition_style", field_value: "flash" },
     {
       field_key: "custom_particle_note",
       field_value: "保留已有粒子配置说明。",
@@ -1999,6 +2053,14 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
     input.data.params.content_revision,
     PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
   );
+  assert.equal(
+    input.data.params.validation_compatibility_revision,
+    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+  );
+  assert.equal(
+    migrated.value.nodes[3].data.params.source_priority_revision,
+    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+  );
   assert.deepEqual(input.position, legacyNode.position);
   assert.equal(input.data.ui_name, "保留的粒子视觉输入");
   const fields = input.data.params.fields;
@@ -2011,10 +2073,14 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   assert.equal(valueOf("highlight_color"), "#778899");
   assert.equal(valueOf("neutral_brightness_multiplier"), 1.25);
   assert.equal(valueOf("calm_saturation_multiplier"), 0.65);
-  assert.equal(valueOf("caring_color_temperature_offset"), 0.05);
+  assert.equal(valueOf("caring_color_temperature_offset"), 0);
   assert.equal(valueOf("subdued_energy_multiplier"), 0.7);
   assert.equal(valueOf("joyful_motion_speed_multiplier"), 1.2);
   assert.equal(valueOf("neutral_diffusion_multiplier"), 0.75);
+  assert.equal(valueOf("calm_brightness_multiplier"), 1);
+  assert.equal(valueOf("transition_duration"), 0);
+  assert.equal(valueOf("minimum_hold_duration"), 0.35);
+  assert.equal(valueOf("transition_style"), "smooth");
   assert.equal(valueOf("custom_particle_note"), "保留已有粒子配置说明。");
   assert.equal(valueOf("preset"), "aurora");
   assert.equal(valueOf("density"), 0.82);
@@ -2081,6 +2147,47 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   const reopened = migrateParticleExpressionRelativeMappingGraph(migrated.value, seed);
   assert.equal(reopened.migrated, false);
   assert.equal(reopened.value, migrated.value);
+
+  const staleCopies = JSON.parse(JSON.stringify(seed));
+  const staleInputFields = staleCopies.nodes[0].data.params.fields;
+  for (const field of staleInputFields) {
+    if (
+      ["calm", "caring", "subdued", "joyful"].some((state) =>
+        field.field_key.startsWith(`${state}_`)
+      )
+    ) {
+      field.field_value = field.field_key.endsWith(
+        "_color_temperature_offset"
+      )
+        ? 0
+        : 1;
+    }
+  }
+  delete staleCopies.nodes[3].data.params.source_priority_revision;
+  staleCopies.nodes[3].data.params.fields = [
+    { field_key: "calm_brightness_multiplier", field_value: 0.96 },
+    { field_key: "caring_brightness_multiplier", field_value: 1.06 },
+    { field_key: "subdued_energy_multiplier", field_value: 0.78 },
+    { field_key: "joyful_diffusion_multiplier", field_value: 1.14 },
+  ];
+  const priorityMigrated = migrateParticleExpressionRelativeMappingGraph(
+    staleCopies,
+    seed
+  );
+  assert.equal(priorityMigrated.migrated, true);
+  const priorityFields = priorityMigrated.value.nodes[0].data.params.fields;
+  const priorityValue = (fieldKey) =>
+    priorityFields.find((field) => field.field_key === fieldKey)?.field_value;
+  assert.equal(priorityValue("calm_brightness_multiplier"), 0.96);
+  assert.equal(priorityValue("caring_brightness_multiplier"), 1.06);
+  assert.equal(priorityValue("subdued_energy_multiplier"), 0.78);
+  assert.equal(priorityValue("joyful_diffusion_multiplier"), 1.14);
+  const priorityReopened = migrateParticleExpressionRelativeMappingGraph(
+    priorityMigrated.value,
+    seed
+  );
+  assert.equal(priorityReopened.migrated, false);
+  assert.equal(priorityReopened.value, priorityMigrated.value);
 
   const bridgeSource = readFileSync(
     new URL("../src/store/module-state-bridge.ts", import.meta.url),

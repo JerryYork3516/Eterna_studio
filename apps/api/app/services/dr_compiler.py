@@ -99,7 +99,9 @@ from ..registry.module_catalog import (
     DECISION_BEHAVIOR_MODULE_ID,
     DECISION_BEHAVIOR_PRESET_ID,
     DETAIL_BEHAVIOR_MODULE_ID,
+    DETAIL_BEHAVIOR_OUTPUT_KEY,
     DETAIL_BEHAVIOR_PRESET_ID,
+    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION,
     DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS,
     DIALOGUE_RUNTIME_PROFILE_MODULE_ID,
     DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY,
@@ -118,9 +120,10 @@ from ..registry.module_catalog import (
     MEMORY_UPDATE_MODULE_ID,
     MEMORY_UPDATE_OUTPUT_KEY,
     PARTICLE_AVATAR_MODULE_ID,
+    PARTICLE_AVATAR_NODE_IDS,
     PARTICLE_AVATAR_OUTPUT_KEY,
     PARTICLE_EXPRESSION_STATES,
-    PARTICLE_RELATIVE_MAPPING_DEFAULTS,
+    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
     PARTICLE_RELATIVE_PARAMETER_RANGES,
     PREFERENCE_MEMORY_MODULE_ID,
     PREFERENCE_MEMORY_OUTPUT_KEY,
@@ -135,7 +138,17 @@ from ..dr.v2.validator.capability_validator import (
     build_v03_runtime_contract,
     validate_v03_runtime_contract,
 )
-from .visual_expression_projection import build_visual_expression_mapping
+from .visual_expression_projection import (
+    VISUAL_EXPRESSION_ALLOWED_STATES,
+    VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS,
+    VISUAL_EXPRESSION_TRANSITION_DEFAULTS,
+    build_visual_expression_mapping,
+    normalize_expression_intensity,
+    normalize_expression_state,
+    normalize_visual_expression_mapping,
+    particle_relative_mapping_source_value,
+    valid_visual_base_color,
+)
 
 DR_VERSION = "0.1"
 FILE_TYPE = "digital_resident"
@@ -2452,6 +2465,210 @@ def _normalize_visual_style_reference_sources(collection: Dict[str, Any]) -> Non
         module["config"] = config
 
 
+def _visual_validation_revision(module: Dict[str, Any]) -> str:
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    graph = (
+        module.get("module_graph")
+        if isinstance(module.get("module_graph"), dict)
+        else {}
+    )
+    for value in (
+        config.get("validation_compatibility_revision"),
+        graph.get("validation_compatibility_revision"),
+    ):
+        if isinstance(value, str) and value:
+            return value
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        value = params.get("validation_compatibility_revision")
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _stamp_visual_validation_revision(module: Dict[str, Any]) -> None:
+    for container_key in ("config", "module_graph"):
+        container = (
+            module.get(container_key)
+            if isinstance(module.get(container_key), dict)
+            else {}
+        )
+        container["validation_compatibility_revision"] = (
+            EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+        )
+        module[container_key] = container
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if params.get("mode") == "generic_fields":
+            params["validation_compatibility_revision"] = (
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+            )
+            node["params"] = params
+
+
+def _stamp_particle_mapping_source_priority_revision(
+    module: Dict[str, Any],
+) -> None:
+    for container_key in ("config", "module_graph"):
+        container = (
+            module.get(container_key)
+            if isinstance(module.get(container_key), dict)
+            else {}
+        )
+        container["source_priority_revision"] = (
+            PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+        )
+        module[container_key] = container
+    for node in _module_graph_nodes(module):
+        if _module_graph_node_id(node) not in {
+            PARTICLE_AVATAR_NODE_IDS["config_input"],
+            PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"],
+        }:
+            continue
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        params["source_priority_revision"] = (
+            PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+        )
+        node["params"] = params
+
+
+def _visual_module_field_records(
+    module: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    records: Dict[str, Dict[str, Any]] = {}
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_key = _nonempty_str(field.get("field_key")) or _nonempty_str(
+                field.get("field_id")
+            )
+            if field_key and field_key not in records:
+                records[field_key] = field
+    return records
+
+
+def _visual_field_value(field: Dict[str, Any] | None, fallback: Any) -> Any:
+    if not field:
+        return deepcopy(fallback)
+    return deepcopy(
+        field.get("value") if "value" in field else field.get("field_value")
+    )
+
+
+def _set_visual_field_value(field: Dict[str, Any] | None, value: Any) -> None:
+    if not field:
+        return
+    value_key = "value" if "value" in field and "field_value" not in field else "field_value"
+    field[value_key] = deepcopy(value)
+
+
+def _set_visual_field_copies(
+    module: Dict[str, Any], field_key: str, value: Any
+) -> None:
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        field_lists = [
+            params.get("fields"),
+            params.get("legacy_fields"),
+            params.get("legacy_data_fields"),
+            node.get("fields"),
+        ]
+        for fields in field_lists:
+            if not isinstance(fields, list):
+                continue
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                candidate_key = _nonempty_str(
+                    field.get("field_key")
+                ) or _nonempty_str(field.get("field_id"))
+                if candidate_key == field_key:
+                    _set_visual_field_value(field, value)
+
+
+def _synchronize_expression_state_module_output(
+    collection: Dict[str, Any],
+    findings: List[Dict[str, str]],
+) -> Optional[Dict[str, Any]]:
+    module = next(
+        (
+            candidate
+            for candidate in collection.get("modules", [])
+            if isinstance(candidate, dict)
+            and candidate.get("module_id") == DETAIL_BEHAVIOR_MODULE_ID
+        ),
+        None,
+    )
+    if not isinstance(module, dict):
+        return None
+
+    strict = (
+        _visual_validation_revision(module)
+        == EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+    )
+    fields = _visual_module_field_records(module)
+    state_field = fields.get("expression_state")
+    intensity_field = fields.get("expression_intensity")
+    legacy_output = _compiled_module_output(module, DETAIL_BEHAVIOR_OUTPUT_KEY)
+    raw_state = _visual_field_value(
+        state_field,
+        legacy_output.get("expression_state") if not strict else None,
+    )
+    raw_intensity = _visual_field_value(
+        intensity_field,
+        legacy_output.get("expression_intensity") if not strict else None,
+    )
+
+    normalized_state, state_changed = normalize_expression_state(raw_state)
+    state_recognized = (
+        isinstance(raw_state, str)
+        and raw_state.strip().lower() in VISUAL_EXPRESSION_ALLOWED_STATES
+    )
+    normalized_intensity, intensity_changed, _ = normalize_expression_intensity(
+        raw_intensity
+    )
+
+    if state_changed:
+        findings.append(
+            _finding(
+                "WARNING" if state_recognized or not strict else "FAIL",
+                "DR_EXPRESSION_STATE_INVALID_FALLBACK",
+                (
+                    "Expression state was normalized to a supported value."
+                    if state_recognized
+                    else "Expression state is invalid and was replaced with neutral."
+                ),
+                "payload.modules.emotion_reaction.fields.expression_state",
+            )
+        )
+    if intensity_changed:
+        findings.append(
+            _finding(
+                "FAIL" if strict else "WARNING",
+                "DR_EXPRESSION_INTENSITY_OUT_OF_RANGE",
+                "Expression intensity was clamped or defaulted to the 0.0-1.0 range.",
+                "payload.modules.emotion_reaction.fields.expression_intensity",
+            )
+        )
+
+    _set_visual_field_copies(
+        module, "expression_state", normalized_state
+    )
+    _set_visual_field_copies(
+        module, "expression_intensity", normalized_intensity
+    )
+    output = {
+        "expression_state": normalized_state,
+        "expression_intensity": normalized_intensity,
+    }
+    _set_compiled_module_output(module, DETAIL_BEHAVIOR_OUTPUT_KEY, output)
+    _stamp_visual_validation_revision(module)
+    return output
+
+
 def _synchronize_particle_avatar_module_output(
     collection: Dict[str, Any],
     findings: Optional[List[Dict[str, str]]] = None,
@@ -2470,6 +2687,7 @@ def _synchronize_particle_avatar_module_output(
     if not isinstance(module, dict):
         return None
 
+    saved_output = _compiled_module_output(module, PARTICLE_AVATAR_OUTPUT_KEY)
     catalog_module = next(
         (
             candidate.model_dump(mode="json")
@@ -2484,39 +2702,44 @@ def _synchronize_particle_avatar_module_output(
     if not output:
         return None
 
+    strict = (
+        _visual_validation_revision(module)
+        == EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+    )
     normalized_paths: set[str] = set()
-    field_records: Dict[str, Dict[str, Any]] = {}
-    for node in _module_graph_nodes(module):
-        params = node.get("params") if isinstance(node.get("params"), dict) else {}
-        fields = params.get("fields") if isinstance(params.get("fields"), list) else []
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            field_key = _nonempty_str(field.get("field_key")) or _nonempty_str(
-                field.get("field_id")
-            )
-            if field_key and field_key not in field_records:
-                field_records[field_key] = field
+    missing_paths: set[str] = set()
+    out_of_range_paths: set[str] = set()
+    brightness_paths: set[str] = set()
+    transition_time_paths: set[str] = set()
+    invalid_color_paths: set[str] = set()
+    field_records = _visual_module_field_records(module)
 
     def configured_value(field_key: str, fallback: Any) -> Any:
-        field = field_records.get(field_key)
-        if not field:
-            return deepcopy(fallback)
-        return deepcopy(
-            field.get("value") if "value" in field else field.get("field_value")
-        )
+        return _visual_field_value(field_records.get(field_key), fallback)
 
     def update_compiled_field(field_key: str, value: Any) -> None:
-        field = field_records.get(field_key)
-        if not field:
-            return
-        value_key = "value" if "value" in field and "field_value" not in field else "field_value"
-        field[value_key] = deepcopy(value)
+        _set_visual_field_copies(module, field_key, value)
 
     def bounded_number(
-        field_key: str, fallback: float, minimum: float, maximum: float
+        field_key: str,
+        fallback: float,
+        minimum: float,
+        maximum: float,
+        *,
+        transition_time: bool = False,
+        legacy_value: Any = None,
+        resolved_source: tuple[bool, Any] | None = None,
     ) -> float:
-        raw = configured_value(field_key, fallback)
+        if resolved_source is None:
+            field_exists = field_key in field_records
+            has_legacy_value = not strict and legacy_value is not None
+            raw = configured_value(
+                field_key,
+                legacy_value if has_legacy_value else None,
+            )
+        else:
+            field_exists, raw = resolved_source
+            has_legacy_value = False
         parsed: float | None = None
         if isinstance(raw, bool):
             normalized = float(fallback)
@@ -2530,14 +2753,29 @@ def _synchronize_particle_avatar_module_output(
                 if parsed is not None and math.isfinite(parsed)
                 else float(fallback)
             )
-        if parsed is None or not math.isfinite(parsed) or normalized != parsed:
-            normalized_paths.add(
-                f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.{field_key}"
-            )
+        path = f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.{field_key}"
+        if (
+            (not field_exists and not has_legacy_value)
+            or parsed is None
+            or not math.isfinite(parsed)
+        ):
+            if transition_time:
+                transition_time_paths.add(path)
+            else:
+                missing_paths.add(path)
+            normalized_paths.add(path)
+        elif normalized != parsed:
+            out_of_range_paths.add(path)
+            normalized_paths.add(path)
+            if field_key.endswith("_brightness_multiplier"):
+                brightness_paths.add(path)
+            if transition_time:
+                transition_time_paths.add(path)
         update_compiled_field(field_key, normalized)
         return normalized
 
     base_color_config = _as_dict(output.get("base_color_config"))
+    saved_base_color_config = _as_dict(saved_output.get("base_color_config"))
     for field_key in (
         "user_current_base_color",
         "resident_default_base_color",
@@ -2545,11 +2783,25 @@ def _synchronize_particle_avatar_module_output(
         "secondary_color",
         "highlight_color",
     ):
-        fallback = base_color_config.get(field_key, "")
-        configured = configured_value(field_key, fallback)
-        base_color_config[field_key] = (
-            configured if isinstance(configured, str) else fallback
+        field_exists = field_key in field_records
+        legacy_color = (
+            saved_base_color_config.get(field_key) if not strict else None
         )
+        configured = configured_value(
+            field_key,
+            legacy_color if legacy_color is not None else "",
+        )
+        path = f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.{field_key}"
+        if configured == "":
+            base_color_config[field_key] = ""
+        elif valid_visual_base_color(configured):
+            base_color_config[field_key] = configured
+        else:
+            base_color_config[field_key] = ""
+            invalid_color_paths.add(path)
+            normalized_paths.add(path)
+        if not field_exists and legacy_color is None:
+            base_color_config[field_key] = ""
     base_color_config["user_color_override_rule"] = (
         "preserve_user_current_base_color"
     )
@@ -2566,20 +2818,31 @@ def _synchronize_particle_avatar_module_output(
     output["base_color_config"] = base_color_config
 
     relative_config = _as_dict(output.get("expression_relative_mapping"))
-    relative_defaults = deepcopy(PARTICLE_RELATIVE_MAPPING_DEFAULTS)
+    resolved_relative_sources = {
+        (state, parameter): particle_relative_mapping_source_value(
+            module, state, parameter
+        )
+        for state in PARTICLE_EXPRESSION_STATES
+        for parameter in PARTICLE_RELATIVE_PARAMETER_RANGES
+    }
     state_mappings: Dict[str, Dict[str, float]] = {}
     for state in PARTICLE_EXPRESSION_STATES:
-        state_defaults = relative_defaults[state]
         state_mappings[state] = {}
         for parameter, (minimum, maximum) in (
             PARTICLE_RELATIVE_PARAMETER_RANGES.items()
         ):
             field_key = f"{state}_{parameter}"
+            output_key = (
+                "temperature_shift"
+                if parameter == "color_temperature_offset"
+                else parameter
+            )
             state_mappings[state][parameter] = bounded_number(
                 field_key,
-                float(state_defaults[parameter]),
+                float(VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS[output_key]),
                 float(minimum),
                 float(maximum),
+                resolved_source=resolved_relative_sources[(state, parameter)],
             )
     relative_config["states"] = list(PARTICLE_EXPRESSION_STATES)
     relative_config["parameters"] = list(PARTICLE_RELATIVE_PARAMETER_RANGES)
@@ -2588,15 +2851,58 @@ def _synchronize_particle_avatar_module_output(
     relative_config["fixed_state_colors_allowed"] = False
     relative_config["invalid_state_fallback"] = "neutral"
     output["expression_relative_mapping"] = relative_config
+    module_config = (
+        module.get("config") if isinstance(module.get("config"), dict) else {}
+    )
+    module_config["expression_relative_mapping"] = deepcopy(relative_config)
+    module["config"] = module_config
+    for node in _module_graph_nodes(module):
+        if (
+            _module_graph_node_id(node)
+            != PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"]
+        ):
+            continue
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        params["state_mappings"] = deepcopy(state_mappings)
+        node["params"] = params
 
     transition_rules = _as_dict(output.get("transition_rules"))
+    catalog_transition_defaults = deepcopy(transition_rules)
+    saved_transition_rules = _as_dict(saved_output.get("transition_rules"))
     transition_rules["transition_duration"] = bounded_number(
-        "transition_duration", 0.6, 0.0, 10.0
+        "transition_duration",
+        float(
+            catalog_transition_defaults.get(
+                "transition_duration",
+                VISUAL_EXPRESSION_TRANSITION_DEFAULTS["transition_duration"],
+            )
+        ),
+        0.0,
+        10.0,
+        transition_time=True,
+        legacy_value=saved_transition_rules.get("transition_duration"),
     )
     transition_rules["minimum_hold_duration"] = bounded_number(
-        "minimum_hold_duration", 0.35, 0.0, 10.0
+        "minimum_hold_duration",
+        float(
+            catalog_transition_defaults.get(
+                "minimum_hold_duration",
+                VISUAL_EXPRESSION_TRANSITION_DEFAULTS["minimum_hold_duration"],
+            )
+        ),
+        0.0,
+        10.0,
+        transition_time=True,
+        legacy_value=saved_transition_rules.get("minimum_hold_duration"),
     )
-    configured_transition_style = configured_value("transition_style", "smooth")
+    configured_transition_style = configured_value(
+        "transition_style",
+        (
+            saved_transition_rules.get("transition_style")
+            if not strict
+            else None
+        ),
+    )
     if configured_transition_style != "smooth":
         normalized_paths.add(
             f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.transition_style"
@@ -2607,14 +2913,79 @@ def _synchronize_particle_avatar_module_output(
     output["transition_rules"] = transition_rules
 
     _set_compiled_module_output(module, PARTICLE_AVATAR_OUTPUT_KEY, output)
+    _stamp_visual_validation_revision(module)
+    _stamp_particle_mapping_source_priority_revision(module)
     if normalized_paths and findings is not None:
+        status = "FAIL" if strict else "WARNING"
+        if missing_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_PARTICLE_MAPPING_DEFAULTED",
+                    "Particle mapping values were missing or non-numeric and used safe defaults: "
+                    + ", ".join(sorted(missing_paths)),
+                    "visual_expression_mapping.particle_core_mapping",
+                )
+            )
+        if brightness_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_PARTICLE_BRIGHTNESS_MULTIPLIER_OUT_OF_RANGE",
+                    "Particle brightness multiplier exceeded its allowed range: "
+                    + ", ".join(sorted(brightness_paths)),
+                    "visual_expression_mapping.particle_core_mapping",
+                )
+            )
+        remaining_range_paths = out_of_range_paths - brightness_paths - transition_time_paths
+        if remaining_range_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_PARTICLE_RELATIVE_VALUE_OUT_OF_RANGE",
+                    "Particle relative values exceeded their allowed ranges: "
+                    + ", ".join(sorted(remaining_range_paths)),
+                    "visual_expression_mapping.particle_core_mapping",
+                )
+            )
+        if transition_time_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_TRANSITION_TIME_INVALID_FALLBACK",
+                    "Transition time values were limited to the safe 0.0-10.0 range: "
+                    + ", ".join(sorted(transition_time_paths)),
+                    "visual_expression_mapping.transition_policy",
+                )
+            )
+        transition_style_path = (
+            f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}.fields.transition_style"
+        )
+        if transition_style_path in normalized_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_TRANSITION_STYLE_INVALID_FALLBACK",
+                    "Transition style is invalid and was replaced with smooth.",
+                    "visual_expression_mapping.transition_policy.transition_style",
+                )
+            )
+        if invalid_color_paths:
+            findings.append(
+                _finding(
+                    status,
+                    "DR_VISUAL_EXPRESSION_BASE_COLOR_INVALID",
+                    "Invalid base colors were preserved in source data but excluded from the runtime projection: "
+                    + ", ".join(sorted(invalid_color_paths)),
+                    "visual_expression_mapping.base_color_policy",
+                )
+            )
         findings.append(
             _finding(
-                "WARNING",
+                "WARNING" if not strict else "FAIL",
                 "DR_VISUAL_EXPRESSION_MAPPING_CLAMPED",
                 (
-                    "Visual expression configuration values were clamped or "
-                    "defaulted before projection: "
+                    "Visual expression configuration values were normalized before projection: "
                     + ", ".join(sorted(normalized_paths))
                 ),
                 "visual_expression_mapping",
@@ -5042,6 +5413,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     ]
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
+    _synchronize_expression_state_module_output(collection, findings)
     _synchronize_particle_avatar_module_output(collection, findings)
     visual_expression_mapping_raw, visual_expression_diagnostics = (
         build_visual_expression_mapping(collection.get("modules", []))
@@ -5216,11 +5588,31 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
     payload = _as_dict(dr.get("payload"))
     resident = _as_dict(dr.get("resident"))
     resident_id = manifest.get("resident_id") or resident.get("resident_id") or _as_dict(payload.get("resident_identity")).get("resident_id")
+    visual_expression_mapping, compatibility_diagnostics = (
+        normalize_visual_expression_mapping(dr.get("visual_expression_mapping"))
+    )
+    visual_expression_mapping = VisualExpressionMappingV03.model_validate(
+        visual_expression_mapping
+    ).model_dump(mode="json")
     contract_findings = validate_v03_runtime_contract(dr)
     contract_valid = not any(finding.get("status") == "FAIL" for finding in contract_findings)
     audit_valid = bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))
     ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload.get("modules"), list) and isinstance(payload.get("slots"), list) and audit_valid and contract_valid)
-    return {"loaded": bool(ok), "mock": True, "resident_id": resident_id, "dr_version": dr.get("dr_version"), "runtime_version": RUNTIME_VERSION, "layer_count": len(payload.get("13_layers_snapshot") or dr.get("layers") or []), "module_count": len(payload.get("modules") or dr.get("modules") or []), "slot_count": len(payload.get("slots") or dr.get("slots") or []), "audit_valid": bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))}
+    return {
+        "loaded": bool(ok),
+        "mock": True,
+        "resident_id": resident_id,
+        "dr_version": dr.get("dr_version"),
+        "runtime_version": RUNTIME_VERSION,
+        "layer_count": len(
+            payload.get("13_layers_snapshot") or dr.get("layers") or []
+        ),
+        "module_count": len(payload.get("modules") or dr.get("modules") or []),
+        "slot_count": len(payload.get("slots") or dr.get("slots") or []),
+        "audit_valid": audit_valid,
+        "visual_expression_mapping": visual_expression_mapping,
+        "compatibility_diagnostics": compatibility_diagnostics,
+    }
 
 
 def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:

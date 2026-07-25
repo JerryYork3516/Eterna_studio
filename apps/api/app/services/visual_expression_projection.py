@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from copy import deepcopy
 from typing import Any, Dict, List, Sequence
 
@@ -10,6 +11,7 @@ from ..registry.module_catalog import (
     DETAIL_BEHAVIOR_MODULE_ID,
     EXPRESSION_STATE_VALUES,
     PARTICLE_AVATAR_MODULE_ID,
+    PARTICLE_AVATAR_NODE_IDS,
     PARTICLE_AVATAR_OUTPUT_KEY,
     PARTICLE_RELATIVE_PARAMETER_RANGES,
 )
@@ -78,6 +80,11 @@ VISUAL_EXPRESSION_PARAMETER_SPECS = {
         "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["diffusion_multiplier"][1],
     },
 }
+VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS = {
+    output_key: float(spec["identity"])
+    for output_key, spec in VISUAL_EXPRESSION_PARAMETER_SPECS.items()
+}
+_HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
@@ -108,6 +115,143 @@ def _module_output(module: Dict[str, Any], output_key: str) -> Dict[str, Any]:
     return deepcopy(_as_dict(outputs.get(output_key)))
 
 
+def _node_id(node: Dict[str, Any]) -> str:
+    value = node.get("node_id") or node.get("id")
+    return value if isinstance(value, str) else ""
+
+
+def _node_field_value(
+    node: Dict[str, Any], field_key: str
+) -> tuple[bool, Any]:
+    params = _as_dict(node.get("params"))
+    for fields in (params.get("fields"), node.get("fields")):
+        if not isinstance(fields, list):
+            continue
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            candidate_key = field.get("field_key") or field.get("field_id")
+            if candidate_key != field_key:
+                continue
+            value_key = (
+                "value"
+                if "value" in field and "field_value" not in field
+                else "field_value"
+            )
+            return True, deepcopy(field.get(value_key))
+    return False, None
+
+
+def _state_mapping_value(
+    mapping: Any, state: str, source_key: str
+) -> tuple[bool, Any]:
+    state_mapping = _as_dict(_as_dict(mapping).get(state))
+    candidate_keys = [source_key]
+    if source_key == "color_temperature_offset":
+        candidate_keys.append("temperature_shift")
+    for candidate_key in candidate_keys:
+        if candidate_key in state_mapping:
+            return True, deepcopy(state_mapping[candidate_key])
+    return False, None
+
+
+def _input_relative_fields_are_neutral_identities(
+    input_node: Dict[str, Any],
+) -> bool:
+    for state in VISUAL_EXPRESSION_ALLOWED_STATES:
+        if state == VISUAL_EXPRESSION_DEFAULT_STATE:
+            continue
+        for output_key, spec in VISUAL_EXPRESSION_PARAMETER_SPECS.items():
+            source_key = str(spec["source_key"])
+            found, raw_value = _node_field_value(
+                input_node, f"{state}_{source_key}"
+            )
+            if not found or _number(raw_value) != float(spec["identity"]):
+                return False
+    return True
+
+
+def particle_relative_mapping_source_value(
+    module: Dict[str, Any], state: str, source_key: str
+) -> tuple[bool, Any]:
+    """Read one relative parameter using the Stage 7.4.11 source priority."""
+
+    graph = _as_dict(module.get("module_graph"))
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    mapping_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and _node_id(node)
+            == PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"]
+        ),
+        {},
+    )
+    field_key = f"{state}_{source_key}"
+
+    # The current expression-relative-mapping node is authoritative.
+    found, value = _node_field_value(mapping_node, field_key)
+    if found:
+        return True, value
+    mapping_params = _as_dict(mapping_node.get("params"))
+    mapping_found, mapping_value = _state_mapping_value(
+        mapping_params.get("state_mappings"), state, source_key
+    )
+
+    # The current normalized module configuration is the next source.
+    config_input = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and _node_id(node) == PARTICLE_AVATAR_NODE_IDS["config_input"]
+        ),
+        {},
+    )
+    if (
+        mapping_found
+        and _input_relative_fields_are_neutral_identities(config_input)
+    ):
+        return True, mapping_value
+    found, value = _node_field_value(config_input, field_key)
+    if found:
+        return True, value
+    if mapping_found:
+        return True, mapping_value
+    module_config = _as_dict(module.get("config"))
+    normalized_mapping = _as_dict(
+        module_config.get("expression_relative_mapping")
+    )
+    found, value = _state_mapping_value(
+        normalized_mapping.get("state_mappings"), state, source_key
+    )
+    if found:
+        return True, value
+
+    # Output mirrors are compatibility fallbacks, never higher-priority inputs.
+    module_outputs = _as_dict(module.get("outputs"))
+    mirror = _as_dict(module_outputs.get(PARTICLE_AVATAR_OUTPUT_KEY))
+    mirror_mapping = _as_dict(mirror.get("expression_relative_mapping"))
+    found, value = _state_mapping_value(
+        mirror_mapping.get("state_mappings"), state, source_key
+    )
+    if found:
+        return True, value
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") != "module_output":
+            continue
+        node_outputs = _as_dict(node.get("outputs"))
+        mirror = _as_dict(node_outputs.get(PARTICLE_AVATAR_OUTPUT_KEY))
+        mirror_mapping = _as_dict(mirror.get("expression_relative_mapping"))
+        found, value = _state_mapping_value(
+            mirror_mapping.get("state_mappings"), state, source_key
+        )
+        if found:
+            return True, value
+    return False, None
+
+
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -116,6 +260,30 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def normalize_expression_state(value: Any) -> tuple[str, bool]:
+    """Normalize a saved expression state without admitting lifecycle states."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in VISUAL_EXPRESSION_ALLOWED_STATES:
+            return normalized, normalized != value
+    return VISUAL_EXPRESSION_DEFAULT_STATE, True
+
+
+def normalize_expression_intensity(value: Any) -> tuple[float, bool, bool]:
+    """Return value, whether it changed, and whether a finite value was clamped."""
+
+    parsed = _number(value)
+    if parsed is None:
+        return 0.0, True, False
+    bounded = min(1.0, max(0.0, parsed))
+    return bounded, bounded != parsed, bounded != parsed
+
+
+def valid_visual_base_color(value: Any) -> bool:
+    return isinstance(value, str) and bool(_HEX_COLOR_PATTERN.fullmatch(value))
 
 
 def _stable_state_list(value: Any) -> bool:
@@ -194,7 +362,7 @@ def build_visual_expression_mapping(
     resident_default_base_color = base_color_config.get(
         "resident_default_base_color"
     )
-    if not isinstance(resident_default_base_color, str):
+    if not valid_visual_base_color(resident_default_base_color):
         resident_default_base_color = None
         defaulted_paths.add(
             "visual_expression_mapping.base_color_policy.resident_default_base_color"
@@ -223,18 +391,18 @@ def build_visual_expression_mapping(
                 f"visual_expression_mapping.particle_core_mapping.range.{source_key}"
             )
 
-    relative_mapping = _as_dict(a2_output.get("expression_relative_mapping"))
-    raw_state_mappings = _as_dict(relative_mapping.get("state_mappings"))
     particle_core_mapping: Dict[str, Dict[str, float]] = {}
     for state in VISUAL_EXPRESSION_ALLOWED_STATES:
-        raw_state_mapping = _as_dict(raw_state_mappings.get(state))
         projected_state: Dict[str, float] = {}
         for output_key, spec in VISUAL_EXPRESSION_PARAMETER_SPECS.items():
             source_key = str(spec["source_key"])
             identity = float(spec["identity"])
             minimum, maximum = source_ranges[source_key]
             path = f"visual_expression_mapping.particle_core_mapping.{state}.{output_key}"
-            parsed = _number(raw_state_mapping.get(source_key))
+            found, raw_value = particle_relative_mapping_source_value(
+                a2, state, source_key
+            )
+            parsed = _number(raw_value) if found else None
             if state == VISUAL_EXPRESSION_DEFAULT_STATE:
                 if parsed != identity:
                     defaulted_paths.add(path)
@@ -362,3 +530,151 @@ def build_visual_expression_mapping(
             }
         )
     return projection, diagnostics
+
+
+def normalize_visual_expression_mapping(
+    value: Any,
+) -> tuple[Dict[str, Any], List[Dict[str, str]]]:
+    """Normalize an optional/legacy top-level projection without mutating its DR."""
+
+    safe_projection, _ = build_visual_expression_mapping([])
+    raw = _as_dict(value)
+    diagnostics: List[Dict[str, str]] = []
+    diagnostic_keys: set[tuple[str, str]] = set()
+
+    def add_diagnostic(code: str, message: str, path: str) -> None:
+        key = (code, path)
+        if key in diagnostic_keys:
+            return
+        diagnostic_keys.add(key)
+        diagnostics.append({"code": code, "message": message, "path": path})
+
+    if not raw:
+        add_diagnostic(
+            "DR_VISUAL_EXPRESSION_LEGACY_MAPPING_MISSING",
+            "Legacy resident has no visual expression mapping; compatibility defaults were loaded.",
+            "visual_expression_mapping",
+        )
+        return safe_projection, diagnostics
+
+    normalized = deepcopy(safe_projection)
+    base_color_policy = _as_dict(raw.get("base_color_policy"))
+    resident_color = base_color_policy.get("resident_default_base_color")
+    if valid_visual_base_color(resident_color):
+        normalized["base_color_policy"]["resident_default_base_color"] = resident_color
+    elif resident_color not in (None, ""):
+        add_diagnostic(
+            "DR_VISUAL_EXPRESSION_BASE_COLOR_INVALID",
+            "Resident default base color is invalid; particle core fallback will be used.",
+            "visual_expression_mapping.base_color_policy.resident_default_base_color",
+        )
+
+    raw_mapping = _as_dict(
+        raw.get("particle_core_mapping") or raw.get("state_mappings")
+    )
+    if not raw_mapping:
+        add_diagnostic(
+            "DR_PARTICLE_MAPPING_DEFAULTED",
+            "Particle mapping is missing; safe relative defaults were used.",
+            "visual_expression_mapping.particle_core_mapping",
+        )
+    normalized_mapping: Dict[str, Dict[str, float]] = {}
+    for state in VISUAL_EXPRESSION_ALLOWED_STATES:
+        raw_state_value = raw_mapping.get(state)
+        if raw_state_value is None:
+            raw_state_value = next(
+                (
+                    candidate
+                    for raw_state_name, candidate in raw_mapping.items()
+                    if isinstance(raw_state_name, str)
+                    and raw_state_name.strip().lower() == state
+                ),
+                None,
+            )
+        raw_state = _as_dict(raw_state_value)
+        state_mapping: Dict[str, float] = {}
+        if not raw_state:
+            add_diagnostic(
+                "DR_PARTICLE_MAPPING_DEFAULTED",
+                "Particle mapping is incomplete; safe relative defaults were used.",
+                f"visual_expression_mapping.particle_core_mapping.{state}",
+            )
+        for output_key, spec in VISUAL_EXPRESSION_PARAMETER_SPECS.items():
+            source_key = str(spec["source_key"])
+            raw_value = raw_state.get(output_key)
+            if raw_value is None and source_key != output_key:
+                raw_value = raw_state.get(source_key)
+            identity = float(spec["identity"])
+            minimum = float(spec["minimum"])
+            maximum = float(spec["maximum"])
+            path = (
+                "visual_expression_mapping.particle_core_mapping."
+                f"{state}.{output_key}"
+            )
+            parsed = _number(raw_value)
+            if state == VISUAL_EXPRESSION_DEFAULT_STATE:
+                state_mapping[output_key] = identity
+                if parsed is not None and parsed != identity:
+                    add_diagnostic(
+                        "DR_PARTICLE_MAPPING_DEFAULTED",
+                        "Neutral particle mapping was restored to identity values.",
+                        path,
+                    )
+                continue
+            if parsed is None:
+                state_mapping[output_key] = identity
+                add_diagnostic(
+                    "DR_PARTICLE_MAPPING_DEFAULTED",
+                    "Particle mapping value is missing or non-numeric; a safe default was used.",
+                    path,
+                )
+                continue
+            bounded = min(maximum, max(minimum, parsed))
+            state_mapping[output_key] = bounded
+            if bounded != parsed:
+                code = (
+                    "DR_PARTICLE_BRIGHTNESS_MULTIPLIER_OUT_OF_RANGE"
+                    if output_key == "brightness_multiplier"
+                    else "DR_PARTICLE_RELATIVE_VALUE_OUT_OF_RANGE"
+                )
+                add_diagnostic(
+                    code,
+                    "Particle relative value was clamped to its allowed range.",
+                    path,
+                )
+        normalized_mapping[state] = state_mapping
+    normalized["particle_core_mapping"] = normalized_mapping
+
+    raw_transition = _as_dict(raw.get("transition_policy"))
+    for field_key in ("transition_duration", "minimum_hold_duration"):
+        parsed = _number(raw_transition.get(field_key))
+        path = f"visual_expression_mapping.transition_policy.{field_key}"
+        if parsed is None:
+            normalized["transition_policy"][field_key] = float(
+                VISUAL_EXPRESSION_TRANSITION_DEFAULTS[field_key]
+            )
+            add_diagnostic(
+                "DR_TRANSITION_TIME_INVALID_FALLBACK",
+                "Transition time is missing or non-numeric; a safe default was used.",
+                path,
+            )
+            continue
+        bounded = min(10.0, max(0.0, parsed))
+        normalized["transition_policy"][field_key] = bounded
+        if bounded != parsed:
+            add_diagnostic(
+                "DR_TRANSITION_TIME_INVALID_FALLBACK",
+                "Transition time was limited to a safe non-negative range.",
+                path,
+            )
+
+    if raw_transition.get("transition_style") != "smooth":
+        add_diagnostic(
+            "DR_TRANSITION_STYLE_INVALID_FALLBACK",
+            "Transition style is invalid; smooth transition was used.",
+            "visual_expression_mapping.transition_policy.transition_style",
+        )
+    normalized["transition_policy"]["transition_style"] = "smooth"
+    normalized["transition_policy"]["repeat_same_state_restarts_transition"] = False
+    normalized["transition_policy"]["continue_from_current_visual_value"] = True
+    return normalized, diagnostics

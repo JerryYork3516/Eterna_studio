@@ -203,8 +203,8 @@ class ParticleCoreRelativeMappingV03(V03BaseModel):
 
 
 class VisualExpressionTransitionPolicyV03(V03BaseModel):
-    transition_duration: float = Field(ge=0.0)
-    minimum_hold_duration: float = Field(ge=0.0)
+    transition_duration: float = Field(ge=0.0, le=10.0)
+    minimum_hold_duration: float = Field(ge=0.0, le=10.0)
     transition_style: Literal["smooth"] = "smooth"
     repeat_same_state_restarts_transition: bool = False
     continue_from_current_visual_value: bool = True

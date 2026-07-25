@@ -1941,6 +1941,9 @@ DECISION_BEHAVIOR_PRESET_ID = "human_empathy_decision_v0_1"
 DETAIL_BEHAVIOR_MODULE_ID = "emotion_reaction"
 DETAIL_BEHAVIOR_OUTPUT_KEY = "detail_behavior_config"
 EXPRESSION_STATE_CONTENT_REVISION = "stage7_4_11_expression_state_semantics_v1"
+EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION = (
+    "stage7_4_11_expression_visual_validation_compatibility_v1"
+)
 EXPRESSION_STATE_VALUES = ("neutral", "calm", "caring", "subdued", "joyful")
 EXPRESSION_STATE_NODE_IDS = {
     "context_input": "expression_context_input",
@@ -3316,6 +3319,9 @@ def _detail_behavior_module() -> ModuleV04:
             "reference_input",
             {
                 "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+                "validation_compatibility_revision": (
+                    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+                ),
                 "mode": "generic_fields",
                 "fields": fields,
                 "references": references,
@@ -3549,6 +3555,9 @@ def _detail_behavior_module() -> ModuleV04:
         module_graph={
             "shell_version": "module_shell_v1",
             "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+            "validation_compatibility_revision": (
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+            ),
             "nodes": nodes,
             "edges": edges,
             "output_key": DETAIL_BEHAVIOR_OUTPUT_KEY,
@@ -3580,6 +3589,9 @@ def _detail_behavior_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+            "validation_compatibility_revision": (
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+            ),
             "module_class": "core",
             "module_type_label_key": f"{i18n_prefix}.module.type",
             "output_contract": {
@@ -4000,6 +4012,9 @@ PARTICLE_AVATAR_OUTPUT_KEY = "particle_mapping_config"
 PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION = (
     "stage7_4_11_particle_expression_relative_mapping_v1"
 )
+PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION = (
+    "stage7_4_11_particle_mapping_source_priority_fix_v1"
+)
 PARTICLE_EXPRESSION_STATES = ("neutral", "calm", "caring", "subdued", "joyful")
 PARTICLE_LIFECYCLE_STATES = ("idle", "thinking", "speaking", "loading", "error", "exit")
 PARTICLE_AVATAR_NODE_IDS = {
@@ -4366,6 +4381,12 @@ def _particle_avatar_module() -> ModuleV04:
             "reference_input",
             {
                 "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                "source_priority_revision": (
+                    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+                ),
+                "validation_compatibility_revision": (
+                    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+                ),
                 "mode": "generic_fields",
                 "fields": fields,
                 "references": references,
@@ -4400,6 +4421,9 @@ def _particle_avatar_module() -> ModuleV04:
             "text_config",
             {
                 "config_mode": "particle_expression_state_relative_mapping",
+                "source_priority_revision": (
+                    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+                ),
                 "reference_ids": reference_ids_by_target[
                     PARTICLE_AVATAR_NODE_IDS["expression_relative_mapping"]
                 ],
@@ -4571,6 +4595,12 @@ def _particle_avatar_module() -> ModuleV04:
         module_graph={
             "shell_version": "module_shell_v1",
             "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+            "source_priority_revision": (
+                PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+            ),
+            "validation_compatibility_revision": (
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+            ),
             "nodes": nodes,
             "edges": edges,
             "output_key": PARTICLE_AVATAR_OUTPUT_KEY,
@@ -4599,6 +4629,12 @@ def _particle_avatar_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+            "source_priority_revision": (
+                PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+            ),
+            "validation_compatibility_revision": (
+                EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+            ),
             "module_class": "visual_rule_config",
             "module_type_label_key": f"{i18n_prefix}.module.type",
             "missing_reference_sources": [

@@ -111,6 +111,10 @@ def test_particle_avatar_compiles_saved_fields_into_declarative_mapping_output()
     particle = next(
         module for module in modules if module["module_id"] == "particle_avatar"
     )
+    particle["config"].pop("validation_compatibility_revision", None)
+    particle["module_graph"].pop("validation_compatibility_revision", None)
+    for node in particle["module_graph"]["nodes"]:
+        node.get("params", {}).pop("validation_compatibility_revision", None)
     input_node = next(
         node
         for node in particle["module_graph"]["nodes"]
@@ -172,7 +176,7 @@ def test_particle_avatar_compiles_saved_fields_into_declarative_mapping_output()
     assert mappings["calm"]["brightness_multiplier"] == 1.2
     assert mappings["caring"]["color_temperature_offset"] == 0.15
     assert mappings["subdued"]["energy_multiplier"] == 0.7
-    assert mappings["joyful"]["motion_speed_multiplier"] == 1.12
+    assert mappings["joyful"]["motion_speed_multiplier"] == 1.0
     assert set(mappings) == {"neutral", "calm", "caring", "subdued", "joyful"}
     assert all(
         set(mapping)
@@ -212,7 +216,7 @@ def test_particle_avatar_compiles_saved_fields_into_declarative_mapping_output()
     }
     assert compiled_fields["caring_color_temperature_offset"] == 0.15
     assert compiled_fields["subdued_energy_multiplier"] == 0.7
-    assert compiled_fields["joyful_motion_speed_multiplier"] == 1.12
+    assert compiled_fields["joyful_motion_speed_multiplier"] == 1.0
     assert compiled_fields["transition_style"] == "smooth"
 
 

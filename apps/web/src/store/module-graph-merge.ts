@@ -27,6 +27,10 @@ export const EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION =
   "stage7_4_11_expression_state_semantics_v1";
 export const PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION =
   "stage7_4_11_particle_expression_relative_mapping_v1";
+export const PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION =
+  "stage7_4_11_particle_mapping_source_priority_fix_v1";
+export const EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION =
+  "stage7_4_11_expression_visual_validation_compatibility_v1";
 
 const EXPRESSION_CONTEXT_INPUT_NODE_ID = "expression_context_input";
 const RESIDENT_EXPRESSION_NOTES_FIELD_KEY = "resident_expression_notes";
@@ -41,6 +45,8 @@ const LEGACY_EXPRESSION_NODE_INDEX = new Map<string, number>([
   ["detail_behavior_output_expression", 7],
 ]);
 const PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID = "particle_visual_config_input";
+const PARTICLE_EXPRESSION_RELATIVE_MAPPING_NODE_ID =
+  "particle_expression_state_relative_mapping";
 const PARTICLE_RESIDENT_DEFAULT_BASE_COLOR_FIELD_KEY = "resident_default_base_color";
 const LEGACY_PARTICLE_BASE_COLOR_FIELD_KEYS = new Set(["color", "base_color"]);
 const PARTICLE_RELATIVE_FIELD_RANGES: Array<{
@@ -600,9 +606,10 @@ function normalizeExpressionStateFields(fields: Record<string, unknown>[]): Reco
     const fieldKey = expressionFieldKey(field);
     const current = expressionFieldValue(field);
     if (fieldKey === EXPRESSION_STATE_FIELD_KEY) {
+      const normalized = typeof current === "string" ? current.trim().toLowerCase() : "";
       return setExpressionFieldValue(
         field,
-        typeof current === "string" && EXPRESSION_STATE_VALUES.has(current) ? current : "neutral"
+        EXPRESSION_STATE_VALUES.has(normalized) ? normalized : "neutral"
       );
     }
     if (fieldKey === EXPRESSION_INTENSITY_FIELD_KEY) {
@@ -613,7 +620,7 @@ function normalizeExpressionStateFields(fields: Record<string, unknown>[]): Reco
           : Number.NaN;
       return setExpressionFieldValue(
         field,
-        Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0.0
+        Number.isFinite(parsed) ? Math.min(1.0, Math.max(0.0, parsed)) : 0.0
       );
     }
     return field;
@@ -632,14 +639,26 @@ export function migrateExpressionStateSemanticsGraph(
     (node) => expressionGraphCatalogNodeId(node) === EXPRESSION_CONTEXT_INPUT_NODE_ID
   );
   const seedRevision = expressionGraphNodeParams(seedInput).content_revision;
+  const seedValidationRevision =
+    expressionGraphNodeParams(seedInput).validation_compatibility_revision;
   if (seedRevision !== EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+  if (
+    seedValidationRevision !==
+    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+  ) {
     return { value: stored, migrated: false };
   }
 
   const storedInput = stored.nodes.find(
     (node) => expressionGraphCatalogNodeId(node) === EXPRESSION_CONTEXT_INPUT_NODE_ID
   );
-  if (expressionGraphNodeParams(storedInput).content_revision === seedRevision) {
+  if (
+    expressionGraphNodeParams(storedInput).content_revision === seedRevision &&
+    expressionGraphNodeParams(storedInput).validation_compatibility_revision ===
+      seedValidationRevision
+  ) {
     return { value: stored, migrated: false };
   }
 
@@ -941,7 +960,8 @@ function particleLegacyDirectCustomFields(
 
 function normalizeParticleRelativeFields(
   fields: Record<string, unknown>[],
-  seedFields: Record<string, unknown>[]
+  seedFields: Record<string, unknown>[],
+  storedFieldKeys: Set<string>
 ): Record<string, unknown>[] {
   const seedByKey = new Map(seedFields.map((field) => [particleFieldKey(field), field]));
   return fields.map((field) => {
@@ -953,9 +973,33 @@ function normalizeParticleRelativeFields(
     const limits = PARTICLE_RELATIVE_FIELD_RANGES.find(({ suffix }) =>
       fieldKey.endsWith(suffix)
     );
-    if (!limits) {
+    if (limits) {
+      const current = particleFieldValue(field);
+      const parsed =
+        typeof current === "number"
+          ? current
+          : typeof current === "string" && current.trim()
+            ? Number(current)
+            : Number.NaN;
+      const safeDefault = fieldKey.endsWith("_color_temperature_offset") ? 0.0 : 1.0;
+      const normalized =
+        storedFieldKeys.has(fieldKey) && Number.isFinite(parsed)
+          ? Math.min(limits.maximum, Math.max(limits.minimum, parsed))
+          : safeDefault;
+      return setParticleFieldValue(field, normalized);
+    }
+
+    if (fieldKey === "transition_style") {
+      return setParticleFieldValue(field, "smooth");
+    }
+
+    if (
+      fieldKey !== "transition_duration" &&
+      fieldKey !== "minimum_hold_duration"
+    ) {
       return field;
     }
+
     const current = particleFieldValue(field);
     const parsed =
       typeof current === "number"
@@ -964,9 +1008,10 @@ function normalizeParticleRelativeFields(
           ? Number(current)
           : Number.NaN;
     const seedDefault = particleFieldValue(seedField);
-    const normalized = Number.isFinite(parsed)
-      ? Math.min(limits.maximum, Math.max(limits.minimum, parsed))
-      : seedDefault;
+    const normalized =
+      storedFieldKeys.has(fieldKey) && Number.isFinite(parsed)
+        ? Math.min(10.0, Math.max(0.0, parsed))
+        : seedDefault;
     return setParticleFieldValue(field, normalized);
   });
 }
@@ -983,15 +1028,47 @@ export function migrateParticleExpressionRelativeMappingGraph(
   const seedInput = seed.nodes.find(
     (node) => particleGraphCatalogNodeId(node) === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID
   );
+  const seedMapping = seed.nodes.find(
+    (node) =>
+      particleGraphCatalogNodeId(node) ===
+      PARTICLE_EXPRESSION_RELATIVE_MAPPING_NODE_ID
+  );
   const seedRevision = particleGraphNodeParams(seedInput).content_revision;
+  const seedValidationRevision =
+    particleGraphNodeParams(seedInput).validation_compatibility_revision;
+  const seedSourcePriorityRevision =
+    particleGraphNodeParams(seedMapping).source_priority_revision;
   if (seedRevision !== PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+  if (
+    seedValidationRevision !==
+    EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
+  ) {
+    return { value: stored, migrated: false };
+  }
+  if (
+    seedSourcePriorityRevision !==
+    PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
+  ) {
     return { value: stored, migrated: false };
   }
 
   const storedInput = stored.nodes.find(
     (node) => particleGraphCatalogNodeId(node) === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID
   );
-  if (particleGraphNodeParams(storedInput).content_revision === seedRevision) {
+  const storedMapping = stored.nodes.find(
+    (node) =>
+      particleGraphCatalogNodeId(node) ===
+      PARTICLE_EXPRESSION_RELATIVE_MAPPING_NODE_ID
+  );
+  if (
+    particleGraphNodeParams(storedInput).content_revision === seedRevision &&
+    particleGraphNodeParams(storedInput).validation_compatibility_revision ===
+      seedValidationRevision &&
+    particleGraphNodeParams(storedMapping).source_priority_revision ===
+      seedSourcePriorityRevision
+  ) {
     return { value: stored, migrated: false };
   }
 
@@ -1005,6 +1082,17 @@ export function migrateParticleExpressionRelativeMappingGraph(
   for (const field of allStoredFields) {
     const fieldKey = particleFieldKey(field);
     if (fieldKey && !storedFieldByKey.has(fieldKey)) {
+      storedFieldByKey.set(fieldKey, field);
+    }
+  }
+  for (const field of particleGraphNodeFields(storedMapping)) {
+    const fieldKey = particleFieldKey(field);
+    if (
+      fieldKey &&
+      PARTICLE_RELATIVE_FIELD_RANGES.some(({ suffix }) =>
+        fieldKey.endsWith(suffix)
+      )
+    ) {
       storedFieldByKey.set(fieldKey, field);
     }
   }
@@ -1050,7 +1138,11 @@ export function migrateParticleExpressionRelativeMappingGraph(
           : field
       );
     }
-    mergedFields = normalizeParticleRelativeFields(mergedFields, nodeSeedFields);
+    mergedFields = normalizeParticleRelativeFields(
+      mergedFields,
+      nodeSeedFields,
+      new Set(storedFieldByKey.keys())
+    );
     setParticleGraphNodeFields(nextNode, mergedFields);
     return nextNode;
   });
