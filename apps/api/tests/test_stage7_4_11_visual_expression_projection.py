@@ -11,6 +11,7 @@ from app.dr.v3.dr_v0_3_schema import (
     VisualExpressionMappingV03,
 )
 from app.registry.module_catalog import (
+    EXPRESSION_STATE_NODE_IDS,
     PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
     get_module_catalog,
 )
@@ -47,6 +48,12 @@ _PARAMETER_RANGES = {
     "motion_speed_multiplier": {"minimum": 0.75, "maximum": 1.2},
     "diffusion_multiplier": {"minimum": 0.75, "maximum": 1.25},
 }
+_SELECTION_RULES = [
+    "select_supported_state_only",
+    "align_with_dialogue_and_interaction",
+    "prefer_neutral_when_context_insufficient",
+    "use_lowest_sufficient_intensity",
+]
 
 
 def _workflow() -> dict:
@@ -114,6 +121,7 @@ def test_a1_a2_compile_to_stable_top_level_visual_expression_mapping():
         "selection_source": "runtime_core",
         "state_field": "expression_state",
         "intensity_field": "expression_intensity",
+        "selection_rules": _SELECTION_RULES,
         "allowed_states": _STATES,
         "default_state": "neutral",
         "missing_state_fallback": "neutral",
@@ -180,6 +188,9 @@ def test_a1_a2_compile_to_stable_top_level_visual_expression_mapping():
         "transition_style": "smooth",
         "repeat_same_state_restarts_transition": False,
         "continue_from_current_visual_value": True,
+        "uses_accumulated_idle_time_as_progress": False,
+        "minimum_hold_prevents_flicker": True,
+        "transition_executor": "aftelle",
     }
     lifecycle = projection["lifecycle_priority"]
     assert lifecycle["override_states"] == ["error", "loading", "exit"]
@@ -208,12 +219,13 @@ def test_aftelle_projection_completion_preserves_frozen_mapping_and_contract():
 
     assert projection == second["visual_expression_mapping"]
     assert projection["content_revision"] == (
-        "stage7_4_11_aftelle_projection_completion_v1"
+        "stage7_4_11_selection_transition_projection_completion_v1"
     )
     assert projection["parameter_ranges"] == _PARAMETER_RANGES
     assert policy["selection_source"] == "runtime_core"
     assert policy["state_field"] == "expression_state"
     assert policy["intensity_field"] == "expression_intensity"
+    assert policy["selection_rules"] == _SELECTION_RULES
     assert policy["allowed_states"] == projection["allowed_states"] == _STATES
     assert policy["default_state"] == "neutral"
     assert policy["missing_state_fallback"] == "neutral"
@@ -233,6 +245,64 @@ def test_aftelle_projection_completion_preserves_frozen_mapping_and_contract():
         "memory",
         "lattice",
     ]
+
+
+def test_selection_rules_are_projected_verbatim_from_layer8_in_source_order():
+    modules = _modules()
+    expression = next(
+        module for module in modules if module["module_id"] == "emotion_reaction"
+    )
+    selection_node = next(
+        node
+        for node in expression["module_graph"]["nodes"]
+        if node["node_id"]
+        == EXPRESSION_STATE_NODE_IDS["state_selection_rules"]
+    )
+    source_rules = selection_node["params"]["selection_rules"]
+
+    projection = _compile(modules)["compiled_dr"]["visual_expression_mapping"]
+
+    assert len(source_rules) == 4
+    assert source_rules == _SELECTION_RULES
+    assert (
+        projection["state_selection_policy"]["selection_rules"]
+        == source_rules
+    )
+
+    custom_rules = [
+        "canvas_rule_one",
+        "canvas_rule_two",
+        "canvas_rule_three",
+        "canvas_rule_four",
+    ]
+    selection_node["params"]["selection_rules"] = custom_rules
+    custom_projection = _compile(modules)["compiled_dr"][
+        "visual_expression_mapping"
+    ]
+    assert custom_projection["state_selection_policy"]["selection_rules"] == (
+        custom_rules
+    )
+
+
+def test_transition_execution_contract_is_top_level_and_declarative():
+    dr = _compile()["compiled_dr"]
+    projection = dr["visual_expression_mapping"]
+    transition = projection["transition_policy"]
+
+    assert transition["uses_accumulated_idle_time_as_progress"] is False
+    assert transition["minimum_hold_prevents_flicker"] is True
+    assert transition["transition_executor"] == "aftelle"
+    assert "transition_executor" not in dr["payload"]
+    assert projection["allowed_states"] == _STATES
+    assert projection["particle_core_mapping"]["caring"][
+        "brightness_multiplier"
+    ] == 1.06
+    assert projection["particle_core_mapping"]["subdued"][
+        "energy_multiplier"
+    ] == 0.78
+    assert projection["particle_core_mapping"]["joyful"][
+        "diffusion_multiplier"
+    ] == 1.14
 
 
 def test_legacy_projection_without_a6_fields_remains_loadable():
@@ -261,6 +331,41 @@ def test_legacy_projection_without_a6_fields_remains_loadable():
     ] == _STATES
     assert "parameter_ranges" not in legacy_projection
     assert "state_selection_policy" not in legacy_projection
+
+
+def test_legacy_projection_without_final_completion_fields_remains_loadable():
+    legacy = deepcopy(_compile()["compiled_dr"])
+    projection = legacy["visual_expression_mapping"]
+    projection["content_revision"] = (
+        "stage7_4_11_aftelle_projection_completion_v1"
+    )
+    projection["state_selection_policy"].pop("selection_rules")
+    projection["transition_policy"].pop(
+        "uses_accumulated_idle_time_as_progress"
+    )
+    projection["transition_policy"].pop("minimum_hold_prevents_flicker")
+    projection["transition_policy"].pop("transition_executor")
+
+    parsed = VisualExpressionMappingV03.model_validate(projection)
+    assert parsed.state_selection_policy is not None
+    assert parsed.state_selection_policy.selection_rules is None
+    assert parsed.transition_policy.uses_accumulated_idle_time_as_progress is None
+    assert parsed.transition_policy.minimum_hold_prevents_flicker is None
+    assert parsed.transition_policy.transition_executor is None
+
+    loaded = mock_load_dr_v0_3(legacy)
+    assert loaded["loaded"] is True
+    loaded_projection = loaded["visual_expression_mapping"]
+    assert loaded_projection["state_selection_policy"]["selection_rules"] == []
+    assert loaded_projection["transition_policy"][
+        "uses_accumulated_idle_time_as_progress"
+    ] is False
+    assert loaded_projection["transition_policy"][
+        "minimum_hold_prevents_flicker"
+    ] is True
+    assert loaded_projection["transition_policy"]["transition_executor"] == (
+        "aftelle"
+    )
 
 
 def test_particle_mapping_current_node_synchronizes_output_and_top_projection():

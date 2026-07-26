@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Sequence
 
 from ..registry.module_catalog import (
     DETAIL_BEHAVIOR_MODULE_ID,
+    EXPRESSION_STATE_NODE_IDS,
     EXPRESSION_STATE_VALUES,
     PARTICLE_AVATAR_MODULE_ID,
     PARTICLE_AVATAR_NODE_IDS,
@@ -17,7 +18,7 @@ from ..registry.module_catalog import (
 )
 
 VISUAL_EXPRESSION_PROJECTION_CONTENT_REVISION = (
-    "stage7_4_11_aftelle_projection_completion_v1"
+    "stage7_4_11_selection_transition_projection_completion_v1"
 )
 VISUAL_EXPRESSION_PROJECTION_PROTOCOL_VERSION = "1.0"
 VISUAL_EXPRESSION_ALLOWED_STATES = tuple(EXPRESSION_STATE_VALUES)
@@ -41,6 +42,9 @@ VISUAL_EXPRESSION_TRANSITION_DEFAULTS = {
     "transition_style": "smooth",
     "repeat_same_state_restarts_transition": False,
     "continue_from_current_visual_value": True,
+    "uses_accumulated_idle_time_as_progress": False,
+    "minimum_hold_prevents_flicker": True,
+    "transition_executor": "aftelle",
 }
 VISUAL_EXPRESSION_PARAMETER_SPECS = {
     "brightness_multiplier": {
@@ -118,6 +122,29 @@ def _module_output(module: Dict[str, Any], output_key: str) -> Dict[str, Any]:
 def _node_id(node: Dict[str, Any]) -> str:
     value = node.get("node_id") or node.get("id")
     return value if isinstance(value, str) else ""
+
+
+def _expression_selection_rules(module: Dict[str, Any]) -> List[str]:
+    graph = _as_dict(module.get("module_graph"))
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    selection_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and _node_id(node)
+            == EXPRESSION_STATE_NODE_IDS["state_selection_rules"]
+        ),
+        {},
+    )
+    selection_rules = _as_dict(selection_node.get("params")).get(
+        "selection_rules"
+    )
+    if not isinstance(selection_rules, list) or not all(
+        isinstance(rule, str) for rule in selection_rules
+    ):
+        return []
+    return deepcopy(selection_rules)
 
 
 def _node_field_value(
@@ -308,6 +335,7 @@ def build_visual_expression_mapping(
     clamped_paths: set[str] = set()
     a1 = _find_module(modules, DETAIL_BEHAVIOR_MODULE_ID)
     a2 = _find_module(modules, PARTICLE_AVATAR_MODULE_ID)
+    selection_rules = _expression_selection_rules(a1)
 
     a1_config = _as_dict(a1.get("config"))
     output_contract = _as_dict(a1_config.get("output_contract"))
@@ -497,6 +525,7 @@ def build_visual_expression_mapping(
             "selection_source": "runtime_core",
             "state_field": "expression_state",
             "intensity_field": "expression_intensity",
+            "selection_rules": selection_rules,
             "allowed_states": list(allowed_states),
             "default_state": default_state,
             "missing_state_fallback": default_state,
@@ -519,6 +548,19 @@ def build_visual_expression_mapping(
             "transition_style": transition_style,
             "repeat_same_state_restarts_transition": repeat_same_state,
             "continue_from_current_visual_value": continue_from_current,
+            "uses_accumulated_idle_time_as_progress": (
+                VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
+                    "uses_accumulated_idle_time_as_progress"
+                ]
+            ),
+            "minimum_hold_prevents_flicker": (
+                VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
+                    "minimum_hold_prevents_flicker"
+                ]
+            ),
+            "transition_executor": VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
+                "transition_executor"
+            ],
         },
         "lifecycle_priority": {
             "override_states": override_states,

@@ -206,6 +206,7 @@ class VisualExpressionStateSelectionPolicyV03(V03BaseModel):
     selection_source: Literal["runtime_core"] = "runtime_core"
     state_field: Literal["expression_state"] = "expression_state"
     intensity_field: Literal["expression_intensity"] = "expression_intensity"
+    selection_rules: Optional[List[str]] = None
     allowed_states: List[
         Literal["neutral", "calm", "caring", "subdued", "joyful"]
     ] = Field(default_factory=list)
@@ -240,6 +241,9 @@ class VisualExpressionTransitionPolicyV03(V03BaseModel):
     transition_style: Literal["smooth"] = "smooth"
     repeat_same_state_restarts_transition: bool = False
     continue_from_current_visual_value: bool = True
+    uses_accumulated_idle_time_as_progress: Optional[bool] = None
+    minimum_hold_prevents_flicker: Optional[bool] = None
+    transition_executor: Optional[Literal["aftelle"]] = None
 
 
 class VisualExpressionLifecyclePriorityV03(V03BaseModel):
@@ -263,7 +267,8 @@ class VisualExpressionMappingV03(V03BaseModel):
     content_revision: Literal[
         "stage7_4_11_visual_expression_projection_v1",
         "stage7_4_11_aftelle_projection_completion_v1",
-    ] = "stage7_4_11_aftelle_projection_completion_v1"
+        "stage7_4_11_selection_transition_projection_completion_v1",
+    ] = "stage7_4_11_selection_transition_projection_completion_v1"
     allowed_states: List[
         Literal["neutral", "calm", "caring", "subdued", "joyful"]
     ] = Field(default_factory=list)
