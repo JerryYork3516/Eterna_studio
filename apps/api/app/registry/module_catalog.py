@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..models.v0_4 import (
     CANONICAL_LAYER_IDS,
@@ -19,6 +19,7 @@ from ..models.v0_4 import (
     RiskLevel,
     ScreenUiAnchorModuleV04,
     SlotType,
+    STAGE7_4_12_A2_CONTENT_REVISION,
 )
 
 IDENTITY_CORE_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
@@ -1926,6 +1927,8 @@ LANGUAGE_BEHAVIOR_NODE_IDS = {
     "boundary_limits": "language_behavior_boundary_limits",
     "output_expression": "language_behavior_output_expression",
     "validation": "language_behavior_validation",
+    "module_output": "language_behavior_output",
+    "reference_output": "language_behavior_reference_output",
 }
 LANGUAGE_BEHAVIOR_PRESET_ID = "human_empathy_cn_v0_1"
 DECISION_BEHAVIOR_MODULE_ID = "decision_pattern"
@@ -1936,6 +1939,8 @@ DECISION_BEHAVIOR_NODE_IDS = {
     "boundary_limits": "decision_behavior_boundary_limits",
     "output_expression": "decision_behavior_output_expression",
     "validation": "decision_behavior_validation",
+    "module_output": "decision_behavior_output",
+    "reference_output": "decision_behavior_reference_output",
 }
 DECISION_BEHAVIOR_PRESET_ID = "human_empathy_decision_v0_1"
 DETAIL_BEHAVIOR_MODULE_ID = "emotion_reaction"
@@ -1965,6 +1970,8 @@ INTERACTION_BEHAVIOR_NODE_IDS = {
     "boundary_limits": "interaction_behavior_boundary_limits",
     "output_expression": "interaction_behavior_output_expression",
     "validation": "interaction_behavior_validation",
+    "module_output": "interaction_behavior_output",
+    "reference_output": "interaction_behavior_reference_output",
 }
 INTERACTION_BEHAVIOR_PRESET_ID = "human_empathy_interaction_v0_1"
 TASK_BEHAVIOR_MODULE_ID = "behavior_habit"
@@ -1975,6 +1982,8 @@ TASK_BEHAVIOR_NODE_IDS = {
     "boundary_limits": "task_behavior_boundary_limits",
     "output_expression": "task_behavior_output_expression",
     "validation": "task_behavior_validation",
+    "module_output": "task_behavior_output",
+    "reference_output": "task_behavior_reference_output",
 }
 TASK_BEHAVIOR_PRESET_ID = "human_empathy_task_v0_1"
 SOCIAL_BEHAVIOR_MODULE_ID = "emotion_mapper"
@@ -1985,6 +1994,8 @@ SOCIAL_BEHAVIOR_NODE_IDS = {
     "boundary_limits": "social_behavior_boundary_limits",
     "output_expression": "social_behavior_output_expression",
     "validation": "social_behavior_validation",
+    "module_output": "social_behavior_output",
+    "reference_output": "social_behavior_reference_output",
 }
 SOCIAL_BEHAVIOR_PRESET_ID = "human_empathy_social_v0_1"
 DIALOGUE_RUNTIME_PROFILE_MODULE_ID = "dialogue_runtime_profile"
@@ -1993,7 +2004,7 @@ DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION = (
     "stage7_4_10_few_shot_resident_name_decoupling_v1"
 )
 DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH = Path(__file__).with_name(
-    "dialogue_runtime_profile_resident_0001.json"
+    "dialogue_runtime_profile.json"
 )
 DIALOGUE_RUNTIME_PROFILE_FIELD_KEYS = (
     "profile_id",
@@ -2037,7 +2048,7 @@ DIALOGUE_RUNTIME_PROFILE_MERGE_ORDER = [
 def _load_dialogue_runtime_profile_config() -> Dict[str, object]:
     loaded = json.loads(DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise ValueError("dialogue_runtime_profile_resident_0001.json must contain an object")
+        raise ValueError("dialogue_runtime_profile.json must contain an object")
     return loaded
 
 
@@ -2048,6 +2059,194 @@ def _behavior_dr_write_keys(policy_key: str) -> List[str]:
     return [
         f"payload.behavior_policy.modules.{policy_key}",
         f"payload.graph_snapshot.layer_outputs.layer_8.behavior_policy.modules.{policy_key}",
+    ]
+
+
+def _behavior_seed_policy(
+    *,
+    module_id: str,
+    module_type: str,
+    policy_key: str,
+    preset_id: str,
+    tags: List[str],
+    nodes: List[Dict[str, object]],
+    references: List[Dict[str, object]],
+    source_node_ids: List[str],
+) -> Dict[str, object]:
+    """Materialize the catalog seed from the checkbox configuration itself."""
+
+    selected_options: List[str] = []
+    validation_rules: List[str] = []
+    custom_texts: List[str] = []
+    configured_preset_id = ""
+    for node in nodes:
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if "checkbox_config" in params:
+            checkbox_config = (
+                params["checkbox_config"]
+                if isinstance(params["checkbox_config"], dict)
+                else {}
+            )
+        else:
+            checkbox_config = (
+                params.get("checklist_config")
+                if isinstance(params.get("checklist_config"), dict)
+                else {}
+            )
+        if not checkbox_config:
+            continue
+        if not configured_preset_id and isinstance(
+            checkbox_config.get("preset_id"), str
+        ):
+            configured_preset_id = str(checkbox_config["preset_id"])
+        node_selected = checkbox_config.get("selected_options")
+        if not isinstance(node_selected, list):
+            node_selected = []
+        selected_options.extend(
+            option
+            for option in node_selected
+            if isinstance(option, str) and option
+        )
+        if str(node.get("node_id", "")).endswith("_validation"):
+            validation_rules.extend(
+                option
+                for option in node_selected
+                if isinstance(option, str) and option
+            )
+        custom_text = checkbox_config.get("custom_text")
+        if isinstance(custom_text, str) and custom_text.strip():
+            custom_texts.append(custom_text.strip())
+
+    field_references = []
+    for reference in references:
+        layer_id = str(
+            reference.get("layer_id")
+            or reference.get("source_layer_id")
+            or ""
+        )
+        source_module_id = str(
+            reference.get("module_id")
+            or reference.get("source_module_id")
+            or ""
+        )
+        field_id = str(
+            reference.get("field_id")
+            or reference.get("source_node_id")
+            or ""
+        )
+        field_references.append(
+            {
+                "reference_id": str(reference.get("reference_id") or ""),
+                "reference_type": str(
+                    reference.get("reference_type") or "optional"
+                ),
+                "layer_id": layer_id,
+                "module_id": source_module_id,
+                "field_id": field_id,
+                "path": str(
+                    reference.get("path")
+                    or "/".join(
+                        item
+                        for item in (layer_id, source_module_id, field_id)
+                        if item
+                    )
+                ),
+                "usage": str(reference.get("usage") or ""),
+                "usage_key": str(reference.get("usage_key") or ""),
+            }
+        )
+
+    return {
+        "module_id": module_id,
+        "source_module_id": module_id,
+        "module_type": module_type,
+        "policy_key": policy_key,
+        "preset_id": configured_preset_id or preset_id,
+        "selected_options": list(dict.fromkeys(selected_options)),
+        "custom_text": "\n\n".join(custom_texts),
+        "field_references": field_references,
+        "validation_rules": list(dict.fromkeys(validation_rules)),
+        "tags": list(tags),
+        "source_nodes": list(source_node_ids),
+    }
+
+
+def _behavior_output_nodes(
+    *,
+    module_id: str,
+    node_ids: Dict[str, str],
+    output_key: str,
+    output: Dict[str, object],
+    i18n_prefix: str,
+) -> List[Dict[str, object]]:
+    metadata = {
+        "compile_time_only": True,
+        "runtime_enabled": False,
+        "no_execution": True,
+    }
+    return [
+        {
+            "node_id": node_ids["module_output"],
+            "node_type": "module_output",
+            "module_id": module_id,
+            "layer_id": "layer_8",
+            "position": {"x": 1280, "y": 0},
+            "params": {
+                "input": node_ids["validation"],
+                "output_key": output_key,
+                "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+                "output_schema": {
+                    "type": "object",
+                    "required": True,
+                },
+            },
+            "i18n_keys": {
+                "name": f"{i18n_prefix}.module.output",
+                "description": f"{i18n_prefix}.module.output",
+                "type_name": "node.type.module_output",
+            },
+            "outputs": {
+                output_key: deepcopy(output),
+                "module_output": output_key,
+            },
+            "metadata": metadata,
+        },
+        {
+            "node_id": node_ids["reference_output"],
+            "node_type": "reference_output",
+            "module_id": module_id,
+            "layer_id": "layer_8",
+            "position": {"x": 1600, "y": 0},
+            "params": {
+                "input": node_ids["module_output"],
+                "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+                "export_name": "",
+                "export_description": "",
+                "export_scope": "module",
+                "export_scopes": ["module", "node", "field"],
+                "allow_module_level_reference": True,
+                "export_fields": [
+                    {
+                        "field_key": output_key,
+                        "field_path": output_key,
+                        "label_key": f"{i18n_prefix}.module.output",
+                        "description_key": f"{i18n_prefix}.module.output",
+                        "value_type": "object",
+                        "required": True,
+                    }
+                ],
+                "authority_source_type": "derived_config",
+                "is_core_source": False,
+                "override_allowed": False,
+            },
+            "i18n_keys": {
+                "name": f"{i18n_prefix}.module.output",
+                "description": f"{i18n_prefix}.module.output",
+                "type_name": "node.type.reference_output",
+            },
+            "outputs": {output_key: deepcopy(output)},
+            "metadata": metadata,
+        },
     ]
 
 
@@ -2660,6 +2859,32 @@ def _language_behavior_module() -> ModuleV04:
         ("boundary_limits", "output_expression"),
         ("boundary_limits", "validation"),
     ]
+    tags = ["behavior", "language_behavior", "text_config", "core"]
+    output = _behavior_seed_policy(
+        module_id=module_id,
+        module_type="language_behavior_config",
+        policy_key="language_behavior",
+        preset_id=LANGUAGE_BEHAVIOR_PRESET_ID,
+        tags=tags,
+        nodes=nodes,
+        references=recommended_references,
+        source_node_ids=[str(node["node_id"]) for node in nodes],
+    )
+    nodes.extend(
+        _behavior_output_nodes(
+            module_id=module_id,
+            node_ids=LANGUAGE_BEHAVIOR_NODE_IDS,
+            output_key=LANGUAGE_BEHAVIOR_OUTPUT_KEY,
+            output=output,
+            i18n_prefix="layer8.languageBehavior",
+        )
+    )
+    edges.extend(
+        [
+            ("validation", "module_output"),
+            ("module_output", "reference_output"),
+        ]
+    )
     field_registry = [
         {
             **{key: value for key, value in field.items() if key != "value"},
@@ -2682,7 +2907,7 @@ def _language_behavior_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "language_behavior", "text_config", "core"],
+        tags=tags,
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -2699,7 +2924,7 @@ def _language_behavior_module() -> ModuleV04:
             "output_key": LANGUAGE_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": LANGUAGE_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.languageBehavior.module.output"}],
+        output_schema=[{"key": LANGUAGE_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": True, "description": "layer8.languageBehavior.module.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
         i18n_keys={
             "display_name": "layer8.languageBehavior.module.title",
@@ -2707,10 +2932,11 @@ def _language_behavior_module() -> ModuleV04:
             "output": "layer8.languageBehavior.module.output",
             "module_type": "layer8.languageBehavior.module.type",
         },
-        outputs={},
+        outputs={LANGUAGE_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=_behavior_dr_write_keys("language_behavior"),
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "module_type_label_key": "layer8.languageBehavior.module.type",
             "field_registry": field_registry,
@@ -3017,6 +3243,32 @@ def _decision_behavior_module() -> ModuleV04:
         ("boundary_limits", "output_expression"),
         ("boundary_limits", "validation"),
     ]
+    tags = ["behavior", "decision_behavior", "text_config", "core"]
+    output = _behavior_seed_policy(
+        module_id=module_id,
+        module_type="decision_behavior_config",
+        policy_key="decision_behavior",
+        preset_id=DECISION_BEHAVIOR_PRESET_ID,
+        tags=tags,
+        nodes=nodes,
+        references=recommended_references,
+        source_node_ids=[str(node["node_id"]) for node in nodes],
+    )
+    nodes.extend(
+        _behavior_output_nodes(
+            module_id=module_id,
+            node_ids=DECISION_BEHAVIOR_NODE_IDS,
+            output_key=DECISION_BEHAVIOR_OUTPUT_KEY,
+            output=output,
+            i18n_prefix="layer8.decisionBehavior",
+        )
+    )
+    edges.extend(
+        [
+            ("validation", "module_output"),
+            ("module_output", "reference_output"),
+        ]
+    )
     return _module(
         module_id,
         "decision_behavior_config",
@@ -3026,7 +3278,7 @@ def _decision_behavior_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "decision_behavior", "text_config", "core"],
+        tags=tags,
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -3043,7 +3295,7 @@ def _decision_behavior_module() -> ModuleV04:
             "output_key": DECISION_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": DECISION_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.decisionBehavior.module.output"}],
+        output_schema=[{"key": DECISION_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": True, "description": "layer8.decisionBehavior.module.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
         i18n_keys={
             "display_name": "layer8.decisionBehavior.module.title",
@@ -3051,10 +3303,11 @@ def _decision_behavior_module() -> ModuleV04:
             "output": "layer8.decisionBehavior.module.output",
             "module_type": "layer8.decisionBehavior.module.type",
         },
-        outputs={},
+        outputs={DECISION_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=_behavior_dr_write_keys("decision_behavior"),
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "module_type_label_key": "layer8.decisionBehavior.module.type",
             "reference_registry": recommended_references,
@@ -3555,6 +3808,9 @@ def _detail_behavior_module() -> ModuleV04:
         module_graph={
             "shell_version": "module_shell_v1",
             "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "validation_compatibility_revision": (
                 EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
             ),
@@ -3565,16 +3821,10 @@ def _detail_behavior_module() -> ModuleV04:
         },
         output_schema=[
             {
-                "key": "expression_state",
-                "type": "string",
+                "key": DETAIL_BEHAVIOR_OUTPUT_KEY,
+                "type": "object",
                 "required": True,
-                "description": f"{i18n_prefix}.field.expressionState.description",
-            },
-            {
-                "key": "expression_intensity",
-                "type": "number",
-                "required": True,
-                "description": f"{i18n_prefix}.field.expressionIntensity.description",
+                "description": f"{i18n_prefix}.module.output",
             },
         ],
         ui_config={"shell_version": "module_shell_v1", "classification": "core", "node_width": 340},
@@ -3589,6 +3839,9 @@ def _detail_behavior_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "content_revision": EXPRESSION_STATE_CONTENT_REVISION,
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "validation_compatibility_revision": (
                 EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
             ),
@@ -3951,6 +4204,32 @@ def _interaction_behavior_module() -> ModuleV04:
         ("boundary_limits", "output_expression"),
         ("boundary_limits", "validation"),
     ]
+    tags = ["behavior", "interaction_behavior", "text_config", "core"]
+    output = _behavior_seed_policy(
+        module_id=module_id,
+        module_type="interaction_behavior_config",
+        policy_key="interaction_behavior",
+        preset_id=INTERACTION_BEHAVIOR_PRESET_ID,
+        tags=tags,
+        nodes=nodes,
+        references=recommended_references,
+        source_node_ids=[str(node["node_id"]) for node in nodes],
+    )
+    nodes.extend(
+        _behavior_output_nodes(
+            module_id=module_id,
+            node_ids=INTERACTION_BEHAVIOR_NODE_IDS,
+            output_key=INTERACTION_BEHAVIOR_OUTPUT_KEY,
+            output=output,
+            i18n_prefix="layer8.interactionBehavior",
+        )
+    )
+    edges.extend(
+        [
+            ("validation", "module_output"),
+            ("module_output", "reference_output"),
+        ]
+    )
     return _module(
         module_id,
         "interaction_behavior_config",
@@ -3960,7 +4239,7 @@ def _interaction_behavior_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "interaction_behavior", "text_config", "core"],
+        tags=tags,
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -3977,7 +4256,7 @@ def _interaction_behavior_module() -> ModuleV04:
             "output_key": INTERACTION_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": INTERACTION_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.interactionBehavior.module.output"}],
+        output_schema=[{"key": INTERACTION_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": True, "description": "layer8.interactionBehavior.module.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
         i18n_keys={
             "display_name": "layer8.interactionBehavior.module.title",
@@ -3985,10 +4264,11 @@ def _interaction_behavior_module() -> ModuleV04:
             "output": "layer8.interactionBehavior.module.output",
             "module_type": "layer8.interactionBehavior.module.type",
         },
-        outputs={},
+        outputs={INTERACTION_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=[*_behavior_dr_write_keys("interaction_behavior"), "payload.behavior.first_interaction"],
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "module_type_label_key": "layer8.interactionBehavior.module.type",
             "reference_registry": recommended_references,
@@ -4601,6 +4881,9 @@ def _particle_avatar_module() -> ModuleV04:
             "validation_compatibility_revision": (
                 EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
             ),
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "nodes": nodes,
             "edges": edges,
             "output_key": PARTICLE_AVATAR_OUTPUT_KEY,
@@ -4635,6 +4918,9 @@ def _particle_avatar_module() -> ModuleV04:
             "validation_compatibility_revision": (
                 EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
             ),
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "module_class": "visual_rule_config",
             "module_type_label_key": f"{i18n_prefix}.module.type",
             "missing_reference_sources": [
@@ -4645,6 +4931,7 @@ def _particle_avatar_module() -> ModuleV04:
             "expression_states": list(PARTICLE_EXPRESSION_STATES),
             "lifecycle_states": list(PARTICLE_LIFECYCLE_STATES),
             "relative_parameter_ranges": range_config,
+            "transition_rules": deepcopy(transition_config),
             "transition_style_options": ["smooth"],
             "edit_scope": "developer_only",
             "update_level": "versioned_core",
@@ -5410,6 +5697,32 @@ def _task_behavior_module() -> ModuleV04:
         ("boundary_limits", "output_expression"),
         ("boundary_limits", "validation"),
     ]
+    tags = ["behavior", "task_behavior", "text_config", "core"]
+    output = _behavior_seed_policy(
+        module_id=module_id,
+        module_type="task_behavior_config",
+        policy_key="task_behavior",
+        preset_id=TASK_BEHAVIOR_PRESET_ID,
+        tags=tags,
+        nodes=nodes,
+        references=recommended_references,
+        source_node_ids=[str(node["node_id"]) for node in nodes],
+    )
+    nodes.extend(
+        _behavior_output_nodes(
+            module_id=module_id,
+            node_ids=TASK_BEHAVIOR_NODE_IDS,
+            output_key=TASK_BEHAVIOR_OUTPUT_KEY,
+            output=output,
+            i18n_prefix="layer8.taskBehavior",
+        )
+    )
+    edges.extend(
+        [
+            ("validation", "module_output"),
+            ("module_output", "reference_output"),
+        ]
+    )
     return _module(
         module_id,
         "task_behavior_config",
@@ -5419,7 +5732,7 @@ def _task_behavior_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "task_behavior", "text_config", "core"],
+        tags=tags,
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -5436,7 +5749,7 @@ def _task_behavior_module() -> ModuleV04:
             "output_key": TASK_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": TASK_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.taskBehavior.module.output"}],
+        output_schema=[{"key": TASK_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": True, "description": "layer8.taskBehavior.module.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
         i18n_keys={
             "display_name": "layer8.taskBehavior.module.title",
@@ -5444,10 +5757,11 @@ def _task_behavior_module() -> ModuleV04:
             "output": "layer8.taskBehavior.module.output",
             "module_type": "layer8.taskBehavior.module.type",
         },
-        outputs={},
+        outputs={TASK_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=_behavior_dr_write_keys("task_behavior"),
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "module_type_label_key": "layer8.taskBehavior.module.type",
             "reference_registry": recommended_references,
@@ -5754,6 +6068,32 @@ def _social_behavior_module() -> ModuleV04:
         ("boundary_limits", "output_expression"),
         ("boundary_limits", "validation"),
     ]
+    tags = ["behavior", "social_behavior", "text_config", "core"]
+    output = _behavior_seed_policy(
+        module_id=module_id,
+        module_type="social_behavior_config",
+        policy_key="social_behavior",
+        preset_id=SOCIAL_BEHAVIOR_PRESET_ID,
+        tags=tags,
+        nodes=nodes,
+        references=recommended_references,
+        source_node_ids=[str(node["node_id"]) for node in nodes],
+    )
+    nodes.extend(
+        _behavior_output_nodes(
+            module_id=module_id,
+            node_ids=SOCIAL_BEHAVIOR_NODE_IDS,
+            output_key=SOCIAL_BEHAVIOR_OUTPUT_KEY,
+            output=output,
+            i18n_prefix="layer8.socialBehavior",
+        )
+    )
+    edges.extend(
+        [
+            ("validation", "module_output"),
+            ("module_output", "reference_output"),
+        ]
+    )
     return _module(
         module_id,
         "social_behavior_config",
@@ -5763,7 +6103,7 @@ def _social_behavior_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="green",
-        tags=["behavior", "social_behavior", "text_config", "core"],
+        tags=tags,
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -5780,7 +6120,7 @@ def _social_behavior_module() -> ModuleV04:
             "output_key": SOCIAL_BEHAVIOR_OUTPUT_KEY,
             "compile_time_only": True,
         },
-        output_schema=[{"key": SOCIAL_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": False, "description": "layer8.socialBehavior.module.output"}],
+        output_schema=[{"key": SOCIAL_BEHAVIOR_OUTPUT_KEY, "type": "object", "required": True, "description": "layer8.socialBehavior.module.output"}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
         i18n_keys={
             "display_name": "layer8.socialBehavior.module.title",
@@ -5788,10 +6128,11 @@ def _social_behavior_module() -> ModuleV04:
             "output": "layer8.socialBehavior.module.output",
             "module_type": "layer8.socialBehavior.module.type",
         },
-        outputs={},
+        outputs={SOCIAL_BEHAVIOR_OUTPUT_KEY: output},
         dr_write_keys=_behavior_dr_write_keys("social_behavior"),
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "module_type_label_key": "layer8.socialBehavior.module.type",
             "reference_registry": recommended_references,
@@ -5958,6 +6299,9 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
                 "fields": fields,
                 "config_mode": "optional_resident_profile",
                 "profile_content_revision": DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+                "source_output_identity_cleanup_revision": (
+                    STAGE7_4_12_A2_CONTENT_REVISION
+                ),
             },
             "configInput",
         ),
@@ -6164,9 +6508,13 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
         category="behavior",
         is_placeholder=False,
         color_status="amber",
-        tags=["behavior", "dialogue_runtime", "resident_profile", "optional", "stage7_4_9", "stage7_4_10"],
+        tags=["behavior", "dialogue_runtime", "resident_profile", "optional", "stage7_4_9", "stage7_4_10", "stage7_4_12"],
         module_graph={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "nodes": nodes,
             "edges": edges,
             "output_key": output_key,
@@ -6190,6 +6538,10 @@ def _dialogue_runtime_profile_module() -> ModuleV04:
         outputs={output_key: deepcopy(profile), "module_output": output_key},
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+            "source_output_identity_cleanup_revision": (
+                STAGE7_4_12_A2_CONTENT_REVISION
+            ),
             "module_class": "optional",
             "optional_module": True,
             "source_config_file": DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH.name,
@@ -10322,6 +10674,40 @@ def _group_relationship_module() -> ModuleV04:
     )
 
 
+SELF_AWARENESS_FACT_SOURCE_BINDINGS: Dict[str, Dict[str, object]] = {
+    "identity_type": {
+        "source_layer_id": "layer_1",
+        "source_module_id": "module_existence_mode",
+        "source_output_key": "existence_mode",
+        "source_field_key": "digital_resident_type",
+    },
+    "resident_type": {
+        "source_layer_id": "layer_1",
+        "source_module_id": "module_existence_mode",
+        "source_output_key": "existence_mode",
+        "source_field_key": "digital_resident_type",
+    },
+    "primary_language": {
+        "source_layer_id": "layer_1",
+        "source_module_id": "module_basic_identity",
+        "source_output_key": "basic_identity",
+        "source_field_key": "primary_language",
+    },
+    "regional_identity_type": {
+        "source_layer_id": "layer_7",
+        "source_module_id": "environment_setting",
+        "source_output_key": "environment_context",
+        "source_field_key": "city_environment",
+    },
+    "default_relationship_role": {
+        "source_layer_id": "layer_11",
+        "source_module_id": "user_relationship",
+        "source_output_key": "user_relationship_config",
+        "source_field_key": "default_relationship_position",
+    },
+}
+
+
 def _engineering_self_awareness_module() -> ModuleV04:
     """Layer 12's static engineering self-awareness configuration shell."""
 
@@ -10340,7 +10726,7 @@ def _engineering_self_awareness_module() -> ModuleV04:
     }
 
     def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
-        return {
+        result: Dict[str, object] = {
             "field_key": key,
             "field_name": name,
             "field_value": value,
@@ -10354,6 +10740,26 @@ def _engineering_self_awareness_module() -> ModuleV04:
                 "placeholder": f"layer12.engineeringSelfAwareness.field.{suffix}.placeholder",
             },
         }
+        source_binding = SELF_AWARENESS_FACT_SOURCE_BINDINGS.get(key)
+        if source_binding:
+            result.update(
+                {
+                    "value_role": "compatibility_fallback",
+                    "reference_enabled": True,
+                    "source_binding": deepcopy(source_binding),
+                    "source_priority": [
+                        "current_source_node",
+                        "source_structured_config",
+                        "source_module_output",
+                        "compatibility_fallback",
+                        "safe_default",
+                    ],
+                    "source_description_key": (
+                        f"layer12.engineeringSelfAwareness.field.{suffix}.source"
+                    ),
+                }
+            )
+        return result
 
     fields = [
         field("identity_type", "identityType", "数字居民", "text", "身份类型", "定义其为数字居民类型，不填写姓名、居民 ID、昵称或代号。"),
@@ -10404,6 +10810,21 @@ def _engineering_self_awareness_module() -> ModuleV04:
     output = {
         "output_key": output_key,
         "fields": {str(item["field_key"]): item["field_value"] for item in fields},
+        "resolved_facts": {},
+        "resolved_fact_sources": {},
+        "fact_source_policy": {
+            "priority": [
+                "current_source_node",
+                "source_structured_config",
+                "source_module_output",
+                "compatibility_fallback",
+                "safe_default",
+            ],
+            "authoritative_fact_path": "resolved_facts",
+            "compatibility_field_path": "fields",
+            "compatibility_fields_may_override_current_facts": False,
+            "bindings": deepcopy(SELF_AWARENESS_FACT_SOURCE_BINDINGS),
+        },
         "self_model": {"summary": "该居民是以中文交流为主、以西安生活语境为地域锚点的人文共情类数字居民。核心职责是稳定陪伴、日常倾听、情绪支持和人际沟通辅助。默认关系为稳定陪伴者，不默认恋爱关系。该居民能够理解、整理和回应用户表达，但不得伪装现实真人、虚构未接入能力或替代现实专业判断。"},
         "capability_awareness": {"allowed": ["日常倾听", "自然中文对话", "用户情绪表达识别与整理", "人际关系问题梳理", "普通生活建议", "中文内容表达", "陪伴式沟通", "在能力范围内提供有限建议"]},
         "limitation_awareness": {"limits": ["不替代心理治疗", "不替代医疗、法律、财务等现实专业判断", "不声称完成未实际执行的操作", "不伪造外部工具结果", "不承诺未经授权的后台持续行动", "不声称拥有现实身体或感官", "不伪装现实真人"]},
@@ -10417,9 +10838,20 @@ def _engineering_self_awareness_module() -> ModuleV04:
         "validation_node": node_ids["consistency"],
         "compile_time_only": True,
         "no_runtime_capability": True,
+        "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
     }
     node_specs = [
-        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        (
+            "input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+            },
+            "input",
+        ),
         (
             "identity_normalize",
             "structure_normalize",
@@ -10534,6 +10966,10 @@ def _engineering_self_awareness_module() -> ModuleV04:
             "reference_input",
             {
                 "references": [],
+                "fact_source_bindings": deepcopy(
+                    SELF_AWARENESS_FACT_SOURCE_BINDINGS
+                ),
+                "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             },
             "referenceInput",
         ),
@@ -10595,6 +11031,7 @@ def _engineering_self_awareness_module() -> ModuleV04:
         tags=["meta", "self_awareness", "structured_rule_text", "stage7_4"],
         module_graph={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "nodes": nodes,
             "edges": [
                 {
@@ -10641,6 +11078,7 @@ def _engineering_self_awareness_module() -> ModuleV04:
         outputs={output_key: output, "module_output": output_key},
         config={
             "shell_version": "module_shell_v1",
+            "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
             "module_class": "core",
             "compile_time_only": True,
             "text_config_only": True,
@@ -10654,6 +11092,9 @@ def _engineering_self_awareness_module() -> ModuleV04:
                 }
                 for item in fields
             ],
+            "fact_source_bindings": deepcopy(
+                SELF_AWARENESS_FACT_SOURCE_BINDINGS
+            ),
         },
         mock_only=True,
         no_execution=True,

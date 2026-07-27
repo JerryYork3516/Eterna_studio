@@ -15,6 +15,7 @@ import {
   mergeCatalogReferenceDeclarations,
   mergeChecklistTemplateDefaults,
   mergeCatalogFieldsPreservingValues,
+  materializeLayer8BehaviorPolicy,
   migrateDialogueRuntimeProfileId,
   migrateDialogueRuntimeProfileContentCopies,
   migrateExpressionStateSemanticsGraph,
@@ -29,6 +30,7 @@ import {
   mergeAvailableModuleReferencePointers,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+  STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
@@ -1392,30 +1394,55 @@ test("Stage 7.4.10 migrates only the legacy dialogue profile id across saved fie
     { field_key: "profile_id", field_value: DIALOGUE_RUNTIME_PROFILE_ID },
     {
       field_key: "scenario_overrides",
-      field_value: [{ source_id: DIALOGUE_RUNTIME_PROFILE_ID }],
+      field_value: [
+        {
+          source_scope: "resident_profile",
+          source_id: DIALOGUE_RUNTIME_PROFILE_ID,
+        },
+      ],
     },
     {
       field_key: "emotional_dialogue",
       field_value: {
-        source_trace: { source_id: DIALOGUE_RUNTIME_PROFILE_ID },
+        source_trace: {
+          source_scope: "resident_profile",
+          source_id: DIALOGUE_RUNTIME_PROFILE_ID,
+        },
         few_shot_examples: [],
         negative_examples: [],
       },
+    },
+    {
+      field_key: "custom_field",
+      field_value: "catalog default",
     },
   ];
   const savedFields = [
     { field_key: "profile_id", field_value: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID },
     {
       field_key: "scenario_overrides",
-      field_value: [{ source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID, text: "preserved" }],
+      field_value: [
+        {
+          source_scope: "resident_profile",
+          source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+          text: "preserved",
+        },
+      ],
     },
     {
       field_key: "emotional_dialogue",
       field_value: {
-        source_trace: { source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID },
+        source_trace: {
+          source_scope: "resident_profile",
+          source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+        },
         few_shot_examples: [],
         negative_examples: [],
       },
+    },
+    {
+      field_key: "custom_field",
+      field_value: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
     },
   ];
 
@@ -1427,13 +1454,114 @@ test("Stage 7.4.10 migrates only the legacy dialogue profile id across saved fie
     merged[2].field_value.source_trace.source_id,
     DIALOGUE_RUNTIME_PROFILE_ID
   );
+  assert.equal(
+    merged[3].field_value,
+    LEGACY_DIALOGUE_RUNTIME_PROFILE_ID
+  );
   assert.equal(migrateDialogueRuntimeProfileId("resident_b_companion_v0_1"), "resident_b_companion_v0_1");
+});
+
+test("Stage 7.4.12 A2 identity cleanup preserves customized Few-shots and unrelated strings", () => {
+  const customizedFewShots = [
+    {
+      example_id: "customized_example",
+      source_scope: "resident_profile",
+      source_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+      turns: [{ role: "resident", text: "保留用户当前填写的示例。" }],
+    },
+  ];
+  const fields = [
+    {
+      field_key: "profile_id",
+      field_value: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+    },
+    {
+      field_key: "few_shot_examples",
+      field_value: customizedFewShots,
+    },
+    {
+      field_key: "custom_field",
+      field_value: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+    },
+  ];
+  const stored = {
+    profileContentRevision: DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+    identityCleanupRevision: "legacy_identity_revision",
+    fields: JSON.parse(JSON.stringify(fields)),
+    dataFields: JSON.parse(JSON.stringify(fields)),
+    legacyFields: JSON.parse(JSON.stringify(fields)),
+    legacyDataFields: JSON.parse(JSON.stringify(fields)),
+    output: {
+      profile_id: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+      few_shot_examples: JSON.parse(JSON.stringify(customizedFewShots)),
+      custom_output: LEGACY_DIALOGUE_RUNTIME_PROFILE_ID,
+    },
+  };
+  const seed = {
+    profileContentRevision: DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
+    identityCleanupRevision:
+      STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
+  };
+
+  const migrated = migrateDialogueRuntimeProfileContentCopies(stored, seed);
+  assert.equal(migrated.migrated, true);
+  assert.equal(
+    migrated.value.identityCleanupRevision,
+    STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION
+  );
+  assert.equal(
+    migrated.value.profileContentRevision,
+    DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION
+  );
+  for (const copy of [
+    migrated.value.fields,
+    migrated.value.dataFields,
+    migrated.value.legacyFields,
+    migrated.value.legacyDataFields,
+  ]) {
+    assert.equal(
+      copy.find((field) => field.field_key === "profile_id").field_value,
+      DIALOGUE_RUNTIME_PROFILE_ID
+    );
+    const examples = copy.find(
+      (field) => field.field_key === "few_shot_examples"
+    ).field_value;
+    assert.equal(examples[0].source_id, DIALOGUE_RUNTIME_PROFILE_ID);
+    assert.equal(
+      examples[0].turns[0].text,
+      "保留用户当前填写的示例。"
+    );
+    assert.equal(
+      copy.find((field) => field.field_key === "custom_field").field_value,
+      LEGACY_DIALOGUE_RUNTIME_PROFILE_ID
+    );
+  }
+  assert.equal(migrated.value.output.profile_id, DIALOGUE_RUNTIME_PROFILE_ID);
+  assert.equal(
+    migrated.value.output.few_shot_examples[0].source_id,
+    DIALOGUE_RUNTIME_PROFILE_ID
+  );
+  assert.equal(
+    migrated.value.output.few_shot_examples[0].turns[0].text,
+    "保留用户当前填写的示例。"
+  );
+  assert.equal(
+    migrated.value.output.custom_output,
+    LEGACY_DIALOGUE_RUNTIME_PROFILE_ID
+  );
+
+  const reopened = migrateDialogueRuntimeProfileContentCopies(
+    migrated.value,
+    seed
+  );
+  assert.equal(reopened.migrated, false);
+  assert.deepEqual(reopened.value, migrated.value);
 });
 
 test("Stage 7.4.10 migrates stale dialogue Few-shots across Canvas compatibility copies once", () => {
   const profile = JSON.parse(
     readFileSync(
-      new URL("../../api/app/registry/dialogue_runtime_profile_resident_0001.json", import.meta.url),
+      new URL("../../api/app/registry/dialogue_runtime_profile.json", import.meta.url),
       "utf8"
     )
   );
@@ -2215,6 +2343,98 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   );
 });
 
+test("Stage 7.4.12 A2 hydrates one Layer 8 output chain with a revision-gated idempotent merge", () => {
+  const bridgeSource = readFileSync(
+    new URL("../src/store/module-state-bridge.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(
+    bridgeSource,
+    /LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = new Set\(\[[\s\S]*?"language_habit"[\s\S]*?"decision_pattern"[\s\S]*?"interaction_strategy"[\s\S]*?"behavior_habit"[\s\S]*?"emotion_mapper"/s
+  );
+  assert.match(
+    bridgeSource,
+    /function mergeLayer8MaterializedOutputSeed\([\s\S]*?nodeType === "module_output" \|\| nodeType === "reference_output"/s
+  );
+  assert.match(
+    bridgeSource,
+    /catalogNodeIdFromGraphNode\(node\) === seedCatalogNodeId \|\|[\s\S]*?graphNodeTypeFromGraphNode\(node\) === seedNodeType/s
+  );
+  assert.match(
+    bridgeSource,
+    /params\.content_revision ===[\s\S]*?STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION[\s\S]*?continue;/s
+  );
+  assert.match(
+    bridgeSource,
+    /existingPairs = new Set\([\s\S]*?existingPairs\.has\(pair\)[\s\S]*?existingPairs\.add\(pair\)/s
+  );
+  assert.match(
+    bridgeSource,
+    /const layer8OutputMerged = mergeLayer8MaterializedOutputSeed\([\s\S]*?layer8OutputMerged \?\? graphAfterParticleMigration/s
+  );
+});
+
+test("Stage 7.4.12 A2 materializes Layer 8 output from current checkbox values", () => {
+  const seed = {
+    module_id: "language_habit",
+    preset_id: "seed_preset",
+    selected_options: ["seed_option"],
+    custom_text: "seed custom text",
+    field_references: [],
+    validation_rules: ["seed_validation"],
+    source_nodes: [],
+  };
+  const references = [
+    {
+      reference_id: "language_current_reference",
+      module_id: "dialogue_runtime_profile",
+    },
+  ];
+  const sourceNodes = [
+    "language_behavior_input_basis",
+    "language_behavior_core_rules",
+    "language_behavior_validation",
+  ];
+
+  const materialized = materializeLayer8BehaviorPolicy(
+    seed,
+    [
+      {
+        nodeId: "language_behavior_core_rules",
+        checkboxConfig: {
+          preset_id: "current_preset",
+          selected_options: ["current_core"],
+          custom_text: "current custom text",
+        },
+      },
+      {
+        nodeId: "language_behavior_validation",
+        checkboxConfig: {
+          preset_id: "current_preset",
+          selected_options: ["current_validation"],
+          custom_text: "",
+        },
+      },
+    ],
+    references,
+    sourceNodes
+  );
+
+  assert.equal(materialized.module_id, "language_habit");
+  assert.equal(materialized.preset_id, "current_preset");
+  assert.deepEqual(materialized.selected_options, [
+    "current_core",
+    "current_validation",
+  ]);
+  assert.equal(materialized.custom_text, "current custom text");
+  assert.deepEqual(materialized.validation_rules, ["current_validation"]);
+  assert.deepEqual(materialized.field_references, references);
+  assert.deepEqual(materialized.source_nodes, sourceNodes);
+  assert.deepEqual(seed.selected_options, ["seed_option"]);
+  assert.equal(seed.custom_text, "seed custom text");
+});
+
 test("Stage 7.4.11 emotional expression catalog strings and enum labels are localized", () => {
   const cardSource = readFileSync(new URL("../src/components/canvas/WorkflowNodeCard.tsx", import.meta.url), "utf8");
   const en = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
@@ -2297,7 +2517,7 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
   const catalogSource = readFileSync(new URL("../../api/app/registry/module_catalog.py", import.meta.url), "utf8");
   const profile = JSON.parse(
     readFileSync(
-      new URL("../../api/app/registry/dialogue_runtime_profile_resident_0001.json", import.meta.url),
+      new URL("../../api/app/registry/dialogue_runtime_profile.json", import.meta.url),
       "utf8"
     )
   );
@@ -2410,7 +2630,7 @@ test("Stage 7.4.9 dialogue runtime profile catalog strings and structured ids ar
   };
   collectSourceRuleRefs(profile);
   const structuredValues = [
-    "dialogue_profile_resident_0001_v0_1",
+    DIALOGUE_RUNTIME_PROFILE_ID,
     "humanistic_companion",
     "humanistic_companion_v0_1",
     "behavior_guidance_only",

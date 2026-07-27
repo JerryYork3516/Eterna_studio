@@ -25,6 +25,7 @@ import {
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
   mergeAvailableModuleReferencePointers,
+  materializeLayer8BehaviorPolicy,
   migrateDialogueRuntimeProfileContentCopies,
   LINXUAN_RESIDENT_ID,
   migrateLinxuanFirstGreetingValue,
@@ -36,6 +37,7 @@ import {
   preserveStoredModuleNodePosition,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+  STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   type AvailableModuleReferenceSource,
 } from "./module-graph-merge";
 
@@ -50,6 +52,13 @@ const DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config";
 const EXPRESSION_STATE_GRAPH_ID = "layer_8::emotion_reaction";
 const PARTICLE_AVATAR_GRAPH_ID = "layer_10::particle_avatar";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
+const LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = new Set([
+  "language_habit",
+  "decision_pattern",
+  "interaction_strategy",
+  "behavior_habit",
+  "emotion_mapper",
+]);
 const CATALOG_GRAPH_REPLACE_MODULE_IDS = new Set([
   "memory_provider_router",
   "memory_access_control",
@@ -83,6 +92,7 @@ type Layer12ReferenceModuleConfig = {
 
 const SELF_AWARENESS_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSource, "source_node_ids">> = [
   { source_layer_id: "layer_1", source_module_id: "module_basic_identity", reference_type: "references" },
+  { source_layer_id: "layer_1", source_module_id: "module_existence_mode", reference_type: "references" },
   { source_layer_id: "layer_1", source_module_id: "module_identity_anchor", reference_type: "references" },
   { source_layer_id: "layer_2", source_module_id: "personality_traits", reference_type: "references" },
   { source_layer_id: "layer_2", source_module_id: "expression_style", reference_type: "references" },
@@ -93,6 +103,8 @@ const SELF_AWARENESS_REFERENCE_SOURCES: Array<Omit<AvailableModuleReferenceSourc
   { source_layer_id: "layer_3", source_module_id: "humanistic_risk_response_config_v0_1", reference_type: "constrains" },
   { source_layer_id: "layer_5", source_module_id: "memory_access_control", reference_type: "references" },
   { source_layer_id: "layer_5", source_module_id: "memory_update", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "environment_setting", reference_type: "references" },
+  { source_layer_id: "layer_7", source_module_id: "world_setting", reference_type: "references" },
   { source_layer_id: "layer_8", source_module_id: "decision_pattern", reference_type: "references" },
   { source_layer_id: "layer_8", source_module_id: "interaction_strategy", reference_type: "references" },
   { source_layer_id: "layer_9", source_module_id: "builtin_capability", reference_type: "references" },
@@ -1908,6 +1920,42 @@ function mergeLayer12ReferenceSeed(
           }
         }
       }
+      if (
+        config.moduleId === "self_awareness" &&
+        catalogNodeId === config.referenceInputNodeId
+      ) {
+        const existingIndex = nextNodes.findIndex(
+          (node) => graphNodeId(node) === existingNodeId
+        );
+        if (existingIndex >= 0) {
+          const nextNode = cloneJson(nextNodes[existingIndex]) as WorkflowNode;
+          const schemaNode = schemaNodeRecord(nextNode);
+          const seedSchemaNode = schemaNodeRecord(seedNode);
+          if (schemaNode && seedSchemaNode) {
+            const data = schemaDataRecord(schemaNode);
+            const seedData = schemaDataRecord(seedSchemaNode);
+            const params = isRecord(data.params) ? { ...data.params } : {};
+            const seedParams = isRecord(seedData.params)
+              ? seedData.params
+              : {};
+            if (
+              params.content_revision !==
+              STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION
+            ) {
+              data.params = {
+                ...params,
+                fact_source_bindings: cloneJson(
+                  seedParams.fact_source_bindings
+                ),
+                content_revision:
+                  STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
+              };
+              nextNodes[existingIndex] = nextNode;
+              changed = true;
+            }
+          }
+        }
+      }
       continue;
     }
     const nextNode = cloneJson(seedNode) as WorkflowNode;
@@ -2056,6 +2104,8 @@ function migrateDialogueRuntimeProfileContentSeed(
   const migration = migrateDialogueRuntimeProfileContentCopies(
     {
       profileContentRevision: params.profile_content_revision,
+      identityCleanupRevision:
+        params.source_output_identity_cleanup_revision,
       fields: Array.isArray(params.fields) ? params.fields.filter(isRecord) : undefined,
       dataFields: Array.isArray(inputData.fields) ? inputData.fields.filter(isRecord) : undefined,
       legacyFields: Array.isArray(params.legacy_fields)
@@ -2068,6 +2118,8 @@ function migrateDialogueRuntimeProfileContentSeed(
     },
     {
       profileContentRevision: seedParams.profile_content_revision,
+      identityCleanupRevision:
+        seedParams.source_output_identity_cleanup_revision,
       fields: Array.isArray(seedParams.fields) ? seedParams.fields.filter(isRecord) : undefined,
       output: seedProfileOutput,
     }
@@ -2077,6 +2129,8 @@ function migrateDialogueRuntimeProfileContentSeed(
   }
 
   params.profile_content_revision = migration.value.profileContentRevision;
+  params.source_output_identity_cleanup_revision =
+    migration.value.identityCleanupRevision;
   if (migration.value.fields) params.fields = cloneJson(migration.value.fields);
   if (migration.value.legacyFields) {
     params.legacy_fields = cloneJson(migration.value.legacyFields);
@@ -2142,6 +2196,336 @@ function migrateParticleExpressionRelativeMappingSeed(
   };
 }
 
+function layer8BehaviorFieldReferences(
+  nodes: WorkflowNode[]
+): Record<string, unknown>[] {
+  const references = new Map<string, Record<string, unknown>>();
+  for (const node of nodes) {
+    const nodeType = graphNodeTypeFromGraphNode(node);
+    if (nodeType !== "field_reference" && nodeType !== "reference_input") {
+      continue;
+    }
+    const schemaNode = schemaNodeRecord(node);
+    if (!schemaNode) continue;
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? data.params : {};
+    const outputs = isRecord(data.outputs) ? data.outputs : {};
+    const outputReferences = Array.isArray(outputs.field_references)
+      ? outputs.field_references
+      : [];
+    const declaredReferences = Array.isArray(params.references)
+      ? params.references
+      : [];
+    const recommendedReferences = Array.isArray(
+      params.recommended_references
+    )
+      ? params.recommended_references
+      : [];
+    const currentReferences = (
+      outputReferences.length
+        ? outputReferences
+        : declaredReferences.length
+          ? declaredReferences
+          : recommendedReferences
+    ).filter(isRecord);
+    for (const reference of currentReferences) {
+      if (reference.reference_type === "forbidden") continue;
+      const layerId = String(
+        reference.layer_id || reference.source_layer_id || ""
+      );
+      const moduleId = String(
+        reference.module_id || reference.source_module_id || ""
+      );
+      const fieldId = String(
+        reference.field_id || reference.source_node_id || ""
+      );
+      if (!layerId || !moduleId || !fieldId) continue;
+      const normalized = {
+        reference_id: String(reference.reference_id || ""),
+        reference_type: String(
+          reference.reference_type || "optional"
+        ),
+        layer_id: layerId,
+        module_id: moduleId,
+        field_id: fieldId,
+        path: String(
+          reference.path ||
+            [layerId, moduleId, fieldId].filter(Boolean).join("/")
+        ),
+        usage: String(reference.usage || ""),
+        usage_key: String(reference.usage_key || ""),
+      };
+      references.set(
+        String(normalized.path || normalized.reference_id),
+        normalized
+      );
+    }
+  }
+  return [...references.values()];
+}
+
+function materializeLayer8BehaviorOutput(
+  nodes: WorkflowNode[],
+  seedOutputNode: WorkflowNode
+): { outputKey: string; value: Record<string, unknown> } | null {
+  const seedSchemaNode = schemaNodeRecord(seedOutputNode);
+  if (!seedSchemaNode) return null;
+  const seedData = schemaDataRecord(seedSchemaNode);
+  const seedParams = isRecord(seedData.params) ? seedData.params : {};
+  const seedOutputs = isRecord(seedData.outputs) ? seedData.outputs : {};
+  const outputKey = String(
+    seedParams.output_key ||
+      Object.keys(seedOutputs).find(
+        (key) => key !== "module_output" && isRecord(seedOutputs[key])
+      ) ||
+      ""
+  );
+  const seedValue = isRecord(seedOutputs[outputKey])
+    ? seedOutputs[outputKey]
+    : null;
+  if (!outputKey || !seedValue) return null;
+
+  const textConfigs = [];
+  for (const node of nodes) {
+    if (graphNodeTypeFromGraphNode(node) !== "text_config") continue;
+    const schemaNode = schemaNodeRecord(node);
+    if (!schemaNode) continue;
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? data.params : {};
+    const checkbox = Object.prototype.hasOwnProperty.call(
+      params,
+      "checkbox_config"
+    )
+      ? isRecord(params.checkbox_config)
+        ? params.checkbox_config
+        : {}
+      : isRecord(params.checklist_config)
+        ? params.checklist_config
+        : {};
+    textConfigs.push({
+      nodeId: catalogNodeIdFromGraphNode(node),
+      checkboxConfig: checkbox,
+    });
+  }
+
+  return {
+    outputKey,
+    value: materializeLayer8BehaviorPolicy(
+      seedValue,
+      textConfigs,
+      layer8BehaviorFieldReferences(nodes),
+      nodes
+        .filter(
+          (node) =>
+            !["module_output", "reference_output"].includes(
+              graphNodeTypeFromGraphNode(node)
+            )
+        )
+        .map(graphNodeId)
+        .filter(Boolean)
+    ),
+  };
+}
+
+function mergeLayer8MaterializedOutputSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  const moduleId = catalogModuleIdFromSeed(initialNodes);
+  if (
+    !LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS.has(moduleId) ||
+    !initialNodes?.length
+  ) {
+    return null;
+  }
+
+  const seedNodes = initialNodes.filter((node) => {
+    const nodeType = graphNodeTypeFromGraphNode(node);
+    return nodeType === "module_output" || nodeType === "reference_output";
+  });
+  if (seedNodes.length !== 2) {
+    return null;
+  }
+
+  const nextNodes = [...graph.nodes];
+  let changed = false;
+  for (const seedNode of seedNodes) {
+    const seedCatalogNodeId = catalogNodeIdFromGraphNode(seedNode);
+    const seedNodeType = graphNodeTypeFromGraphNode(seedNode);
+    const existingIndex = nextNodes.findIndex(
+      (node) =>
+        catalogNodeIdFromGraphNode(node) === seedCatalogNodeId ||
+        graphNodeTypeFromGraphNode(node) === seedNodeType
+    );
+    if (existingIndex < 0) {
+      nextNodes.push(cloneJson(seedNode) as WorkflowNode);
+      changed = true;
+      continue;
+    }
+
+    const nextNode = cloneJson(nextNodes[existingIndex]) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    const seedSchemaNode = schemaNodeRecord(seedNode);
+    if (!schemaNode || !seedSchemaNode) {
+      continue;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const seedData = schemaDataRecord(seedSchemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (
+      params.content_revision ===
+      STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION
+    ) {
+      continue;
+    }
+    const seedParams = isRecord(seedData.params) ? seedData.params : {};
+    const { input: _seedInput, ...derivedSeedParams } = seedParams;
+    data.params = {
+      ...params,
+      ...cloneJson(derivedSeedParams),
+      content_revision:
+        STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
+    };
+    data.outputs = cloneJson(
+      isRecord(seedData.outputs) ? seedData.outputs : {}
+    );
+    data.catalog_node_id = seedCatalogNodeId;
+    if (!isRecord(data.i18n_keys) && isRecord(seedData.i18n_keys)) {
+      data.i18n_keys = cloneJson(seedData.i18n_keys);
+    }
+    nextNodes[existingIndex] = nextNode;
+    changed = true;
+  }
+
+  const catalogToGraphId = new Map(
+    nextNodes
+      .map((node) => [
+        catalogNodeIdFromGraphNode(node),
+        graphNodeId(node),
+      ] as const)
+      .filter(([catalogNodeId, nodeId]) => catalogNodeId && nodeId)
+  );
+  for (const node of nextNodes) {
+    const nodeType = graphNodeTypeFromGraphNode(node);
+    if (nodeType !== "module_output" && nodeType !== "reference_output") {
+      continue;
+    }
+    const nextNode = cloneJson(node) as WorkflowNode;
+    const schemaNode = schemaNodeRecord(nextNode);
+    if (!schemaNode) {
+      continue;
+    }
+    const data = schemaDataRecord(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    const seedNode = seedNodes.find(
+      (candidate) =>
+        graphNodeTypeFromGraphNode(candidate) === nodeType
+    );
+    const seedSchemaNode = seedNode && schemaNodeRecord(seedNode);
+    const seedParams =
+      seedSchemaNode && isRecord(schemaDataRecord(seedSchemaNode).params)
+        ? schemaDataRecord(seedSchemaNode).params as Record<string, unknown>
+        : {};
+    const inputCatalogNodeId = normalizeCatalogNodeId(seedParams.input);
+    const actualInputNodeId = catalogToGraphId.get(inputCatalogNodeId);
+    if (actualInputNodeId && params.input !== actualInputNodeId) {
+      params.input = actualInputNodeId;
+      data.params = params;
+      const nodeIndex = nextNodes.findIndex(
+        (candidate) => graphNodeId(candidate) === graphNodeId(node)
+      );
+      if (nodeIndex >= 0) {
+        nextNodes[nodeIndex] = nextNode;
+        changed = true;
+      }
+    }
+  }
+
+  const seedOutputNode = seedNodes.find(
+    (node) => graphNodeTypeFromGraphNode(node) === "module_output"
+  );
+  const materialized =
+    seedOutputNode &&
+    materializeLayer8BehaviorOutput(nextNodes, seedOutputNode);
+  if (materialized) {
+    for (let index = 0; index < nextNodes.length; index += 1) {
+      const nodeType = graphNodeTypeFromGraphNode(nextNodes[index]);
+      if (nodeType !== "module_output" && nodeType !== "reference_output") {
+        continue;
+      }
+      const nextNode = cloneJson(nextNodes[index]) as WorkflowNode;
+      const schemaNode = schemaNodeRecord(nextNode);
+      if (!schemaNode) continue;
+      const data = schemaDataRecord(schemaNode);
+      const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+      const nextOutput = cloneJson(materialized.value);
+      if (
+        stableJson(outputs[materialized.outputKey]) !==
+        stableJson(nextOutput)
+      ) {
+        outputs[materialized.outputKey] = nextOutput;
+        data.outputs = outputs;
+        nextNodes[index] = nextNode;
+        changed = true;
+      }
+    }
+  }
+
+  const seedNodeIdMap = nodeIdToCatalogNodeId(initialNodes);
+  const nextEdges = [...graph.edges];
+  const existingPairs = new Set(
+    nextEdges.map(
+      (edge) => `${edgeEndpoint(edge, "source")}=>${edgeEndpoint(edge, "target")}`
+    )
+  );
+  for (const seedEdge of initialEdges ?? []) {
+    const seedSource = edgeEndpoint(seedEdge, "source");
+    const seedTarget = edgeEndpoint(seedEdge, "target");
+    const sourceCatalogId = catalogNodeIdFromEndpoint(
+      seedSource,
+      seedNodeIdMap
+    );
+    const targetCatalogId = catalogNodeIdFromEndpoint(
+      seedTarget,
+      seedNodeIdMap
+    );
+    const sourceNodeId = catalogToGraphId.get(sourceCatalogId);
+    const targetNodeId = catalogToGraphId.get(targetCatalogId);
+    if (!sourceNodeId || !targetNodeId) {
+      continue;
+    }
+    const touchesMaterializedOutput = seedNodes.some((node) => {
+      const catalogNodeId = catalogNodeIdFromGraphNode(node);
+      return (
+        catalogNodeId === sourceCatalogId || catalogNodeId === targetCatalogId
+      );
+    });
+    const pair = `${sourceNodeId}=>${targetNodeId}`;
+    if (!touchesMaterializedOutput || existingPairs.has(pair)) {
+      continue;
+    }
+    const nextEdge = cloneJson(seedEdge) as WorkflowEdge;
+    const edgeRecord = nextEdge as unknown as Record<string, unknown>;
+    edgeRecord.source = sourceNodeId;
+    edgeRecord.target = targetNodeId;
+    if ("source_node_id" in edgeRecord) {
+      edgeRecord.source_node_id = sourceNodeId;
+    }
+    if ("target_node_id" in edgeRecord) {
+      edgeRecord.target_node_id = targetNodeId;
+    }
+    if ("edge_id" in edgeRecord) {
+      edgeRecord.edge_id = `${sourceNodeId}_to_${targetNodeId}`;
+    }
+    nextEdges.push(nextEdge);
+    existingPairs.add(pair);
+    changed = true;
+  }
+
+  return changed ? { ...graph, nodes: nextNodes, edges: nextEdges } : null;
+}
+
 function mergeCatalogSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
@@ -2155,18 +2539,25 @@ function mergeCatalogSeed(
     initialEdges
   );
   const graphAfterParticleMigration = particleMigrated ?? graphAfterExpressionMigration;
-  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(
+  const layer8OutputMerged = mergeLayer8MaterializedOutputSeed(
     graphAfterParticleMigration,
+    initialNodes,
+    initialEdges
+  );
+  const graphAfterLayer8OutputMerge =
+    layer8OutputMerged ?? graphAfterParticleMigration;
+  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(
+    graphAfterLayer8OutputMerge,
     initialNodes
   );
   const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
-    dialogueReferenceMerged ?? graphAfterParticleMigration,
+    dialogueReferenceMerged ?? graphAfterLayer8OutputMerge,
     initialNodes
   );
   const graphAfterDialogueMerge =
     dialogueContentMigrated ??
     dialogueReferenceMerged ??
-    graphAfterParticleMigration;
+    graphAfterLayer8OutputMerge;
   const referenceMerged = mergeLayer12ReferenceSeed(graphAfterDialogueMerge, initialNodes, initialEdges);
   const graphAfterReferenceMerge = referenceMerged ?? graphAfterDialogueMerge;
   const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
@@ -2179,6 +2570,7 @@ function mergeCatalogSeed(
     referenceMerged ??
     dialogueContentMigrated ??
     dialogueReferenceMerged ??
+    layer8OutputMerged ??
     particleMigrated ??
     expressionMigrated
   );

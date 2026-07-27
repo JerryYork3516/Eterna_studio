@@ -513,7 +513,7 @@ def test_layer_8_profile_and_runtime_few_shots_do_not_embed_resident_name():
         Path(__file__).parents[1]
         / "app"
         / "registry"
-        / "dialogue_runtime_profile_resident_0001.json"
+        / "dialogue_runtime_profile.json"
     )
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     projection = _projection(_compile(_catalog_modules()))
@@ -551,6 +551,9 @@ def test_dialogue_runtime_profile_catalog_declares_current_content_revision():
     assert config_input["params"]["profile_content_revision"] == (
         "stage7_4_10_few_shot_resident_name_decoupling_v1"
     )
+    assert config_input["params"][
+        "source_output_identity_cleanup_revision"
+    ] == "stage7_4_12_a2_source_output_identity_cleanup_v1"
 
 
 def test_source_metadata_is_additive_to_the_frozen_projection_digest():

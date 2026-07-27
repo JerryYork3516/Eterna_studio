@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..models.v0_4 import (
     CANONICAL_LAYERS,
+    empty_layer_design_metadata,
     EngineRegistryResponseV04,
     LayerRefV04,
     ModuleCatalogResponseV04,
@@ -50,7 +51,15 @@ router = APIRouter(prefix="/protocol", tags=["protocol-v0.4"])
 
 
 def _canonical_layer_refs() -> List[LayerRefV04]:
-    return [LayerRefV04(layer_id=lid, layer_name=name, layer_order=order) for lid, name, order in CANONICAL_LAYERS]
+    return [
+        LayerRefV04(
+            layer_id=lid,
+            layer_name=name,
+            layer_order=order,
+            metadata=empty_layer_design_metadata(lid),
+        )
+        for lid, name, order in CANONICAL_LAYERS
+    ]
 
 
 @router.get("/layers", response_model=List[LayerRefV04])

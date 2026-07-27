@@ -279,6 +279,57 @@ def particle_relative_mapping_source_value(
     return False, None
 
 
+def particle_transition_rule_source_value(
+    module: Dict[str, Any], field_key: str
+) -> tuple[bool, Any, str]:
+    """Resolve one transition rule from Layer 10 before protocol fallback."""
+
+    graph = _as_dict(module.get("module_graph"))
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    transition_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and _node_id(node) == PARTICLE_AVATAR_NODE_IDS["state_transition"]
+        ),
+        {},
+    )
+    transition_params = _as_dict(transition_node.get("params"))
+    if field_key in transition_params:
+        return True, deepcopy(transition_params[field_key]), "current_node"
+
+    module_config = _as_dict(module.get("config"))
+    normalized_transition = _as_dict(module_config.get("transition_rules"))
+    if field_key in normalized_transition:
+        return (
+            True,
+            deepcopy(normalized_transition[field_key]),
+            "structured_config",
+        )
+
+    module_outputs = _as_dict(module.get("outputs"))
+    module_output = _as_dict(module_outputs.get(PARTICLE_AVATAR_OUTPUT_KEY))
+    output_transition = _as_dict(module_output.get("transition_rules"))
+    if field_key in output_transition:
+        return True, deepcopy(output_transition[field_key]), "module_output"
+
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") != "module_output":
+            continue
+        node_output = _as_dict(
+            _as_dict(node.get("outputs")).get(PARTICLE_AVATAR_OUTPUT_KEY)
+        )
+        mirror_transition = _as_dict(node_output.get("transition_rules"))
+        if field_key in mirror_transition:
+            return (
+                True,
+                deepcopy(mirror_transition[field_key]),
+                "compatibility_mirror",
+            )
+    return False, None, "protocol_default"
+
+
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -457,12 +508,13 @@ def build_visual_expression_mapping(
                 clamped_paths.add(path)
         particle_core_mapping[state] = projected_state
 
-    transition_rules = _as_dict(a2_output.get("transition_rules"))
-
     def transition_number(field_key: str) -> float:
         path = f"visual_expression_mapping.transition_policy.{field_key}"
         fallback = float(VISUAL_EXPRESSION_TRANSITION_DEFAULTS[field_key])
-        parsed = _number(transition_rules.get(field_key))
+        found, raw_value, _source = particle_transition_rule_source_value(
+            a2, field_key
+        )
+        parsed = _number(raw_value) if found else None
         if parsed is None:
             defaulted_paths.add(path)
             return fallback
@@ -471,25 +523,55 @@ def build_visual_expression_mapping(
             clamped_paths.add(path)
         return bounded
 
-    transition_style = transition_rules.get("transition_style")
+    _style_found, transition_style, _style_source = (
+        particle_transition_rule_source_value(a2, "transition_style")
+    )
     if transition_style != "smooth":
         transition_style = "smooth"
         defaulted_paths.add(
             "visual_expression_mapping.transition_policy.transition_style"
         )
-    repeat_same_state = transition_rules.get("same_state_retriggers_transition")
+    _repeat_found, repeat_same_state, _repeat_source = (
+        particle_transition_rule_source_value(
+            a2, "same_state_retriggers_transition"
+        )
+    )
     if not isinstance(repeat_same_state, bool):
         repeat_same_state = False
         defaulted_paths.add(
             "visual_expression_mapping.transition_policy.repeat_same_state_restarts_transition"
         )
-    continue_from_current = transition_rules.get(
-        "new_state_continues_from_current_visual"
+    _continue_found, continue_from_current, _continue_source = (
+        particle_transition_rule_source_value(
+            a2, "new_state_continues_from_current_visual"
+        )
     )
     if not isinstance(continue_from_current, bool):
         continue_from_current = True
         defaulted_paths.add(
             "visual_expression_mapping.transition_policy.continue_from_current_visual_value"
+        )
+
+    def transition_bool(field_key: str) -> bool:
+        path = f"visual_expression_mapping.transition_policy.{field_key}"
+        fallback = bool(VISUAL_EXPRESSION_TRANSITION_DEFAULTS[field_key])
+        found, value, _source = particle_transition_rule_source_value(
+            a2, field_key
+        )
+        if not found or not isinstance(value, bool):
+            defaulted_paths.add(path)
+            return fallback
+        return value
+
+    found_executor, transition_executor, _executor_source = (
+        particle_transition_rule_source_value(a2, "transition_executor")
+    )
+    if not found_executor or transition_executor != "aftelle":
+        transition_executor = str(
+            VISUAL_EXPRESSION_TRANSITION_DEFAULTS["transition_executor"]
+        )
+        defaulted_paths.add(
+            "visual_expression_mapping.transition_policy.transition_executor"
         )
 
     lifecycle = _as_dict(a2_output.get("lifecycle_priority"))
@@ -549,18 +631,12 @@ def build_visual_expression_mapping(
             "repeat_same_state_restarts_transition": repeat_same_state,
             "continue_from_current_visual_value": continue_from_current,
             "uses_accumulated_idle_time_as_progress": (
-                VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
-                    "uses_accumulated_idle_time_as_progress"
-                ]
+                transition_bool("uses_accumulated_idle_time_as_progress")
             ),
             "minimum_hold_prevents_flicker": (
-                VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
-                    "minimum_hold_prevents_flicker"
-                ]
+                transition_bool("minimum_hold_prevents_flicker")
             ),
-            "transition_executor": VISUAL_EXPRESSION_TRANSITION_DEFAULTS[
-                "transition_executor"
-            ],
+            "transition_executor": transition_executor,
         },
         "lifecycle_priority": {
             "override_states": override_states,

@@ -11,6 +11,7 @@ from app.registry.module_catalog import get_module_catalog
 from app.services import daily_companion_runtime
 from app.services.dr_compiler import (
     compile_dr_result_v0_3,
+    dialogue_runtime_profile_id,
     mock_load_dr_v0_3,
     serialize_dr_v0_3,
 )
@@ -29,11 +30,12 @@ EMOTIONAL_SCENE_IDS = [
     "high_risk_safety_signal",
 ]
 
-DAILY_SCENE_DIGEST = "cc8ff61d18e8ffad55b3d6de56f015efd67b09c55bfeb70bda65d17c21ab6030"
-DAILY_FEW_SHOT_DIGEST = "d214710dcc05cf604f10a241b9048c0a0e52675d0605270ca754306c478c7591"
-BEHAVIOR_POLICY_DIGEST = "a9726cd780db581be25d5747ed13ecf351368a7a2a2c7c4447849e5029bc9bc6"
-LEGACY_PROJECTION_DIGEST = "a6b7b9c621e2de7d1c7ee7f7eb3010c877e2ccc4ae1602388323086ae3c2ce44"
-PROFILE_ID = "dialogue_profile_resident_0001_v0_1"
+DAILY_SCENE_DIGEST = "460894a20e93a727d3e80c8afca4c52714e01ab68b10394c36630ac6e7e90c79"
+DAILY_FEW_SHOT_DIGEST = "9203048dc76db5fd821597127dce142152feb55dcdc4362f6bfd84d4c9e1e5f3"
+BEHAVIOR_POLICY_DIGEST = "1d459d3b4890e1c8dd58f8cf59e06297daae8de42ea42f475fee70503794404f"
+LEGACY_PROJECTION_DIGEST = "54b738d041a9e1437be5c73e2c442f2601cfdbee947423a5260124282e92e201"
+PROFILE_SEED_ID = "dialogue_profile_resident_v0_1"
+PROFILE_ID = dialogue_runtime_profile_id("stage_7_4_10_emotional_dialogue")
 TEMPLATE_ID = "humanistic_companion_v0_1"
 
 
@@ -137,20 +139,33 @@ def _legacy_profile_modules() -> list[dict]:
     return modules
 
 
-def test_stage7_4_9_daily_baseline_is_byte_stable_and_legacy_profile_stays_compatible():
+def test_stage7_4_9_daily_semantics_stay_stable_and_legacy_profile_stays_compatible():
     current = _compile(_modules())
     projection = current["payload"]["runtime_dialogue_projection"]
 
     assert _digest(current["payload"]["behavior_policy"]) == BEHAVIOR_POLICY_DIGEST
-    assert _digest(projection["scenarios"]) == DAILY_SCENE_DIGEST
-    assert _digest(projection["few_shot_examples"]) == DAILY_FEW_SHOT_DIGEST
+    assert (
+        _digest(_without_profile_source_id(projection["scenarios"]))
+        == DAILY_SCENE_DIGEST
+    )
+    assert (
+        _digest(
+            _without_profile_source_id(
+                projection["few_shot_examples"]
+            )
+        )
+        == DAILY_FEW_SHOT_DIGEST
+    )
     assert current["manifest"]["required_capabilities"] == ["llm", "memory", "lattice"]
 
     legacy = _compile(_legacy_profile_modules())
     legacy_projection = legacy["payload"]["runtime_dialogue_projection"]
     assert len(legacy_projection) == 28
     assert "emotional_dialogue" not in legacy_projection
-    assert _digest(legacy_projection) == LEGACY_PROJECTION_DIGEST
+    assert (
+        _digest(_without_profile_source_id(legacy_projection))
+        == LEGACY_PROJECTION_DIGEST
+    )
     assert legacy["manifest"]["required_capabilities"] == current["manifest"][
         "required_capabilities"
     ]
@@ -166,7 +181,7 @@ def test_neutral_profile_id_is_consistent_and_only_changes_projection_provenance
     projection = _compile(modules)["payload"]["runtime_dialogue_projection"]
     emotional = projection["emotional_dialogue"]
 
-    assert profile_fields["profile_id"] == PROFILE_ID
+    assert profile_fields["profile_id"] == PROFILE_SEED_ID
     assert profile_fields["template_id"] == TEMPLATE_ID
     assert all(scene["source_trace"]["source_id"] == PROFILE_ID for scene in projection["scenarios"])
     assert all(example["source_id"] == PROFILE_ID for example in projection["few_shot_examples"])
@@ -224,7 +239,7 @@ def test_all_emotional_examples_have_resident_source_metadata_without_system_ins
     examples = emotional["few_shot_examples"] + emotional["negative_examples"]
     expected_source = {
         "source_scope": "resident_profile",
-        "source_id": "dialogue_profile_resident_0001_v0_1",
+        "source_id": PROFILE_ID,
         "source_layer": "layer_8",
         "template_id": "humanistic_companion_v0_1",
         "override_source": "dialogue_runtime_profile",
@@ -415,19 +430,30 @@ def test_emotional_domain_fails_closed_when_any_new_authority_edge_is_missing():
 
 def test_second_resident_needs_config_change_only():
     modules = deepcopy(_modules())
+    identity_module = next(
+        module
+        for module in modules
+        if module["module_id"] == "module_basic_identity"
+    )
+    identity_input = next(
+        node
+        for node in identity_module["module_graph"]["nodes"]
+        if node["node_id"] == "basic_identity_field_input"
+    )
+    resident_id_field = next(
+        field
+        for field in identity_input["params"]["fields"]
+        if field.get("field_id") == "resident_id"
+    )
+    resident_id_field["value"] = "resident_b"
     module = _profile_module(modules)
-    for field in _profile_fields(module):
-        value_key = "field_value" if "field_value" in field else "value"
-        field[value_key] = _replace_text(
-            field[value_key], "dialogue_profile_resident_0001_v0_1", "resident_b_companion_v0_1"
-        )
     emotional_field = _profile_field(module, "emotional_dialogue")
     value_key = "field_value" if "field_value" in emotional_field else "value"
     emotional_field[value_key]["system_instruction_addendum"] += " 第二居民通过自身配置提供这一覆盖。"
 
     projection = _compile(modules)["payload"]["runtime_dialogue_projection"]
     assert projection["emotional_dialogue"]["source_trace"]["source_id"] == (
-        "resident_b_companion_v0_1"
+        dialogue_runtime_profile_id("resident_b")
     )
     assert "第二居民通过自身配置" in projection["system_instruction"]
     runtime_source = Path(daily_companion_runtime.__file__).read_text(encoding="utf-8")

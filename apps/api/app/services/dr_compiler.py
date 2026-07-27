@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import math
 import re
@@ -62,9 +63,11 @@ from ..dr.v3.dr_v0_3_schema import (
 from ..models.v0_4 import (
     CANONICAL_LAYERS,
     CANONICAL_LAYER_IDS,
+    empty_layer_design_metadata,
     PROTOCOL_VERSION_V0_4,
     SCHEMA_VERSION_V0_4,
     SlotType,
+    STAGE7_4_12_A2_CONTENT_REVISION,
 )
 from ..registry.engine_registry import get_engine_registry
 from ..registry.module_catalog import (
@@ -87,16 +90,22 @@ from ..registry.module_catalog import (
     RISK_RESPONSE_MODULE_ID,
     RISK_RESPONSE_NODE_IDS,
     SAFE_REDIRECT_POLICY_OUTPUT_KEY,
+    SELF_AWARENESS_FACT_SOURCE_BINDINGS,
     get_module_catalog,
     LANGUAGE_BEHAVIOR_MODULE_ID,
+    LANGUAGE_BEHAVIOR_OUTPUT_KEY,
     LANGUAGE_BEHAVIOR_PRESET_ID,
     INTERACTION_BEHAVIOR_MODULE_ID,
+    INTERACTION_BEHAVIOR_OUTPUT_KEY,
     INTERACTION_BEHAVIOR_PRESET_ID,
     TASK_BEHAVIOR_MODULE_ID,
+    TASK_BEHAVIOR_OUTPUT_KEY,
     TASK_BEHAVIOR_PRESET_ID,
     SOCIAL_BEHAVIOR_MODULE_ID,
+    SOCIAL_BEHAVIOR_OUTPUT_KEY,
     SOCIAL_BEHAVIOR_PRESET_ID,
     DECISION_BEHAVIOR_MODULE_ID,
+    DECISION_BEHAVIOR_OUTPUT_KEY,
     DECISION_BEHAVIOR_PRESET_ID,
     DETAIL_BEHAVIOR_MODULE_ID,
     DETAIL_BEHAVIOR_OUTPUT_KEY,
@@ -147,6 +156,7 @@ from .visual_expression_projection import (
     normalize_expression_state,
     normalize_visual_expression_mapping,
     particle_relative_mapping_source_value,
+    particle_transition_rule_source_value,
     valid_visual_base_color,
 )
 
@@ -306,6 +316,41 @@ _LAYER8_BEHAVIOR_MODULES: tuple[tuple[str, str, str], ...] = (
     (DETAIL_BEHAVIOR_MODULE_ID, "detail_behavior", DETAIL_BEHAVIOR_PRESET_ID),
 )
 _LAYER8_CORE_BEHAVIOR_MODULE_IDS = tuple(module_id for module_id, _policy_key, _preset_id in _LAYER8_BEHAVIOR_MODULES)
+_LAYER8_MATERIALIZED_OUTPUTS = (
+    (
+        LANGUAGE_BEHAVIOR_MODULE_ID,
+        "language_behavior",
+        LANGUAGE_BEHAVIOR_PRESET_ID,
+        LANGUAGE_BEHAVIOR_OUTPUT_KEY,
+    ),
+    (
+        INTERACTION_BEHAVIOR_MODULE_ID,
+        "interaction_behavior",
+        INTERACTION_BEHAVIOR_PRESET_ID,
+        INTERACTION_BEHAVIOR_OUTPUT_KEY,
+    ),
+    (
+        TASK_BEHAVIOR_MODULE_ID,
+        "task_behavior",
+        TASK_BEHAVIOR_PRESET_ID,
+        TASK_BEHAVIOR_OUTPUT_KEY,
+    ),
+    (
+        SOCIAL_BEHAVIOR_MODULE_ID,
+        "social_behavior",
+        SOCIAL_BEHAVIOR_PRESET_ID,
+        SOCIAL_BEHAVIOR_OUTPUT_KEY,
+    ),
+    (
+        DECISION_BEHAVIOR_MODULE_ID,
+        "decision_behavior",
+        DECISION_BEHAVIOR_PRESET_ID,
+        DECISION_BEHAVIOR_OUTPUT_KEY,
+    ),
+)
+_LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = frozenset(
+    item[0] for item in _LAYER8_MATERIALIZED_OUTPUTS
+)
 _LAYER8_OPTIONAL_DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_runtime_profile"
 _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
 _REFERENCE_FIELD_ALIASES = {
@@ -704,6 +749,22 @@ def _canonical_reference_source_node_id(
     source_node_id = _nonempty_str(reference.get("source_node_id"))
     if not source_node_id:
         return ""
+    source_module_id = _nonempty_str(source_module.get("module_id"))
+    if (
+        source_module_id in _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
+        and (_nonempty_str(reference.get("source_scope")) or "module")
+        == "module"
+        and not reference.get("source_field_path")
+        and not reference.get("source_field_paths")
+    ):
+        reference_outputs = [
+            _module_graph_node_id(node)
+            for node in _module_graph_nodes(source_module)
+            if node.get("node_type") == "reference_output"
+            and _module_graph_node_id(node)
+        ]
+        if len(reference_outputs) == 1:
+            return reference_outputs[0]
     node_ids = {_module_graph_node_id(node) for node in _module_graph_nodes(source_module)}
     node_ids.discard("")
     if source_node_id in node_ids:
@@ -1943,7 +2004,9 @@ def _module_nodes_by_type(module: Dict[str, Any], node_type: str) -> List[Dict[s
 
 def _checkbox_config_from_node(node: Dict[str, Any]) -> Dict[str, Any]:
     params = _as_dict(node.get("params"))
-    return _as_dict(params.get("checkbox_config") or params.get("checklist_config"))
+    if "checkbox_config" in params:
+        return _as_dict(params.get("checkbox_config"))
+    return _as_dict(params.get("checklist_config"))
 
 
 def _behavior_reference_payload(reference: Dict[str, Any]) -> Dict[str, Any]:
@@ -2045,7 +2108,13 @@ def _behavior_module_policy(module: Dict[str, Any], policy_key: str, default_pre
     source_nodes = [
         str(node.get("node_id"))
         for node in _module_graph_nodes(module)
-        if isinstance(node.get("node_id"), str) and node.get("node_id")
+        if (
+            module.get("module_id")
+            not in _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
+            or node.get("node_type") not in {"module_output", "reference_output"}
+        )
+        and isinstance(node.get("node_id"), str)
+        and node.get("node_id")
     ]
     return {
         "module_id": module.get("module_id"),
@@ -2297,6 +2366,346 @@ def _set_compiled_module_output(module: Dict[str, Any], output_key: str, value: 
             node["outputs"] = node_outputs
 
 
+def _ensure_layer8_materialized_output_nodes(
+    module: Dict[str, Any],
+    catalog_module: Dict[str, Any],
+) -> None:
+    """Add the one derived output chain missing from pre-A2 Canvas copies."""
+
+    graph = (
+        module.get("module_graph")
+        if isinstance(module.get("module_graph"), dict)
+        else {}
+    )
+    nodes = (
+        graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    )
+    seed_nodes = _module_graph_nodes(catalog_module)
+
+    for node_type in ("module_output", "reference_output"):
+        if any(
+            isinstance(node, dict) and node.get("node_type") == node_type
+            for node in nodes
+        ):
+            continue
+        seed_node = next(
+            (
+                node
+                for node in seed_nodes
+                if node.get("node_type") == node_type
+            ),
+            None,
+        )
+        if isinstance(seed_node, dict):
+            nodes.append(deepcopy(seed_node))
+
+    module_output_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and node.get("node_type") == "module_output"
+        ),
+        None,
+    )
+    reference_output_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and node.get("node_type") == "reference_output"
+        ),
+        None,
+    )
+    validation_node = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, dict)
+            and node.get("node_type") == "text_config"
+            and _module_graph_node_id(node).endswith("_validation")
+        ),
+        None,
+    )
+    if not all(
+        isinstance(node, dict)
+        for node in (validation_node, module_output_node, reference_output_node)
+    ):
+        graph["nodes"] = nodes
+        module["module_graph"] = graph
+        return
+
+    validation_node_id = _module_graph_node_id(validation_node)
+    module_output_node_id = _module_graph_node_id(module_output_node)
+    reference_output_node_id = _module_graph_node_id(reference_output_node)
+    for node, input_node_id in (
+        (module_output_node, validation_node_id),
+        (reference_output_node, module_output_node_id),
+    ):
+        params = (
+            node.get("params")
+            if isinstance(node.get("params"), dict)
+            else {}
+        )
+        params["input"] = input_node_id
+        params["content_revision"] = STAGE7_4_12_A2_CONTENT_REVISION
+        node["params"] = params
+
+    edges = (
+        graph.get("edges") if isinstance(graph.get("edges"), list) else []
+    )
+    existing_pairs = {
+        (
+            _nonempty_str(edge.get("source")),
+            _nonempty_str(edge.get("target")),
+        )
+        for edge in edges
+        if isinstance(edge, dict)
+    }
+    for source, target in (
+        (validation_node_id, module_output_node_id),
+        (module_output_node_id, reference_output_node_id),
+    ):
+        if (source, target) in existing_pairs:
+            continue
+        edges.append(
+            {
+                "edge_id": f"{source}_to_{target}",
+                "source": source,
+                "source_port": "p_out",
+                "target": target,
+                "target_port": "p_in",
+            }
+        )
+        existing_pairs.add((source, target))
+
+    graph["nodes"] = nodes
+    graph["edges"] = edges
+    graph["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["module_graph"] = graph
+    config = (
+        module.get("config") if isinstance(module.get("config"), dict) else {}
+    )
+    config["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["config"] = config
+
+
+def _synchronize_layer8_behavior_module_outputs(
+    collection: Dict[str, Any],
+) -> None:
+    """Mirror current Layer 8 checkbox rules into each source module output."""
+
+    modules = {
+        module.get("module_id"): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict)
+    }
+    catalog_modules = {
+        item.module_id: item.model_dump(mode="json")
+        for item in get_module_catalog()
+        if item.module_id in _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
+    }
+    for module_id, policy_key, preset_id, output_key in (
+        _LAYER8_MATERIALIZED_OUTPUTS
+    ):
+        module = modules.get(module_id)
+        if not isinstance(module, dict):
+            continue
+        catalog_module = catalog_modules.get(module_id)
+        if isinstance(catalog_module, dict):
+            _ensure_layer8_materialized_output_nodes(
+                module, catalog_module
+            )
+        output = _behavior_module_policy(module, policy_key, preset_id)
+        _set_compiled_module_output(module, output_key, output)
+        for node in _module_graph_nodes(module):
+            if node.get("node_type") != "reference_output":
+                continue
+            node_outputs = (
+                node.get("outputs")
+                if isinstance(node.get("outputs"), dict)
+                else {}
+            )
+            node_outputs[output_key] = deepcopy(output)
+            node["outputs"] = node_outputs
+
+
+def _meaningful_fact_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return True
+
+
+def _module_fact_source_value(
+    module: Dict[str, Any],
+    output_key: str,
+    field_key: str,
+) -> tuple[bool, Any, str]:
+    current_fields = _module_field_values_from_fields(
+        _module_fields_from_field_input(module)
+    )
+    current_value = current_fields.get(field_key)
+    if _meaningful_fact_value(current_value):
+        return True, deepcopy(current_value), "current_source_node"
+
+    config = _as_dict(module.get("config"))
+    for config_fields in (
+        _as_dict(config.get("field_values")),
+        _as_dict(_as_dict(config.get(output_key)).get("fields")),
+    ):
+        config_value = config_fields.get(field_key)
+        if _meaningful_fact_value(config_value):
+            return True, deepcopy(config_value), "source_structured_config"
+
+    node_output = _module_output_node_value(module, output_key)
+    node_fields = _as_dict(_as_dict(node_output).get("fields"))
+    node_value = node_fields.get(field_key)
+    if _meaningful_fact_value(node_value):
+        return True, deepcopy(node_value), "source_module_output"
+
+    module_output = _as_dict(_as_dict(module.get("outputs")).get(output_key))
+    mirror_value = _as_dict(module_output.get("fields")).get(field_key)
+    if _meaningful_fact_value(mirror_value):
+        return True, deepcopy(mirror_value), "compatibility_mirror"
+    return False, None, "safe_default"
+
+
+def _synchronize_self_awareness_fact_sources(
+    collection: Dict[str, Any],
+) -> None:
+    modules = {
+        module.get("module_id"): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict)
+    }
+    module = modules.get("self_awareness")
+    if not isinstance(module, dict):
+        return
+
+    output_key = "self_awareness_config"
+    output = _compiled_module_output(module, output_key)
+    for field in _module_fields_from_field_input(module):
+        field_key = _nonempty_str(
+            field.get("field_key") or field.get("field_id")
+        )
+        binding = SELF_AWARENESS_FACT_SOURCE_BINDINGS.get(field_key)
+        if not isinstance(binding, dict):
+            continue
+        field["value_role"] = "compatibility_fallback"
+        field["reference_enabled"] = True
+        field["source_binding"] = deepcopy(binding)
+        field["source_priority"] = [
+            "current_source_node",
+            "source_structured_config",
+            "source_module_output",
+            "compatibility_fallback",
+            "safe_default",
+        ]
+
+    for node in _module_graph_nodes(module):
+        if node.get("node_type") != "reference_input":
+            continue
+        params = (
+            node.get("params")
+            if isinstance(node.get("params"), dict)
+            else {}
+        )
+        params["fact_source_bindings"] = deepcopy(
+            SELF_AWARENESS_FACT_SOURCE_BINDINGS
+        )
+        params["content_revision"] = STAGE7_4_12_A2_CONTENT_REVISION
+        node["params"] = params
+
+    config = (
+        module.get("config") if isinstance(module.get("config"), dict) else {}
+    )
+    config["fact_source_bindings"] = deepcopy(
+        SELF_AWARENESS_FACT_SOURCE_BINDINGS
+    )
+    config["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["config"] = config
+    graph = (
+        module.get("module_graph")
+        if isinstance(module.get("module_graph"), dict)
+        else {}
+    )
+    graph["fact_source_bindings"] = deepcopy(
+        SELF_AWARENESS_FACT_SOURCE_BINDINGS
+    )
+    graph["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["module_graph"] = graph
+
+    compatibility_fields = _module_field_values_from_fields(
+        _module_fields_from_field_input(module)
+    )
+    if not compatibility_fields:
+        compatibility_fields = deepcopy(_as_dict(output.get("fields")))
+
+    resolved_facts: Dict[str, Any] = {}
+    resolved_sources: Dict[str, Any] = {}
+    for field_key, binding in SELF_AWARENESS_FACT_SOURCE_BINDINGS.items():
+        source_module_id = _nonempty_str(binding.get("source_module_id"))
+        source_output_key = _nonempty_str(binding.get("source_output_key"))
+        source_field_key = _nonempty_str(binding.get("source_field_key"))
+        source_module = modules.get(source_module_id)
+        found = False
+        value: Any = None
+        source_kind = "safe_default"
+        if isinstance(source_module, dict):
+            found, value, source_kind = _module_fact_source_value(
+                source_module,
+                source_output_key,
+                source_field_key,
+            )
+        if not found:
+            fallback = compatibility_fields.get(field_key)
+            if _meaningful_fact_value(fallback):
+                value = deepcopy(fallback)
+                source_kind = "compatibility_fallback"
+            else:
+                value = ""
+                source_kind = "safe_default"
+        resolved_facts[field_key] = value
+        resolved_sources[field_key] = {
+            **deepcopy(binding),
+            "selected_source": source_kind,
+            "used_compatibility_fallback": (
+                source_kind == "compatibility_fallback"
+            ),
+        }
+
+    output["fields"] = deepcopy(compatibility_fields)
+    output["resolved_facts"] = resolved_facts
+    output["resolved_fact_sources"] = resolved_sources
+    output["fact_source_policy"] = {
+        "priority": [
+            "current_source_node",
+            "source_structured_config",
+            "source_module_output",
+            "compatibility_fallback",
+            "safe_default",
+        ],
+        "authoritative_fact_path": "resolved_facts",
+        "compatibility_field_path": "fields",
+        "compatibility_fields_may_override_current_facts": False,
+        "bindings": deepcopy(SELF_AWARENESS_FACT_SOURCE_BINDINGS),
+    }
+    output["content_revision"] = STAGE7_4_12_A2_CONTENT_REVISION
+    _set_compiled_module_output(module, output_key, output)
+
+
 def _valid_first_greeting_variant(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
@@ -2414,6 +2823,13 @@ def _visual_style_reference_summary(
         if reference_id and reference.get("reference_id") != reference_id:
             reference["reference_id"] = reference_id
         source_module = modules_by_id.get(source_module_id)
+        if isinstance(source_module, dict):
+            canonical_source_node_id = _canonical_reference_source_node_id(
+                reference, source_module
+            )
+            if canonical_source_node_id:
+                reference["source_node_id"] = canonical_source_node_id
+                source_node_id = canonical_source_node_id
         resolved = bool(
             source_module is not None
             and source_module.get("layer_id") == source_layer_id
@@ -2664,6 +3080,19 @@ def _synchronize_expression_state_module_output(
         "expression_state": normalized_state,
         "expression_intensity": normalized_intensity,
     }
+    catalog_module = next(
+        (
+            candidate
+            for candidate in get_module_catalog()
+            if candidate.module_id == DETAIL_BEHAVIOR_MODULE_ID
+        ),
+        None,
+    )
+    if catalog_module is not None:
+        module["output_schema"] = [
+            field.model_dump(mode="json")
+            for field in catalog_module.output_schema
+        ]
     _set_compiled_module_output(module, DETAIL_BEHAVIOR_OUTPUT_KEY, output)
     _stamp_visual_validation_revision(module)
     return output
@@ -2855,7 +3284,15 @@ def _synchronize_particle_avatar_module_output(
         module.get("config") if isinstance(module.get("config"), dict) else {}
     )
     module_config["expression_relative_mapping"] = deepcopy(relative_config)
+    module_config["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
     module["config"] = module_config
+    module_graph = _as_dict(module.get("module_graph"))
+    module_graph["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["module_graph"] = module_graph
     for node in _module_graph_nodes(module):
         if (
             _module_graph_node_id(node)
@@ -2866,6 +3303,14 @@ def _synchronize_particle_avatar_module_output(
         params["state_mappings"] = deepcopy(state_mappings)
         node["params"] = params
 
+    transition_metadata_sources = {
+        field_key: particle_transition_rule_source_value(module, field_key)
+        for field_key in (
+            "uses_accumulated_idle_time_as_progress",
+            "minimum_hold_prevents_flicker",
+            "transition_executor",
+        )
+    }
     transition_rules = _as_dict(output.get("transition_rules"))
     catalog_transition_defaults = deepcopy(transition_rules)
     saved_transition_rules = _as_dict(saved_output.get("transition_rules"))
@@ -2910,7 +3355,50 @@ def _synchronize_particle_avatar_module_output(
     transition_rules["transition_style"] = "smooth"
     transition_rules["transition_style_options"] = ["smooth"]
     update_compiled_field("transition_style", "smooth")
+    for field_key, expected_type, fallback in (
+        (
+            "uses_accumulated_idle_time_as_progress",
+            bool,
+            False,
+        ),
+        (
+            "minimum_hold_prevents_flicker",
+            bool,
+            True,
+        ),
+    ):
+        found, value, _source = transition_metadata_sources[field_key]
+        if not found or not isinstance(value, expected_type):
+            value = fallback
+            normalized_paths.add(
+                f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}."
+                f"transition_rules.{field_key}"
+            )
+        transition_rules[field_key] = value
+    found_executor, transition_executor, _executor_source = (
+        transition_metadata_sources["transition_executor"]
+    )
+    if not found_executor or transition_executor != "aftelle":
+        transition_executor = "aftelle"
+        normalized_paths.add(
+            f"payload.modules.{PARTICLE_AVATAR_MODULE_ID}."
+            "transition_rules.transition_executor"
+        )
+    transition_rules["transition_executor"] = transition_executor
     output["transition_rules"] = transition_rules
+    module_config["transition_rules"] = deepcopy(transition_rules)
+    module["config"] = module_config
+    for node in _module_graph_nodes(module):
+        if (
+            _module_graph_node_id(node)
+            != PARTICLE_AVATAR_NODE_IDS["state_transition"]
+        ):
+            continue
+        params = (
+            node.get("params") if isinstance(node.get("params"), dict) else {}
+        )
+        params.update(deepcopy(transition_rules))
+        node["params"] = params
 
     _set_compiled_module_output(module, PARTICLE_AVATAR_OUTPUT_KEY, output)
     _stamp_visual_validation_revision(module)
@@ -3145,6 +3633,7 @@ def _synchronize_first_presence_module_output(
 
 def _synchronize_dialogue_runtime_profile_module_output(
     collection: Dict[str, Any],
+    resident_id: str,
 ) -> Optional[Dict[str, Any]]:
     """Mirror the saved optional profile fields before deriving the projection."""
 
@@ -3159,6 +3648,39 @@ def _synchronize_dialogue_runtime_profile_module_output(
     )
     if not isinstance(module, dict):
         return None
+    profile_id = dialogue_runtime_profile_id(resident_id)
+    _replace_dialogue_profile_identity(module, profile_id)
+    config = (
+        module.get("config") if isinstance(module.get("config"), dict) else {}
+    )
+    config["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["config"] = config
+    graph = (
+        module.get("module_graph")
+        if isinstance(module.get("module_graph"), dict)
+        else {}
+    )
+    graph["source_output_identity_cleanup_revision"] = (
+        STAGE7_4_12_A2_CONTENT_REVISION
+    )
+    module["module_graph"] = graph
+    for node in _module_graph_nodes(module):
+        if (
+            _module_graph_node_id(node)
+            != "dialogue_runtime_profile_config_input"
+        ):
+            continue
+        params = (
+            node.get("params")
+            if isinstance(node.get("params"), dict)
+            else {}
+        )
+        params["source_output_identity_cleanup_revision"] = (
+            STAGE7_4_12_A2_CONTENT_REVISION
+        )
+        node["params"] = params
     profile = extract_dialogue_runtime_profile(module, collection.get("modules"))
     if not isinstance(profile, dict):
         return None
@@ -3169,6 +3691,40 @@ def _synchronize_dialogue_runtime_profile_module_output(
     }
     _set_compiled_module_output(module, DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY, output)
     return profile
+
+
+def dialogue_runtime_profile_id(resident_id: str) -> str:
+    """Create a stable, non-identifying profile key from Layer 1 resident_id."""
+
+    source = resident_id.strip() if isinstance(resident_id, str) else ""
+    digest = sha256((source or "digital_resident").encode("utf-8")).hexdigest()[
+        :16
+    ]
+    return f"dialogue_profile_{digest}_v0_1"
+
+
+def _replace_dialogue_profile_identity(value: Any, profile_id: str) -> Any:
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            value[index] = _replace_dialogue_profile_identity(item, profile_id)
+        return value
+    if not isinstance(value, dict):
+        return value
+    source_scope = value.get("source_scope")
+    field_id = value.get("field_id") or value.get("field_key")
+    if field_id == "profile_id":
+        if "field_value" in value:
+            value["field_value"] = profile_id
+        if "value" in value:
+            value["value"] = profile_id
+    for key, item in list(value.items()):
+        if key == "profile_id":
+            value[key] = profile_id
+        elif key == "source_id" and source_scope == "resident_profile":
+            value[key] = profile_id
+        else:
+            value[key] = _replace_dialogue_profile_identity(item, profile_id)
+    return value
 
 
 def _memory_router_node_params(module: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -4243,7 +4799,7 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
     else:
         raw_modules = None
     if raw_modules is not None:
-        modules = [_as_dict(m) for m in raw_modules]
+        modules = [deepcopy(_as_dict(m)) for m in raw_modules]
     else:
         modules = [m.model_dump(mode="json") for m in get_module_catalog()]
         modules = [
@@ -4287,13 +4843,19 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
 
     layers: List[Dict[str, Any]] = []
     for layer_id, layer_name, layer_order in CANONICAL_LAYERS:
+        module_ids = modules_by_layer.get(layer_id, [])
+        # Layer 4/6/13 currently contain only protocol/catalog shells. Their
+        # explicit design state must survive those compatibility module ids so
+        # consumers do not mistake a shell for authored resident capability.
+        empty_design = empty_layer_design_metadata(layer_id)
         layers.append(
             {
                 "layer_id": layer_id,
                 "layer_name": layer_name,
                 "layer_order": layer_order,
-                "module_ids": modules_by_layer.get(layer_id, []),
+                "module_ids": module_ids,
                 "present": layer_id in present_layer_ids,
+                **empty_design,
             }
         )
 
@@ -5431,9 +5993,42 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             )
         )
     _synchronize_layer8_validation_results(collection, findings)
+    _synchronize_layer8_behavior_module_outputs(collection)
+    _synchronize_self_awareness_fact_sources(collection)
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
-    dialogue_runtime_profile = _synchronize_dialogue_runtime_profile_module_output(collection)
+    blueprint = assemble_blueprint(collection, resident_name=resident_name)
+    checked_at = _now_iso()
+    compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
+    resident = blueprint.get("resident", {})
+    if isinstance(resident, dict):
+        # v0.3 root metadata is authoritative for this formal compatibility
+        # alias. The frozen v0.1 compiler constant remains unchanged.
+        resident["dr_version"] = DR_VERSION_V0_3
+    resident_id = resident.get("resident_id") or _slugify(resident.get("name") or resident_name or "Digital Resident")
+    resident_name_final = resident.get("name") or resident_name or "Digital Resident"
+    basic_identity_module = next(
+        (
+            module
+            for module in collection.get("modules", [])
+            if isinstance(module, dict)
+            and module.get("module_id") == "module_basic_identity"
+        ),
+        {},
+    )
+    basic_identity_fields = _module_field_values_from_fields(
+        _module_fields_from_field_input(basic_identity_module)
+    )
+    configured_resident_id = _nonempty_str(
+        basic_identity_fields.get("resident_id")
+    )
+    if configured_resident_id:
+        resident_id = configured_resident_id
+    dialogue_runtime_profile = (
+        _synchronize_dialogue_runtime_profile_module_output(
+            collection, resident_id
+        )
+    )
     if dialogue_runtime_profile is not None and not validate_dialogue_runtime_profile(
         dialogue_runtime_profile
     ):
@@ -5445,16 +6040,6 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
                 "payload.modules.dialogue_runtime_profile",
             )
         )
-    blueprint = assemble_blueprint(collection, resident_name=resident_name)
-    checked_at = _now_iso()
-    compile_info = {"compiler": COMPILER_NAME, "compiler_version": COMPILER_VERSION, "compiled_at": checked_at, "source": "canvas", "layer_count": len(collection["layers"]), "module_count": len(collection["modules"]), "slot_count": len(collection["slots"]), "schema_version": DR_SCHEMA_VERSION_V0_3, "protocol_version": PROTOCOL_VERSION_V0_4}
-    resident = blueprint.get("resident", {})
-    if isinstance(resident, dict):
-        # v0.3 root metadata is authoritative for this formal compatibility
-        # alias. The frozen v0.1 compiler constant remains unchanged.
-        resident["dr_version"] = DR_VERSION_V0_3
-    resident_id = resident.get("resident_id") or _slugify(resident.get("name") or resident_name or "Digital Resident")
-    resident_name_final = resident.get("name") or resident_name or "Digital Resident"
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
     payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}

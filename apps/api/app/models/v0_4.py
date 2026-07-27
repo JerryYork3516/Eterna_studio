@@ -47,6 +47,46 @@ CANONICAL_LAYERS: List[tuple[str, str, int]] = [
 
 CANONICAL_LAYER_IDS = frozenset(layer_id for layer_id, _name, _order in CANONICAL_LAYERS)
 
+STAGE7_4_12_A2_CONTENT_REVISION = (
+    "stage7_4_12_a2_source_output_identity_cleanup_v1"
+)
+
+# These are explicit design states for canonical layers that may intentionally
+# carry no selected modules. They are descriptive only and never participate in
+# slot/capability derivation.
+EMPTY_LAYER_DESIGN_STATES: Dict[str, Dict[str, Any]] = {
+    "layer_4": {
+        "content_state": "policy_only",
+        "empty_by_design": True,
+        "runtime_enabled": False,
+        "declares_capability": False,
+        "status_description_key": "layer.layer_4.emptyStatusDescription",
+        "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+    },
+    "layer_6": {
+        "content_state": "reserved",
+        "empty_by_design": True,
+        "runtime_enabled": False,
+        "declares_capability": False,
+        "status_description_key": "layer.layer_6.emptyStatusDescription",
+        "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+    },
+    "layer_13": {
+        "content_state": "compatibility_only",
+        "empty_by_design": True,
+        "runtime_enabled": False,
+        "declares_capability": False,
+        "status_description_key": "layer.layer_13.emptyStatusDescription",
+        "content_revision": STAGE7_4_12_A2_CONTENT_REVISION,
+    },
+}
+
+
+def empty_layer_design_metadata(layer_id: str) -> Dict[str, Any]:
+    """Return a detached, display-only empty-layer declaration."""
+
+    return dict(EMPTY_LAYER_DESIGN_STATES.get(layer_id, {}))
+
 
 # --- Shared enums ----------------------------------------------------------
 class RiskLevel(str, Enum):

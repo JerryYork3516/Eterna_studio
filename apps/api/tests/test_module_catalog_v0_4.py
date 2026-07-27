@@ -2564,9 +2564,17 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
     assert module.runtime_enabled is False
     assert module.no_execution is True
     assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
+    assert len(nodes) == 7
+    assert len(edges) == 8
+    assert [node["node_type"] for node in nodes] == [
+        "field_reference",
+        "text_config",
+        "text_config",
+        "text_config",
+        "text_config",
+        "module_output",
+        "reference_output",
+    ]
     expected_default_options = {
         "language_behavior_core_rules": [
             "zh_primary",
@@ -2611,6 +2619,8 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
         "language_behavior_boundary_limits": {"x": 320, "y": 260},
         "language_behavior_output_expression": {"x": 640, "y": 0},
         "language_behavior_validation": {"x": 960, "y": 0},
+        "language_behavior_output": {"x": 1280, "y": 0},
+        "language_behavior_reference_output": {"x": 1600, "y": 0},
     }
     assert edge_pairs == [
         ("language_behavior_input_basis", "language_behavior_core_rules"),
@@ -2619,6 +2629,8 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
         ("language_behavior_boundary_limits", "language_behavior_core_rules"),
         ("language_behavior_boundary_limits", "language_behavior_output_expression"),
         ("language_behavior_boundary_limits", "language_behavior_validation"),
+        ("language_behavior_validation", "language_behavior_output"),
+        ("language_behavior_output", "language_behavior_reference_output"),
     ]
     assert ("language_behavior_boundary_limits", "language_behavior_input_basis") not in edge_pairs
     assert reference_node["metadata"]["reusable_node"] is True
@@ -2628,7 +2640,9 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
+    for node in nodes:
+        if node["node_type"] != "text_config":
+            continue
         checkbox_config = node["params"]["checkbox_config"]
         expected_selected = expected_default_options[node["node_id"]]
 
@@ -2671,7 +2685,7 @@ def test_layer8_language_behavior_module_is_text_config_with_field_references():
         assert node["metadata"]["compile_time_only"] is True
         assert node["metadata"]["runtime_enabled"] is False
         assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.languageBehavior.node.")
+        assert node["i18n_keys"]["name"].startswith("layer8.languageBehavior.")
 
 
 def test_layer8_decision_behavior_module_is_checkbox_config_with_field_references():
@@ -2702,9 +2716,17 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
     assert module.runtime_enabled is False
     assert module.no_execution is True
     assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
+    assert len(nodes) == 7
+    assert len(edges) == 8
+    assert [node["node_type"] for node in nodes] == [
+        "field_reference",
+        "text_config",
+        "text_config",
+        "text_config",
+        "text_config",
+        "module_output",
+        "reference_output",
+    ]
     expected_default_options = {
         "decision_behavior_core_rules": [
             "assess_risk_level_first",
@@ -2753,6 +2775,8 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
         "decision_behavior_boundary_limits": {"x": 320, "y": 260},
         "decision_behavior_output_expression": {"x": 640, "y": 0},
         "decision_behavior_validation": {"x": 960, "y": 0},
+        "decision_behavior_output": {"x": 1280, "y": 0},
+        "decision_behavior_reference_output": {"x": 1600, "y": 0},
     }
     assert edge_pairs == [
         ("decision_behavior_input_basis", "decision_behavior_core_rules"),
@@ -2761,6 +2785,8 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
         ("decision_behavior_boundary_limits", "decision_behavior_core_rules"),
         ("decision_behavior_boundary_limits", "decision_behavior_output_expression"),
         ("decision_behavior_boundary_limits", "decision_behavior_validation"),
+        ("decision_behavior_validation", "decision_behavior_output"),
+        ("decision_behavior_output", "decision_behavior_reference_output"),
     ]
     assert ("decision_behavior_boundary_limits", "decision_behavior_input_basis") not in edge_pairs
     assert reference_node["metadata"]["reusable_node"] is True
@@ -2770,7 +2796,9 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
+    for node in nodes:
+        if node["node_type"] != "text_config":
+            continue
         checkbox_config = node["params"]["checkbox_config"]
         expected_selected = expected_default_options[node["node_id"]]
 
@@ -2801,7 +2829,7 @@ def test_layer8_decision_behavior_module_is_checkbox_config_with_field_reference
         assert node["metadata"]["compile_time_only"] is True
         assert node["metadata"]["runtime_enabled"] is False
         assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.decisionBehavior.node.")
+        assert node["i18n_keys"]["name"].startswith("layer8.decisionBehavior.")
     _assert_stable_checkbox_storage("decision_pattern")
 
 
@@ -2899,9 +2927,10 @@ def test_layer8_emotional_expression_module_uses_semantic_state_contract():
     }
     assert module.outputs == {"detail_behavior_config": expected_output}
     assert [field.key for field in module.output_schema] == [
-        "expression_state",
-        "expression_intensity",
+        "detail_behavior_config",
     ]
+    assert module.output_schema[0].type == "object"
+    assert module.output_schema[0].required is True
     output_node = node_map[EXPRESSION_STATE_NODE_IDS["output"]]
     assert output_node["outputs"] == {"detail_behavior_config": expected_output}
     output_fields = output_node["params"]["output_schema"]["fields"]
@@ -3368,9 +3397,17 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
     assert module.runtime_enabled is False
     assert module.no_execution is True
     assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
+    assert len(nodes) == 7
+    assert len(edges) == 8
+    assert [node["node_type"] for node in nodes] == [
+        "field_reference",
+        "text_config",
+        "text_config",
+        "text_config",
+        "text_config",
+        "module_output",
+        "reference_output",
+    ]
     expected_default_options = {
         "interaction_behavior_core_rules": [
             "stable_companion",
@@ -3419,6 +3456,8 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
         "interaction_behavior_boundary_limits": {"x": 320, "y": 260},
         "interaction_behavior_output_expression": {"x": 640, "y": 0},
         "interaction_behavior_validation": {"x": 960, "y": 0},
+        "interaction_behavior_output": {"x": 1280, "y": 0},
+        "interaction_behavior_reference_output": {"x": 1600, "y": 0},
     }
     assert edge_pairs == [
         ("interaction_behavior_input_basis", "interaction_behavior_core_rules"),
@@ -3427,6 +3466,8 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
         ("interaction_behavior_boundary_limits", "interaction_behavior_core_rules"),
         ("interaction_behavior_boundary_limits", "interaction_behavior_output_expression"),
         ("interaction_behavior_boundary_limits", "interaction_behavior_validation"),
+        ("interaction_behavior_validation", "interaction_behavior_output"),
+        ("interaction_behavior_output", "interaction_behavior_reference_output"),
     ]
     assert ("interaction_behavior_boundary_limits", "interaction_behavior_input_basis") not in edge_pairs
     assert reference_node["metadata"]["reusable_node"] is True
@@ -3436,7 +3477,9 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
+    for node in nodes:
+        if node["node_type"] != "text_config":
+            continue
         checkbox_config = node["params"]["checkbox_config"]
         expected_selected = expected_default_options[node["node_id"]]
 
@@ -3467,7 +3510,7 @@ def test_layer8_interaction_behavior_module_is_checkbox_config_with_field_refere
         assert node["metadata"]["compile_time_only"] is True
         assert node["metadata"]["runtime_enabled"] is False
         assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.interactionBehavior.node.")
+        assert node["i18n_keys"]["name"].startswith("layer8.interactionBehavior.")
 
 
 def test_layer10_visual_style_first_greeting_catalog_status_and_required_module_references():
@@ -3564,9 +3607,17 @@ def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
     assert module.runtime_enabled is False
     assert module.no_execution is True
     assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
+    assert len(nodes) == 7
+    assert len(edges) == 8
+    assert [node["node_type"] for node in nodes] == [
+        "field_reference",
+        "text_config",
+        "text_config",
+        "text_config",
+        "text_config",
+        "module_output",
+        "reference_output",
+    ]
     expected_default_options = {
         "task_behavior_core_rules": [
             "clarify_goal_first",
@@ -3615,6 +3666,8 @@ def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
         "task_behavior_boundary_limits": {"x": 320, "y": 260},
         "task_behavior_output_expression": {"x": 640, "y": 0},
         "task_behavior_validation": {"x": 960, "y": 0},
+        "task_behavior_output": {"x": 1280, "y": 0},
+        "task_behavior_reference_output": {"x": 1600, "y": 0},
     }
     assert edge_pairs == [
         ("task_behavior_input_basis", "task_behavior_core_rules"),
@@ -3623,6 +3676,8 @@ def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
         ("task_behavior_boundary_limits", "task_behavior_core_rules"),
         ("task_behavior_boundary_limits", "task_behavior_output_expression"),
         ("task_behavior_boundary_limits", "task_behavior_validation"),
+        ("task_behavior_validation", "task_behavior_output"),
+        ("task_behavior_output", "task_behavior_reference_output"),
     ]
     assert ("task_behavior_boundary_limits", "task_behavior_input_basis") not in edge_pairs
     assert reference_node["metadata"]["reusable_node"] is True
@@ -3632,7 +3687,9 @@ def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
+    for node in nodes:
+        if node["node_type"] != "text_config":
+            continue
         checkbox_config = node["params"]["checkbox_config"]
         expected_selected = expected_default_options[node["node_id"]]
 
@@ -3663,7 +3720,7 @@ def test_layer8_task_behavior_module_is_checkbox_config_with_field_references():
         assert node["metadata"]["compile_time_only"] is True
         assert node["metadata"]["runtime_enabled"] is False
         assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.taskBehavior.node.")
+        assert node["i18n_keys"]["name"].startswith("layer8.taskBehavior.")
 
 
 def test_layer8_social_behavior_module_is_checkbox_config_with_field_references():
@@ -3694,9 +3751,17 @@ def test_layer8_social_behavior_module_is_checkbox_config_with_field_references(
     assert module.runtime_enabled is False
     assert module.no_execution is True
     assert module.mock_only is True
-    assert len(nodes) == 5
-    assert len(edges) == 6
-    assert [node["node_type"] for node in nodes] == ["field_reference", "text_config", "text_config", "text_config", "text_config"]
+    assert len(nodes) == 7
+    assert len(edges) == 8
+    assert [node["node_type"] for node in nodes] == [
+        "field_reference",
+        "text_config",
+        "text_config",
+        "text_config",
+        "text_config",
+        "module_output",
+        "reference_output",
+    ]
     expected_default_options = {
         "social_behavior_core_rules": [
             "stable_companion_default",
@@ -3745,6 +3810,8 @@ def test_layer8_social_behavior_module_is_checkbox_config_with_field_references(
         "social_behavior_boundary_limits": {"x": 320, "y": 260},
         "social_behavior_output_expression": {"x": 640, "y": 0},
         "social_behavior_validation": {"x": 960, "y": 0},
+        "social_behavior_output": {"x": 1280, "y": 0},
+        "social_behavior_reference_output": {"x": 1600, "y": 0},
     }
     assert edge_pairs == [
         ("social_behavior_input_basis", "social_behavior_core_rules"),
@@ -3753,6 +3820,8 @@ def test_layer8_social_behavior_module_is_checkbox_config_with_field_references(
         ("social_behavior_boundary_limits", "social_behavior_core_rules"),
         ("social_behavior_boundary_limits", "social_behavior_output_expression"),
         ("social_behavior_boundary_limits", "social_behavior_validation"),
+        ("social_behavior_validation", "social_behavior_output"),
+        ("social_behavior_output", "social_behavior_reference_output"),
     ]
     assert ("social_behavior_boundary_limits", "social_behavior_input_basis") not in edge_pairs
     assert reference_node["metadata"]["reusable_node"] is True
@@ -3762,7 +3831,9 @@ def test_layer8_social_behavior_module_is_checkbox_config_with_field_references(
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "required"]) == 3
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "optional"]) == 4
     assert len([reference for reference in recommended_refs if reference["reference_type"] == "forbidden"]) == 4
-    for node in nodes[1:]:
+    for node in nodes:
+        if node["node_type"] != "text_config":
+            continue
         checkbox_config = node["params"]["checkbox_config"]
         expected_selected = expected_default_options[node["node_id"]]
 
@@ -3793,7 +3864,7 @@ def test_layer8_social_behavior_module_is_checkbox_config_with_field_references(
         assert node["metadata"]["compile_time_only"] is True
         assert node["metadata"]["runtime_enabled"] is False
         assert node["metadata"]["no_execution"] is True
-        assert node["i18n_keys"]["name"].startswith("layer8.socialBehavior.node.")
+        assert node["i18n_keys"]["name"].startswith("layer8.socialBehavior.")
 
 
 def test_layer3_legacy_modules_remain_catalog_only():

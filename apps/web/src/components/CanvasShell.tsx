@@ -194,7 +194,12 @@ const LAYER_STACK_PADDING = 120;
 
 type LayerStackFrame = { x: number; y: number; width: number; height: number };
 
-type CatalogLayerInput = { layer_id: string; layer_order: number; layer_name: string };
+type CatalogLayerInput = {
+  layer_id: string;
+  layer_order: number;
+  layer_name: string;
+  metadata?: Record<string, unknown>;
+};
 
 function catalogLayerOrder(layer: CatalogLayerInput) {
   return Number(layer.layer_order);
@@ -267,10 +272,19 @@ function getLayerCatalogDisplayFields(layer: CatalogLayerInput, moduleCatalog: M
   const statuses = modules.map((module) => displayText(module.status));
   const versions = modules.map((module) => displayText(module.module_version));
   const displayMeta = getLayerDisplayMeta(layer, t);
+  const emptyContentState =
+    layer.metadata?.empty_by_design === true
+      ? displayText(layer.metadata.content_state)
+      : "";
 
   return {
     groupLabel: displayMeta.groupLabel,
-    status: mixedOrSingle(statuses, t("ui.layer.empty", "empty")),
+    status: emptyContentState
+      ? t(
+          `ui.layer.contentState.${emptyContentState}`,
+          emptyContentState
+        )
+      : mixedOrSingle(statuses, t("ui.layer.empty", "empty")),
     version: mixedOrSingle(versions, displayText(moduleCatalog.protocol_version)),
     children_count: modules.length,
     review: displayMeta.review,

@@ -19,8 +19,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-export const LEGACY_DIALOGUE_RUNTIME_PROFILE_ID = "linxuan_daily_companion_v0_1";
-export const DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_profile_resident_0001_v0_1";
+export const LEGACY_DIALOGUE_RUNTIME_PROFILE_ID =
+  "legacy_daily_companion_v0_1";
+const LEGACY_NAMED_DIALOGUE_RUNTIME_PROFILE_ID_PATTERN =
+  /^[a-z][a-z0-9_]*_daily_companion_v0_1$/;
+export const LEGACY_NUMBERED_DIALOGUE_RUNTIME_PROFILE_ID =
+  "dialogue_profile_resident_0001_v0_1";
+export const DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_profile_resident_v0_1";
 export const DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION =
   "stage7_4_10_few_shot_resident_name_decoupling_v1";
 export const EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION =
@@ -31,6 +36,84 @@ export const PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION =
   "stage7_4_11_particle_mapping_source_priority_fix_v1";
 export const EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION =
   "stage7_4_11_expression_visual_validation_compatibility_v1";
+export const STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION =
+  "stage7_4_12_a2_source_output_identity_cleanup_v1";
+
+export type Layer8BehaviorTextConfig = {
+  nodeId: string;
+  checkboxConfig: unknown;
+};
+
+export function materializeLayer8BehaviorPolicy(
+  seedValue: Record<string, unknown>,
+  textConfigs: Layer8BehaviorTextConfig[],
+  fieldReferences: Record<string, unknown>[],
+  sourceNodeIds: string[]
+): Record<string, unknown> {
+  const selectedOptions: string[] = [];
+  const validationRules: string[] = [];
+  const customTexts: string[] = [];
+  let presetId = "";
+  for (const item of textConfigs) {
+    const checkbox = isRecord(item.checkboxConfig)
+      ? item.checkboxConfig
+      : {};
+    if (!Object.keys(checkbox).length) continue;
+    if (!presetId && typeof checkbox.preset_id === "string") {
+      presetId = checkbox.preset_id;
+    }
+    let options = Array.isArray(checkbox.selected_options)
+      ? checkbox.selected_options.filter(
+          (option): option is string =>
+            typeof option === "string" && Boolean(option)
+        )
+      : [];
+    if (
+      !Array.isArray(checkbox.selected_options) &&
+      item.nodeId === "language_behavior_output_expression"
+    ) {
+      options = (
+        Array.isArray(checkbox.default_selected_options)
+          ? checkbox.default_selected_options
+          : Array.isArray(checkbox.default_options)
+            ? checkbox.default_options
+                .filter(
+                  (option) =>
+                    isRecord(option) &&
+                    option.default_selected !== false
+                )
+                .map((option) =>
+                  isRecord(option) ? option.option_id : undefined
+                )
+            : []
+      ).filter(
+        (option): option is string =>
+          typeof option === "string" &&
+          Boolean(option) &&
+          option !== "occasional_city_imagery"
+      );
+    }
+    selectedOptions.push(...options);
+    if (item.nodeId.endsWith("_validation")) {
+      validationRules.push(...options);
+    }
+    if (
+      typeof checkbox.custom_text === "string" &&
+      checkbox.custom_text.trim()
+    ) {
+      customTexts.push(checkbox.custom_text.trim());
+    }
+  }
+  return {
+    ...cloneJsonValue(seedValue),
+    preset_id: presetId || seedValue.preset_id,
+    selected_options: [...new Set(selectedOptions)],
+    custom_text: customTexts.join("\n\n"),
+    field_references: cloneJsonValue(fieldReferences),
+    validation_rules: [...new Set(validationRules)],
+    source_nodes: [...sourceNodeIds],
+  };
+}
 
 const EXPRESSION_CONTEXT_INPUT_NODE_ID = "expression_context_input";
 const RESIDENT_EXPRESSION_NOTES_FIELD_KEY = "resident_expression_notes";
@@ -118,19 +201,59 @@ const DIALOGUE_RUNTIME_PROFILE_MIGRATED_EXAMPLE_IDS = new Set([
   "resident_preference_or_life_tone_02",
 ]);
 
-export function migrateDialogueRuntimeProfileId(value: unknown): unknown {
-  if (value === LEGACY_DIALOGUE_RUNTIME_PROFILE_ID) {
+function migratedDialogueRuntimeProfileId(value: unknown): unknown {
+  if (
+    (typeof value === "string" &&
+      LEGACY_NAMED_DIALOGUE_RUNTIME_PROFILE_ID_PATTERN.test(value)) ||
+    value === LEGACY_NUMBERED_DIALOGUE_RUNTIME_PROFILE_ID
+  ) {
     return DIALOGUE_RUNTIME_PROFILE_ID;
   }
+  return value;
+}
+
+function migrateDialogueRuntimeProfileIdentityPaths(
+  value: unknown,
+  directProfileId: boolean
+): unknown {
+  if (typeof value === "string") {
+    return directProfileId
+      ? migratedDialogueRuntimeProfileId(value)
+      : value;
+  }
   if (Array.isArray(value)) {
-    return value.map(migrateDialogueRuntimeProfileId);
+    return value.map((item) =>
+      migrateDialogueRuntimeProfileIdentityPaths(item, false)
+    );
   }
   if (isRecord(value)) {
+    const fieldId = String(value.field_key || value.field_id || "");
+    const sourceScope = String(value.source_scope || "");
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, migrateDialogueRuntimeProfileId(item)])
+      Object.entries(value).map(([key, item]) => {
+        const isProfileIdPath =
+          key === "profile_id" ||
+          (fieldId === "profile_id" &&
+            (key === "field_value" || key === "value")) ||
+          (key === "source_id" && sourceScope === "resident_profile");
+        return [
+          key,
+          migrateDialogueRuntimeProfileIdentityPaths(
+            item,
+            isProfileIdPath
+          ),
+        ];
+      })
     );
   }
   return value;
+}
+
+export function migrateDialogueRuntimeProfileId(value: unknown): unknown {
+  return migrateDialogueRuntimeProfileIdentityPaths(
+    value,
+    typeof value === "string"
+  );
 }
 
 export function normalizeFirstInteractionEnabled(value: unknown): unknown {
@@ -340,6 +463,7 @@ export function migrateDialogueRuntimeProfileFewShotExamples(
 
 export type DialogueRuntimeProfileContentCopies = {
   profileContentRevision?: unknown;
+  identityCleanupRevision?: unknown;
   fields?: Record<string, unknown>[];
   dataFields?: Record<string, unknown>[];
   legacyFields?: Record<string, unknown>[];
@@ -351,10 +475,13 @@ export function migrateDialogueRuntimeProfileContentCopies(
   stored: DialogueRuntimeProfileContentCopies,
   seed: DialogueRuntimeProfileContentCopies
 ): { value: DialogueRuntimeProfileContentCopies; migrated: boolean } {
-  if (
-    typeof seed.profileContentRevision !== "string" ||
-    stored.profileContentRevision === seed.profileContentRevision
-  ) {
+  const contentMigrationNeeded =
+    typeof seed.profileContentRevision === "string" &&
+    stored.profileContentRevision !== seed.profileContentRevision;
+  const identityMigrationNeeded =
+    typeof seed.identityCleanupRevision === "string" &&
+    stored.identityCleanupRevision !== seed.identityCleanupRevision;
+  if (!contentMigrationNeeded && !identityMigrationNeeded) {
     return { value: stored, migrated: false };
   }
 
@@ -366,40 +493,65 @@ export function migrateDialogueRuntimeProfileContentCopies(
     (field) => fieldId(field) === "few_shot_examples"
   );
   const seedFewShots = fieldValue(seedFewShotField);
-  if (!Array.isArray(seedFewShots)) {
+  if (contentMigrationNeeded && !Array.isArray(seedFewShots)) {
     return { value: stored, migrated: false };
   }
 
   const migrateFields = (fields: Record<string, unknown>[] | undefined) =>
     fields?.map((field) => {
-      if (fieldId(field) !== "few_shot_examples") {
-        return field;
+      const migratedField = (
+        identityMigrationNeeded
+          ? migrateDialogueRuntimeProfileId(field)
+          : cloneJsonValue(field)
+      ) as Record<string, unknown>;
+      if (
+        !contentMigrationNeeded ||
+        fieldId(field) !== "few_shot_examples"
+      ) {
+        return migratedField;
       }
-      const valueKey = "field_value" in field ? "field_value" : "value";
-      const currentValue = fieldValue(field);
+      const valueKey =
+        "field_value" in migratedField ? "field_value" : "value";
+      const currentValue = fieldValue(migratedField);
       return {
-        ...field,
+        ...migratedField,
         [valueKey]: cloneJsonValue(
-          migrateDialogueRuntimeProfileFewShotExamples(currentValue, seedFewShots)
+          migrateDialogueRuntimeProfileFewShotExamples(
+            currentValue,
+            seedFewShots
+          )
         ),
       };
     });
 
-  const currentOutput = stored.output;
-  const output = currentOutput
-    ? {
-        ...currentOutput,
-        few_shot_examples: cloneJsonValue(
-          migrateDialogueRuntimeProfileFewShotExamples(
-            currentOutput.few_shot_examples ?? seedFewShots,
-            seedFewShots
-          )
-        ),
-      }
-    : currentOutput;
+  const currentOutput =
+    stored.output && identityMigrationNeeded
+      ? migrateDialogueRuntimeProfileId(
+          stored.output
+        ) as Record<string, unknown>
+      : stored.output
+        ? cloneJsonValue(stored.output)
+        : stored.output;
+  const output =
+    currentOutput && contentMigrationNeeded
+      ? {
+          ...currentOutput,
+          few_shot_examples: cloneJsonValue(
+            migrateDialogueRuntimeProfileFewShotExamples(
+              currentOutput.few_shot_examples ?? seedFewShots,
+              seedFewShots
+            )
+          ),
+        }
+      : currentOutput;
   const value = {
     ...stored,
-    profileContentRevision: seed.profileContentRevision,
+    profileContentRevision: contentMigrationNeeded
+      ? seed.profileContentRevision
+      : stored.profileContentRevision,
+    identityCleanupRevision: identityMigrationNeeded
+      ? seed.identityCleanupRevision
+      : stored.identityCleanupRevision,
     fields: migrateFields(stored.fields),
     dataFields: migrateFields(stored.dataFields),
     legacyFields: migrateFields(stored.legacyFields),
@@ -428,7 +580,9 @@ export function mergeCatalogFieldsPreservingValues(
   const shouldMigrateDialogueProfileId =
     fieldStoredValue(seedFields.find((field) => fieldId(field) === "profile_id")) ===
       DIALOGUE_RUNTIME_PROFILE_ID &&
-    fieldStoredValue(existingById.get("profile_id")) === LEGACY_DIALOGUE_RUNTIME_PROFILE_ID;
+    migrateDialogueRuntimeProfileId(
+      fieldStoredValue(existingById.get("profile_id"))
+    ) !== fieldStoredValue(existingById.get("profile_id"));
   const merged = seedFields.map((seedField) => {
     const currentFieldId = fieldId(seedField);
     const existingField = existingById.get(currentFieldId);
@@ -441,11 +595,17 @@ export function mergeCatalogFieldsPreservingValues(
           : existingField.field_value
       : undefined;
     const seedValue = seedField[valueKey];
-    const preservedValue = shouldMigrateDialogueProfileId
-      ? migrateDialogueRuntimeProfileId(existingField ? existingValue : seedValue)
-      : existingField
-        ? existingValue
-        : seedValue;
+    const storedValue = existingField ? existingValue : seedValue;
+    const migratedField = shouldMigrateDialogueProfileId
+      ? migrateDialogueRuntimeProfileId({
+          ...(existingField ?? seedField),
+          [valueKey]: storedValue,
+        })
+      : null;
+    const preservedValue =
+      shouldMigrateDialogueProfileId && isRecord(migratedField)
+        ? migratedField[valueKey]
+        : storedValue;
     return {
       ...cloneJsonValue(seedField),
       [valueKey]: cloneJsonValue(

@@ -18,6 +18,7 @@ from ..models.v0_4 import (
     SCHEMA_VERSION_V0_4,
     ScreenUiAnchorModuleCatalogResponseV04,
     SlotCatalogResponseV04,
+    empty_layer_design_metadata,
 )
 from ..models.v0_4 import LayerRefV04
 from ..registry.engine_registry import get_engine_registry
@@ -66,7 +67,15 @@ def node_registry_v0_4() -> Dict[str, Any]:
 
 @router.get("/module-catalog-v0.4", response_model=ModuleCatalogResponseV04)
 def module_catalog_v0_4() -> ModuleCatalogResponseV04:
-    layers = [LayerRefV04(layer_id=lid, layer_name=name, layer_order=order) for lid, name, order in CANONICAL_LAYERS]
+    layers = [
+        LayerRefV04(
+            layer_id=lid,
+            layer_name=name,
+            layer_order=order,
+            metadata=empty_layer_design_metadata(lid),
+        )
+        for lid, name, order in CANONICAL_LAYERS
+    ]
     return ModuleCatalogResponseV04(layers=layers, modules=get_module_catalog())
 
 
