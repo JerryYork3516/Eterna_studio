@@ -38,6 +38,8 @@ export const EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION =
   "stage7_4_11_expression_visual_validation_compatibility_v1";
 export const STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION =
   "stage7_4_12_a2_source_output_identity_cleanup_v1";
+export const STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION =
+  "stage7_4_12_a4_compatibility_authority_status_governance_v1";
 
 export type Layer8BehaviorTextConfig = {
   nodeId: string;
@@ -325,6 +327,108 @@ export function migrateLinxuanFirstGreetingValue(
 
 function stableComparableValue(value: unknown): string {
   return JSON.stringify(value ?? null);
+}
+
+export function synchronizeAuthoritativeFieldCompatibilityParams(
+  params: Record<string, unknown>
+): { value: Record<string, unknown>; migrated: boolean } {
+  let authoritativeFields = params.fields;
+  if (!Array.isArray(authoritativeFields)) {
+    const legacyCandidates = [
+      params.legacy_fields,
+      params.legacy_data_fields,
+    ].filter((value): value is unknown[] => Array.isArray(value));
+    const distinctCandidates = new Set(
+      legacyCandidates.map((value) => stableComparableValue(value))
+    );
+    if (legacyCandidates.length === 0 || distinctCandidates.size !== 1) {
+      return { value: params, migrated: false };
+    }
+    authoritativeFields = cloneJsonValue(legacyCandidates[0]);
+  }
+  const mirrorsMatch =
+    Array.isArray(params.legacy_fields) &&
+    Array.isArray(params.legacy_data_fields) &&
+    stableComparableValue(params.legacy_fields) ===
+      stableComparableValue(authoritativeFields) &&
+    stableComparableValue(params.legacy_data_fields) ===
+      stableComparableValue(authoritativeFields);
+  const revisionMatches =
+    params.compatibility_authority_status_governance_revision ===
+    STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION;
+  if (
+    Array.isArray(params.fields) &&
+    mirrorsMatch &&
+    revisionMatches
+  ) {
+    return { value: params, migrated: false };
+  }
+  return {
+    value: {
+      ...params,
+      fields: cloneJsonValue(authoritativeFields),
+      legacy_fields: cloneJsonValue(authoritativeFields),
+      legacy_data_fields: cloneJsonValue(authoritativeFields),
+      compatibility_authority_status_governance_revision:
+        STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
+    },
+    migrated: true,
+  };
+}
+
+function compatibilityGraphSchemaNode(
+  value: unknown
+): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const outerData = isRecord(value.data) ? value.data : {};
+  return isRecord(outerData.schemaNode) ? outerData.schemaNode : value;
+}
+
+export function migrateAuthoritativeFieldCompatibilityMirrors<
+  TGraph extends { nodes: unknown[]; edges: unknown[] },
+>(graph: TGraph): { value: TGraph; migrated: boolean } {
+  let migrated = false;
+  const nodes = graph.nodes.map((node) => {
+    const schemaNode = compatibilityGraphSchemaNode(node);
+    const data =
+      schemaNode && isRecord(schemaNode.data) ? schemaNode.data : null;
+    const params = data && isRecord(data.params) ? data.params : null;
+    if (
+      !params ||
+      !(
+        Array.isArray(params.fields) ||
+        Array.isArray(params.legacy_fields) ||
+        Array.isArray(params.legacy_data_fields)
+      )
+    ) {
+      return node;
+    }
+    const synchronized =
+      synchronizeAuthoritativeFieldCompatibilityParams(params);
+    if (!synchronized.migrated) {
+      return node;
+    }
+    const nextNode = cloneJsonValue(node);
+    const nextSchemaNode = compatibilityGraphSchemaNode(nextNode);
+    if (!nextSchemaNode) {
+      return node;
+    }
+    const nextData = isRecord(nextSchemaNode.data)
+      ? { ...nextSchemaNode.data }
+      : {};
+    const nextParams = isRecord(nextData.params) ? nextData.params : {};
+    nextData.params =
+      synchronizeAuthoritativeFieldCompatibilityParams(nextParams).value;
+    nextSchemaNode.data = nextData;
+    migrated = true;
+    return nextNode;
+  });
+  return {
+    value: (migrated ? { ...graph, nodes } : graph) as TGraph,
+    migrated,
+  };
 }
 
 export function normalizeFirstInteractionMaxActivePrompts(value: unknown): unknown {
@@ -819,7 +923,7 @@ export function migrateExpressionStateSemanticsGraph(
     expressionGraphNodeParams(storedInput).validation_compatibility_revision ===
       seedValidationRevision
   ) {
-    return { value: stored, migrated: false };
+    return migrateAuthoritativeFieldCompatibilityMirrors(stored);
   }
 
   const storedByCatalogId = new Map(
@@ -894,9 +998,13 @@ export function migrateExpressionStateSemanticsGraph(
     nodes,
     edges: cloneJsonValue(seed.edges),
   };
+  const synchronized =
+    migrateAuthoritativeFieldCompatibilityMirrors(value);
   return {
-    value,
-    migrated: stableComparableValue(value) !== stableComparableValue(stored),
+    value: synchronized.value,
+    migrated:
+      stableComparableValue(synchronized.value) !==
+      stableComparableValue(stored),
   };
 }
 
@@ -1229,7 +1337,7 @@ export function migrateParticleExpressionRelativeMappingGraph(
     particleGraphNodeParams(storedMapping).source_priority_revision ===
       seedSourcePriorityRevision
   ) {
-    return { value: stored, migrated: false };
+    return migrateAuthoritativeFieldCompatibilityMirrors(stored);
   }
 
   const storedByCatalogId = new Map(
@@ -1311,9 +1419,13 @@ export function migrateParticleExpressionRelativeMappingGraph(
     nodes,
     edges: cloneJsonValue(seed.edges),
   };
+  const synchronized =
+    migrateAuthoritativeFieldCompatibilityMirrors(value);
   return {
-    value,
-    migrated: stableComparableValue(value) !== stableComparableValue(stored),
+    value: synchronized.value,
+    migrated:
+      stableComparableValue(synchronized.value) !==
+      stableComparableValue(stored),
   };
 }
 

@@ -26,6 +26,7 @@ import {
   mergeChecklistTemplateDefaults,
   mergeAvailableModuleReferencePointers,
   materializeLayer8BehaviorPolicy,
+  migrateAuthoritativeFieldCompatibilityMirrors,
   migrateDialogueRuntimeProfileContentCopies,
   LINXUAN_RESIDENT_ID,
   migrateLinxuanFirstGreetingValue,
@@ -3347,9 +3348,33 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     console.log("[P1-BRIDGE] migrated field/text input nodes to generic_fields", {
       moduleNodeId: migratedGraph.moduleNodeId,
     });
-    return migratedGraph;
   }
-  return graphAfterLayer12ReferenceMigration;
+  const graphAfterGenericFieldsMigration =
+    migratedGraph ?? graphAfterLayer12ReferenceMigration;
+  const compatibilityFieldMigration =
+    migrateAuthoritativeFieldCompatibilityMirrors(
+      graphAfterGenericFieldsMigration
+    );
+  if (compatibilityFieldMigration.migrated) {
+    const synchronizedGraph = compatibilityFieldMigration.value;
+    store.updateModuleGraph(
+      synchronizedGraph.moduleNodeId,
+      synchronizedGraph.nodes,
+      synchronizedGraph.edges,
+      synchronizedGraph.viewport
+    );
+    saveModuleGraphState(
+      synchronizedGraph.moduleNodeId,
+      synchronizedGraph.nodes,
+      synchronizedGraph.edges
+    );
+    console.log(
+      "[P1-BRIDGE] synchronized authoritative fields into compatibility mirrors",
+      { moduleNodeId: synchronizedGraph.moduleNodeId }
+    );
+    return synchronizedGraph;
+  }
+  return graphAfterGenericFieldsMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {

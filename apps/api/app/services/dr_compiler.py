@@ -164,6 +164,17 @@ from .visual_expression_projection import (
     particle_transition_rule_source_value,
     valid_visual_base_color,
 )
+from .capability_status_governance import (
+    STAGE7_4_12_A4_CONTENT_REVISION,
+    build_capability_status_governance,
+    build_lattice_config_status,
+    build_voice_config_status,
+    capability_status_governance_errors,
+    derive_lattice_config_status,
+    derive_voice_config_status,
+    module_status_classification,
+    module_surface_classification,
+)
 
 DR_VERSION = "0.1"
 FILE_TYPE = "digital_resident"
@@ -197,6 +208,9 @@ _V03_AUDIT_CHECK_NAMES = (
     "pending_validation_check",
     "duplicate_source_check",
     "memory_support_level_check",
+    "capability_status_check",
+    "security_configuration_check",
+    "empty_layer_status_check",
     "file_size_check",
 )
 _V03_FILE_SIZE_WARNING_BYTES = 10 * 1024 * 1024
@@ -217,6 +231,44 @@ _FORBIDDEN_SECRET_KEYS = {
     "provider_binding",
 }
 _SECRET_REF_KEYS = {"key_ref", "secret_ref", "credential_ref", "api_key_ref"}
+_OUTPUT_CREDENTIAL_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "api_token",
+        "auth_token",
+        "authorization",
+        "token",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "bearer_credential",
+        "bearer_token",
+        "base_url",
+        "endpoint",
+        "endpoint_url",
+        "api_endpoint",
+        "credential",
+        "credentials",
+        "secret",
+        "provider_secret",
+        "password",
+        "client_secret",
+        "private_key",
+        "provider",
+        "provider_binding",
+        "provider_config",
+        "provider_profile",
+        "provider_profile_id",
+    }
+)
+_OUTPUT_CREDENTIAL_VALUE_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}"),
+    re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+)
 _IDENTITY_CORE_OUTPUTS = {str(spec["module_id"]): str(spec["output"]) for spec in IDENTITY_CORE_MODULE_SPECS}
 _IDENTITY_CORE_IDS = set(_IDENTITY_CORE_OUTPUTS)
 _IDENTITY_CORE_REQUIRED_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
@@ -1370,19 +1422,89 @@ def _normalize_current_technical_field(field: Dict[str, Any], index: int) -> Non
 
 def _sync_current_field_compatibility(
     modules: List[Dict[str, Any]], findings: List[Dict[str, str]]
-) -> None:
+) -> Dict[str, int]:
+    inspected_nodes = 0
     synchronized_nodes = 0
+    created_nodes = 0
+    repaired_nodes = 0
+    promoted_nodes = 0
+    preserved_ambiguous_nodes = 0
     for module_index, module in enumerate(modules):
         config = module.get("config") if isinstance(module.get("config"), dict) else {}
         registry = config.get("field_registry") if isinstance(config.get("field_registry"), list) else []
         for node_index, node in enumerate(_module_graph_nodes(module)):
-            if node.get("node_type") not in {"field_input", "text_input"}:
+            if node.get("node_type") not in {
+                "field_input",
+                "text_input",
+            }:
                 continue
             params = node.get("params") if isinstance(node.get("params"), dict) else {}
             has_compat_surface = any(key in params for key in ("fields", "legacy_fields", "legacy_data_fields"))
             if not has_compat_surface:
                 continue
-            current_fields = params.get("fields") if isinstance(params.get("fields"), list) else []
+            inspected_nodes += 1
+            current_value = params.get("fields")
+            if not isinstance(current_value, list):
+                legacy_candidates = [
+                    (legacy_key, params.get(legacy_key))
+                    for legacy_key in (
+                        "legacy_fields",
+                        "legacy_data_fields",
+                    )
+                    if isinstance(params.get(legacy_key), list)
+                ]
+                distinct_candidates = {
+                    stable_value
+                    for stable_value in (
+                        json.dumps(
+                            candidate,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        for _legacy_key, candidate in legacy_candidates
+                    )
+                }
+                if legacy_candidates and len(distinct_candidates) == 1:
+                    current_value = deepcopy(legacy_candidates[0][1])
+                    params["fields"] = current_value
+                    promoted_nodes += 1
+                    findings.append(
+                        _finding(
+                            "WARNING",
+                            "DR_COMPATIBILITY_LEGACY_FIELDS_PROMOTED",
+                            (
+                                "authoritative current fields were absent; "
+                                "one unambiguous legacy mirror was promoted "
+                                "only inside the compiler-owned copy"
+                            ),
+                            (
+                                f"modules[{module_index}].module_graph."
+                                f"nodes[{node_index}].params.fields"
+                            ),
+                        )
+                    )
+                elif legacy_candidates:
+                    preserved_ambiguous_nodes += 1
+                    findings.append(
+                        _finding(
+                            "WARNING",
+                            "DR_COMPATIBILITY_LEGACY_FIELDS_AMBIGUOUS",
+                            (
+                                "current fields were absent and legacy "
+                                "mirrors disagreed; legacy values were "
+                                "preserved without choosing a new authority"
+                            ),
+                            (
+                                f"modules[{module_index}].module_graph."
+                                f"nodes[{node_index}].params"
+                            ),
+                        )
+                    )
+                    continue
+                else:
+                    current_value = []
+            current_fields = current_value
             current_fields = [field for field in current_fields if isinstance(field, dict)]
             for index, field in enumerate(current_fields):
                 _normalize_current_technical_field(field, index)
@@ -1393,19 +1515,30 @@ def _sync_current_field_compatibility(
             for field in registry:
                 if not isinstance(field, dict):
                     continue
-                owner_node_id = _nonempty_str(field.get("owner_node_id"))
+                owner_node_id = _nonempty_str(
+                    field.get("owner_node_id")
+                )
                 if owner_node_id and owner_node_id != node_id:
                     continue
-                field_id = _nonempty_str(field.get("field_id")) or _nonempty_str(field.get("field_key"))
+                field_id = _nonempty_str(
+                    field.get("field_id")
+                ) or _nonempty_str(field.get("field_key"))
                 if field_id:
                     expected[field_id] = bool(field.get("required"))
             for legacy_key in ("legacy_fields", "legacy_data_fields"):
-                legacy_fields = params.get(legacy_key) if isinstance(params.get(legacy_key), list) else []
+                legacy_fields = (
+                    params.get(legacy_key)
+                    if isinstance(params.get(legacy_key), list)
+                    else []
+                )
                 for index, field in enumerate(legacy_fields):
                     if not isinstance(field, dict):
                         continue
                     field_id = _field_identifier(field, index)
-                    expected[field_id] = expected.get(field_id, False) or bool(field.get("required"))
+                    expected[field_id] = (
+                        expected.get(field_id, False)
+                        or bool(field.get("required"))
+                    )
 
             for field_id, required in expected.items():
                 if field_id in current_ids:
@@ -1422,18 +1555,69 @@ def _sync_current_field_compatibility(
                     )
                 )
 
+            missing_mirror = any(
+                not isinstance(params.get(legacy_key), list)
+                for legacy_key in ("legacy_fields", "legacy_data_fields")
+            )
+            mismatched_mirrors = [
+                legacy_key
+                for legacy_key in ("legacy_fields", "legacy_data_fields")
+                if isinstance(params.get(legacy_key), list)
+                and params.get(legacy_key) != current_fields
+            ]
+            if missing_mirror:
+                created_nodes += 1
+            if mismatched_mirrors:
+                repaired_nodes += 1
+                findings.append(
+                    _finding(
+                        "WARNING",
+                        "DR_COMPATIBILITY_FIELD_MIRROR_DRIFT",
+                        (
+                            "legacy field mirrors differed from authoritative "
+                            "current fields and were regenerated; "
+                            f"mirrors={mismatched_mirrors!r}, "
+                            f"layer_id={module.get('layer_id')}, "
+                            f"module_id={module.get('module_id')}, "
+                            f"node_id={node_id}"
+                        ),
+                        (
+                            f"modules[{module_index}].module_graph."
+                            f"nodes[{node_index}].params"
+                        ),
+                    )
+                )
             params["fields"] = current_fields
             params["legacy_fields"] = deepcopy(current_fields)
             params["legacy_data_fields"] = deepcopy(current_fields)
             synchronized_nodes += 1
+    metrics = {
+        "inspected_nodes": inspected_nodes,
+        "synchronized_nodes": synchronized_nodes,
+        "created_nodes": created_nodes,
+        "repaired_nodes": repaired_nodes,
+        "promoted_nodes": promoted_nodes,
+        "preserved_ambiguous_nodes": preserved_ambiguous_nodes,
+    }
     findings.append(
         _finding(
             "PASS",
             "DR_CURRENT_LEGACY_FIELD_SYNC_COMPLETE",
-            f"legacy_fields 与 legacy_data_fields 已从 current fields 深拷贝生成；nodes={synchronized_nodes}",
+            (
+                "legacy_fields and legacy_data_fields were deep-copied from "
+                "authoritative current fields; "
+                f"inspected_nodes={inspected_nodes}, "
+                f"synchronized_nodes={synchronized_nodes}, "
+                f"created_nodes={created_nodes}, "
+                f"repaired_nodes={repaired_nodes}, "
+                f"promoted_nodes={promoted_nodes}, "
+                "preserved_ambiguous_nodes="
+                f"{preserved_ambiguous_nodes}"
+            ),
             "modules.module_graph.nodes.params.fields",
         )
     )
+    return metrics
 
 
 def _canonical_environment_mapping(field_id: str) -> str:
@@ -4572,6 +4756,133 @@ def _sync_legacy_blueprint_runtime_requirements(blueprint: Dict[str, Any]) -> No
         runtime_requirements["required_slot_types"] = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
 
 
+def _is_complete_module_record(value: Any) -> bool:
+    if not isinstance(value, dict) or not _nonempty_str(value.get("module_id")):
+        return False
+    return any(
+        key in value
+        for key in ("module_graph", "outputs", "input_schema")
+    )
+
+
+def _lightweight_module_reference(module: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: deepcopy(module[key])
+        for key in (
+            "module_id",
+            "layer_id",
+            "module_type",
+            "slot_type",
+            "status",
+            "runtime_enabled",
+        )
+        if key in module
+    }
+
+
+def _strip_complete_module_sources(value: Any) -> Any:
+    """Keep display references while removing nested module truth copies."""
+
+    if _is_complete_module_record(value):
+        return _lightweight_module_reference(value)
+    if isinstance(value, list):
+        return [_strip_complete_module_sources(item) for item in value]
+    if not isinstance(value, dict):
+        return deepcopy(value)
+
+    sanitized: Dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "module_graph" and isinstance(item, dict):
+            continue
+        if (
+            key == "modules"
+            and isinstance(item, list)
+            and any(_is_complete_module_record(candidate) for candidate in item)
+        ):
+            continue
+        sanitized[key] = _strip_complete_module_sources(item)
+    return sanitized
+
+
+def _build_lightweight_graph_snapshot(
+    collection: Dict[str, Any],
+) -> Dict[str, Any]:
+    snapshot = {
+        key: _strip_complete_module_sources(collection.get(key, []))
+        for key in ("nodes", "edges", "layers", "slots")
+    }
+    snapshot["compatibility_status"] = module_surface_classification(
+        "payload.graph_snapshot"
+    )
+    return snapshot
+
+
+def _nested_complete_module_source_paths(
+    value: Any,
+    path: str,
+) -> List[str]:
+    paths: List[str] = []
+    if _is_complete_module_record(value):
+        return [path]
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            paths.extend(
+                _nested_complete_module_source_paths(
+                    item, f"{path}[{index}]"
+                )
+            )
+        return paths
+    if not isinstance(value, dict):
+        return paths
+    for key, item in value.items():
+        item_path = f"{path}.{key}" if path else key
+        if key == "module_graph" and isinstance(item, dict):
+            paths.append(item_path)
+            continue
+        paths.extend(_nested_complete_module_source_paths(item, item_path))
+    return paths
+
+
+def _semantic_list_identifier(value: Dict[str, Any]) -> str:
+    for key in ("module_id", "node_id", "edge_id", "slot_id"):
+        identifier = _nonempty_str(value.get(key))
+        if identifier:
+            return f"{key}:{identifier}"
+    return ""
+
+
+def _normalized_module_semantics(value: Any) -> Any:
+    """Canonicalize ordering without discarding module semantics."""
+
+    if isinstance(value, dict):
+        normalized = {
+            key: _normalized_module_semantics(item)
+            for key, item in sorted(value.items(), key=lambda pair: pair[0])
+        }
+        return normalized
+    if isinstance(value, list):
+        normalized_items = [
+            _normalized_module_semantics(item) for item in value
+        ]
+        identifiers = [
+            _semantic_list_identifier(item)
+            for item in normalized_items
+            if isinstance(item, dict)
+        ]
+        if (
+            len(identifiers) == len(normalized_items)
+            and identifiers
+            and all(identifiers)
+            and len(set(identifiers)) == len(identifiers)
+        ):
+            return sorted(
+                normalized_items,
+                key=lambda item: _semantic_list_identifier(item),
+            )
+        return normalized_items
+    return deepcopy(value)
+
+
 def _synchronize_stage_7_4_module_scope(collection: Dict[str, Any]) -> None:
     """Generate reserved capability state on the compiler-owned module copies."""
     required_slot_types = set(STAGE_7_4_REQUIRED_SLOT_TYPES)
@@ -4596,10 +4907,33 @@ def _synchronize_stage_7_4_module_scope(collection: Dict[str, Any]) -> None:
             module_graph.pop("slot_routes", None)
 
 
+def _synchronize_a4_module_status_classifications(
+    collection: Dict[str, Any],
+) -> None:
+    """Project central A4 states onto the authoritative module records."""
+
+    for module in collection.get("modules", []):
+        if not isinstance(module, dict):
+            continue
+        module_id = _nonempty_str(module.get("module_id"))
+        try:
+            classification = module_status_classification(module_id)
+        except KeyError:
+            continue
+        module["status_classification"] = classification
+        if module_id == "memory_provider_router":
+            # Memory remains a required capability, while this declarative
+            # Provider selector is explicitly mock/policy-only.
+            module["runtime_enabled"] = False
+            module["no_execution"] = True
+
+
 def _build_v03_audit_report(
     findings: List[Dict[str, str]],
     checked_at: str,
     named_check_findings: Optional[Dict[str, List[Dict[str, str]]]] = None,
+    serialization_metrics: Optional[Dict[str, Any]] = None,
+    compatibility_metrics: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     named_check_findings = named_check_findings or {}
     all_findings = list(findings)
@@ -4622,6 +4956,8 @@ def _build_v03_audit_report(
         "findings": all_findings,
         "checked_at": checked_at,
         "summary": summary,
+        "serialization_metrics": deepcopy(serialization_metrics or {}),
+        "compatibility_metrics": deepcopy(compatibility_metrics or {}),
     }
 
 
@@ -5227,7 +5563,9 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
     compatibility_findings: List[Dict[str, str]] = []
     for module in modules:
         _sync_environment_module_output(module)
-    _sync_current_field_compatibility(modules, compatibility_findings)
+    compatibility_metrics = _sync_current_field_compatibility(
+        modules, compatibility_findings
+    )
     _normalize_reference_registries(modules, compatibility_findings)
 
     # Slots: prefer canvas-supplied, else the catalog.
@@ -5285,6 +5623,7 @@ def collect_canvas(canvas: Dict[str, Any]) -> Dict[str, Any]:
         "slots": slots,
         "layer_contexts": layer_contexts,
         "compatibility_findings": compatibility_findings,
+        "compatibility_metrics": compatibility_metrics,
     }
 
 
@@ -5898,8 +6237,37 @@ def _v03_compatibility_aliases(
     resident_id: str,
 ) -> Dict[str, Any]:
     """Project only frozen public aliases from the authoritative payload."""
-    legacy_blueprint = deepcopy(blueprint)
+    legacy_blueprint = _strip_complete_module_sources(blueprint)
+    if not isinstance(legacy_blueprint, dict):
+        legacy_blueprint = {}
     legacy_blueprint.pop("modules", None)
+    legacy_blueprint["compatibility_status"] = (
+        module_surface_classification("legacy_blueprint")
+    )
+    legacy_voice_config = _as_dict(
+        legacy_blueprint.get("voice_config")
+    )
+    legacy_voice_config.update(
+        {
+            "enabled": False,
+            "provider": "mock",
+            "output_mode": "mock",
+            "status_classification": build_voice_config_status(),
+        }
+    )
+    legacy_blueprint["voice_config"] = legacy_voice_config
+    legacy_tts_config = _as_dict(
+        legacy_blueprint.get("tts_provider_config")
+    )
+    legacy_tts_config.update(
+        {
+            "provider": "mock",
+            "provider_candidates": ["mock"],
+            "mode": "mock",
+            "status_classification": build_voice_config_status(),
+        }
+    )
+    legacy_blueprint["tts_provider_config"] = legacy_tts_config
     lattice = _as_dict(payload.get("lattice_config"))
     return {
         "resident": deepcopy(resident),
@@ -5936,19 +6304,78 @@ def _v03_duplicate_source_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
     payload = _as_dict(dr.get("payload"))
     graph_snapshot = _as_dict(payload.get("graph_snapshot"))
     legacy_blueprint = _as_dict(dr.get("legacy_blueprint"))
-    for path, container in (
-        ("payload.graph_snapshot.modules", graph_snapshot),
-        ("legacy_blueprint.modules", legacy_blueprint),
+    if graph_snapshot.get("compatibility_status") != (
+        module_surface_classification("payload.graph_snapshot")
     ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_GRAPH_SNAPSHOT_STATUS_INVALID",
+                (
+                    "graph_snapshot must be marked as a non-authoritative "
+                    "display cache"
+                ),
+                "payload.graph_snapshot.compatibility_status",
+            )
+        )
+    if graph_snapshot.get("layer_outputs_status") != (
+        module_surface_classification(
+            "payload.graph_snapshot.layer_outputs"
+        )
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_GRAPH_SNAPSHOT_STATUS_INVALID",
+                (
+                    "graph_snapshot.layer_outputs is a derived read-only "
+                    "display compatibility cache and cannot override current "
+                    "module or top-level sources"
+                ),
+                "payload.graph_snapshot.layer_outputs_status",
+            )
+        )
+    for container_path, container in (
+        ("payload.graph_snapshot", graph_snapshot),
+        ("legacy_blueprint", legacy_blueprint),
+    ):
+        forbidden_paths = set(
+            _nested_complete_module_source_paths(container, container_path)
+        )
         if "modules" in container:
+            forbidden_paths.add(f"{container_path}.modules")
+        for path in sorted(forbidden_paths):
             findings.append(
                 _finding(
                     "FAIL",
                     "DR_EXPORT_NONAUTHORITATIVE_MODULE_COPY",
-                    "payload.modules is the sole authoritative module path; non-contract deep copies are forbidden",
+                    (
+                        "payload.modules is the sole authoritative module "
+                        "path; nested complete module or module_graph copies "
+                        "are forbidden"
+                    ),
                     path,
                 )
             )
+    payload_modules = payload.get("modules")
+    root_modules = dr.get("modules")
+    if (
+        not isinstance(payload_modules, list)
+        or not isinstance(root_modules, list)
+        or _normalized_module_semantics(root_modules)
+        != _normalized_module_semantics(payload_modules)
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_MODULE_AUTHORITY_PROJECTION_DRIFT",
+                (
+                    "root modules must be a normalized semantic projection "
+                    "of authoritative payload.modules"
+                ),
+                "modules",
+            )
+        )
     if "behavior_policy" in dr:
         findings.append(
             _finding(
@@ -6167,23 +6594,494 @@ def _v03_memory_support_level_findings(dr: Dict[str, Any]) -> List[Dict[str, str
     return findings
 
 
-def _v03_file_size_findings(measured_bytes: int) -> List[Dict[str, str]]:
-    over_limit = measured_bytes > _V03_FILE_SIZE_WARNING_BYTES
+def _v03_capability_status_findings(
+    dr: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    """Validate A4 capability labels without enabling a Runtime feature."""
+
+    findings: List[Dict[str, str]] = []
+    payload = _as_dict(dr.get("payload"))
+    audit_policy = _as_dict(payload.get("audit_policy"))
+    governance = audit_policy.get("capability_status_governance")
+    governance_errors = capability_status_governance_errors(governance)
+    if governance_errors:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_CAPABILITY_STATUS_GOVERNANCE_INVALID",
+                (
+                    "central capability status governance is missing or "
+                    "invalid: "
+                    + "; ".join(governance_errors)
+                ),
+                (
+                    "payload.audit_policy."
+                    "capability_status_governance"
+                ),
+            )
+        )
+    elif governance != build_capability_status_governance():
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_CAPABILITY_STATUS_GOVERNANCE_INVALID",
+                (
+                    "compiled capability status governance must be derived "
+                    "from the central A4 registry"
+                ),
+                (
+                    "payload.audit_policy."
+                    "capability_status_governance"
+                ),
+            )
+        )
+
+    expected_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    manifest = _as_dict(dr.get("manifest"))
+    runtime_requirements = _as_dict(
+        payload.get("runtime_requirements")
+    )
+    if (
+        manifest.get("required_capabilities")
+        != expected_capabilities
+        or runtime_requirements.get("required_slot_types")
+        != expected_capabilities
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_CAPABILITY_REQUIRED_SET_DRIFT",
+                (
+                    "required capabilities must remain exactly "
+                    "llm, memory, and lattice"
+                ),
+                "manifest.required_capabilities",
+            )
+        )
+
+    voice_config = _as_dict(payload.get("voice_config"))
+    if voice_config.get("status_classification") != (
+        build_voice_config_status()
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_VOICE_CONFIG_STATUS_INVALID",
+                (
+                    "voice_config must remain mock, placeholder, "
+                    "compatibility fallback, and runtime disabled"
+                ),
+                "payload.voice_config.status_classification",
+            )
+        )
+    tts_profile = _as_dict(voice_config.get("tts_profile"))
+    if tts_profile.get("provider") != "mock":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_VOICE_CONFIG_PROVIDER_ACTIVE",
+                "voice_config cannot declare a real TTS or Voice Provider",
+                "payload.voice_config.tts_profile.provider",
+            )
+        )
+
+    lattice_config = _as_dict(payload.get("lattice_config"))
+    if lattice_config.get("status_classification") != (
+        build_lattice_config_status()
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_LATTICE_CONFIG_STATUS_INVALID",
+                (
+                    "lattice_config must remain consumable with a mock "
+                    "runtime fallback and required lattice capability"
+                ),
+                "payload.lattice_config.status_classification",
+            )
+        )
+
+    legacy_blueprint = _as_dict(dr.get("legacy_blueprint"))
+    legacy_voice = _as_dict(
+        legacy_blueprint.get("voice_config")
+    )
+    legacy_tts = _as_dict(
+        legacy_blueprint.get("tts_provider_config")
+    )
+    if (
+        legacy_voice.get("enabled") is not False
+        or legacy_voice.get("provider") != "mock"
+        or legacy_tts.get("provider") != "mock"
+        or legacy_tts.get("provider_candidates") != ["mock"]
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_LEGACY_VOICE_PROVIDER_ACTIVE",
+                (
+                    "legacy voice compatibility fields must stay disabled "
+                    "and mock-only"
+                ),
+                "legacy_blueprint.voice_config",
+            )
+        )
+
+    abstract_bust = _as_dict(
+        _as_dict(dr.get("visual_expression_mapping")).get(
+            "abstract_bust_mapping"
+        )
+    )
+    if abstract_bust.get("status") != "reserved":
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_ABSTRACT_BUST_STATUS_INVALID",
+                "abstract bust must remain reserved",
+                (
+                    "visual_expression_mapping."
+                    "abstract_bust_mapping.status"
+                ),
+            )
+        )
+
+    modules = {
+        module.get("module_id"): module
+        for module in payload.get("modules", [])
+        if isinstance(module, dict)
+    }
+    governance_modules = _as_dict(
+        _as_dict(governance).get("modules")
+    )
+    for module_id, expected_classification in governance_modules.items():
+        module = modules.get(module_id)
+        if not isinstance(module, dict):
+            continue
+        status = str(module.get("status") or "").strip().lower()
+        allowed_states = {
+            str(value).lower()
+            for value in (
+            _as_dict(expected_classification).get("states") or []
+            )
+        }
+        allowed_legacy_statuses = {
+            str(value).lower()
+            for value in (
+                _as_dict(expected_classification).get(
+                    "legacy_status_values"
+                )
+                or []
+            )
+        }
+        if (
+            module.get("status_classification")
+            != expected_classification
+            or module.get("runtime_enabled")
+            is not expected_classification.get("runtime_enabled")
+            or status
+            not in (allowed_states | allowed_legacy_statuses)
+        ):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_MODULE_STATUS_CLASSIFICATION_DRIFT",
+                    (
+                        f"authoritative module {module_id!r} does not match "
+                        "its central mock/reserved status classification"
+                    ),
+                    f"payload.modules.{module_id}",
+                )
+            )
+    for provider_module_id in (
+        "llm_provider_router",
+        "memory_provider_router",
+    ):
+        provider_module = modules.get(provider_module_id)
+        provider_status = str(
+            _as_dict(provider_module).get("status") or ""
+        ).upper()
+        allowed_provider_statuses = (
+            {"RESERVED", "MOCK"}
+            if provider_module_id == "llm_provider_router"
+            else {"READY", "MOCK"}
+        )
+        if isinstance(provider_module, dict) and (
+            provider_module.get("runtime_enabled") is not False
+            or provider_module.get("no_execution") is not True
+            or provider_status not in allowed_provider_statuses
+        ):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_PROVIDER_MODULE_STATUS_ACTIVE",
+                    (
+                        f"{provider_module_id} must remain declarative, "
+                        "non-executable, and mock or reserved"
+                    ),
+                    f"payload.modules.{provider_module_id}",
+                )
+            )
+
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_CAPABILITY_STATUS_CHECK_PASSED",
+                (
+                    "central capability statuses keep only llm, memory, "
+                    "and lattice required; Voice remains mock and Lattice "
+                    "remains consumable with mock fallback"
+                ),
+                (
+                    "payload.audit_policy."
+                    "capability_status_governance"
+                ),
+            )
+        )
+    return findings
+
+
+def _contains_actual_credential_value(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {
+            "",
+            "mock",
+            "placeholder",
+            "reserved",
+            "policy_only",
+            "compatibility_fallback",
+            "disabled",
+            "runtime_disabled",
+            "not_configured",
+            "none",
+            "null",
+        }:
+            return False
+        if normalized.endswith("_mock") or normalized.startswith("mock_"):
+            return False
+        return True
+    if isinstance(value, dict):
+        return any(
+            _contains_actual_credential_value(item)
+            for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(
+            _contains_actual_credential_value(item) for item in value
+        )
+    return bool(value)
+
+
+def _normalized_credential_key(value: Any) -> str:
+    text = re.sub(
+        r"(?<!^)(?=[A-Z])",
+        "_",
+        str(value or "").strip(),
+    )
+    return re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
+
+
+def _compiled_credential_paths(value: Any, path: str = "") -> List[str]:
+    paths: List[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            item_path = f"{path}.{key}" if path else str(key)
+            if (
+                _normalized_credential_key(key)
+                in _OUTPUT_CREDENTIAL_KEYS
+                and _contains_actual_credential_value(item)
+            ):
+                paths.append(item_path)
+                continue
+            paths.extend(
+                _compiled_credential_paths(item, item_path)
+            )
+        return paths
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            paths.extend(
+                _compiled_credential_paths(
+                    item, f"{path}[{index}]"
+                )
+            )
+        return paths
+    if isinstance(value, str) and any(
+        pattern.search(value)
+        for pattern in _OUTPUT_CREDENTIAL_VALUE_PATTERNS
+    ):
+        paths.append(path or "$")
+    return paths
+
+
+def _v03_security_configuration_findings(
+    dr: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    """Block actual credentials in the fully assembled export document."""
+
+    export_surface = {
+        key: value
+        for key, value in dr.items()
+        if key not in {"audit", "audit_report"}
+    }
+    credential_paths = sorted(
+        set(_compiled_credential_paths(export_surface))
+    )
+    if credential_paths:
+        return [
+            _finding(
+                "FAIL",
+                "DR_COMPILED_CREDENTIAL_VALUE",
+                (
+                    "compiled DR contains a non-empty credential, endpoint, "
+                    "or Provider Profile value; the value was not included "
+                    "in this diagnostic"
+                ),
+                path,
+            )
+            for path in credential_paths
+        ]
     return [
         _finding(
-            "WARNING" if over_limit else "PASS",
-            "DR_FILE_SIZE_WARNING" if over_limit else "DR_FILE_SIZE_CHECK_PASSED",
-            f"serialized export size is {measured_bytes} bytes; warning threshold is "
-            f"{_V03_FILE_SIZE_WARNING_BYTES} bytes",
-            "audit_report.file_size_check",
+            "PASS",
+            "DR_SECURITY_CONFIGURATION_CHECK_PASSED",
+            (
+                "compiled DR contains no actual API key, token, bearer "
+                "credential, base URL, Provider secret, password, or real "
+                "Provider Profile"
+            ),
+            "payload",
         )
     ]
 
 
-def serialize_dr_v0_3(dr: Dict[str, Any]) -> bytes:
-    """Serialize the exact UTF-8 bytes used by the v0.3 export response."""
+def _v03_empty_layer_status_findings(
+    dr: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    """Recheck A2's explicit empty-layer declarations."""
 
-    return json.dumps(dr, ensure_ascii=False, indent=2).encode("utf-8")
+    findings: List[Dict[str, str]] = []
+    layer_values = _as_dict(dr.get("payload")).get(
+        "13_layers_snapshot"
+    )
+    if not isinstance(layer_values, list):
+        layer_values = []
+    layers = {
+        layer.get("layer_id"): layer
+        for layer in layer_values
+        if isinstance(layer, dict)
+    }
+    for layer_id in ("layer_4", "layer_6", "layer_13"):
+        expected = empty_layer_design_metadata(layer_id)
+        layer = layers.get(layer_id)
+        if not isinstance(layer, dict):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_EMPTY_LAYER_STATUS_INVALID",
+                    (
+                        f"{layer_id} must remain present with its explicit "
+                        "empty-by-design status"
+                    ),
+                    f"payload.13_layers_snapshot.{layer_id}",
+                )
+            )
+            continue
+        drifted = {
+            key: (layer.get(key), expected_value)
+            for key, expected_value in expected.items()
+            if layer.get(key) != expected_value
+        }
+        if drifted:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_EMPTY_LAYER_STATUS_INVALID",
+                    (
+                        f"{layer_id} empty-layer declaration drifted: "
+                        f"{drifted!r}"
+                    ),
+                    f"payload.13_layers_snapshot.{layer_id}",
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "PASS",
+                "DR_EMPTY_LAYER_STATUS_CHECK_PASSED",
+                (
+                    "Layers 4, 6, and 13 remain explicit empty-by-design "
+                    "surfaces and do not declare Runtime capabilities"
+                ),
+                "payload.13_layers_snapshot",
+            )
+        )
+    return findings
+
+
+def _v03_file_size_findings(
+    normalized_json_bytes: int,
+    actual_export_bytes: int,
+) -> List[Dict[str, str]]:
+    over_limit = actual_export_bytes > _V03_FILE_SIZE_WARNING_BYTES
+    return [
+        _finding(
+            "WARNING" if over_limit else "PASS",
+            "DR_FILE_SIZE_WARNING" if over_limit else "DR_FILE_SIZE_CHECK_PASSED",
+            (
+                "actual Studio-compatible export size is "
+                f"{actual_export_bytes} bytes; warning threshold is "
+                f"{_V03_FILE_SIZE_WARNING_BYTES} bytes"
+            ),
+            "audit_report.file_size_check",
+        ),
+        _finding(
+            "PASS",
+            "DR_NORMALIZED_JSON_SIZE_RECORDED",
+            (
+                "normalized in-memory canonical JSON size is "
+                f"{normalized_json_bytes} bytes"
+            ),
+            "audit_report.serialization_metrics.normalized_json_bytes",
+        ),
+    ]
+
+
+def _studio_json_compatible_value(value: Any) -> Any:
+    """Match JSON.stringify number semantics without mutating compiler data."""
+
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {
+            key: _studio_json_compatible_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_studio_json_compatible_value(item) for item in value]
+    return value
+
+
+def normalized_dr_json_v0_3(dr: Dict[str, Any]) -> bytes:
+    """Return compact canonical UTF-8 JSON for in-memory size accounting."""
+
+    return json.dumps(
+        _studio_json_compatible_value(dr),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def serialize_dr_v0_3(dr: Dict[str, Any]) -> bytes:
+    """Serialize Studio JSON.stringify-compatible UTF-8 export bytes."""
+
+    return json.dumps(
+        _studio_json_compatible_value(dr),
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
 
 
 def _attach_v03_audit_report(
@@ -6191,17 +7089,37 @@ def _attach_v03_audit_report(
     findings: List[Dict[str, str]],
     checked_at: str,
     named_check_findings: Dict[str, List[Dict[str, str]]],
+    compatibility_metrics: Optional[Dict[str, int]] = None,
 ) -> None:
-    measured_bytes = 0
+    metrics: Dict[str, Any] = {
+        "normalized_json_bytes": 0,
+        "actual_export_bytes": 0,
+        "actual_export_serialization": (
+            "studio_json_stringify_pretty_utf8"
+        ),
+    }
     for _ in range(32):
-        named_check_findings["file_size_check"] = _v03_file_size_findings(measured_bytes)
-        audit_report = _build_v03_audit_report(findings, checked_at, named_check_findings)
+        named_check_findings["file_size_check"] = _v03_file_size_findings(
+            int(metrics["normalized_json_bytes"]),
+            int(metrics["actual_export_bytes"]),
+        )
+        audit_report = _build_v03_audit_report(
+            findings,
+            checked_at,
+            named_check_findings,
+            serialization_metrics=metrics,
+            compatibility_metrics=compatibility_metrics,
+        )
         dr["audit_report"] = audit_report
         dr["audit"] = deepcopy(audit_report)
-        next_size = len(serialize_dr_v0_3(dr))
-        if next_size == measured_bytes:
+        next_metrics = {
+            **metrics,
+            "normalized_json_bytes": len(normalized_dr_json_v0_3(dr)),
+            "actual_export_bytes": len(serialize_dr_v0_3(dr)),
+        }
+        if next_metrics == metrics:
             return
-        measured_bytes = next_size
+        metrics = next_metrics
     raise RuntimeError("DR v0.3 audit file size did not converge to final serialized bytes")
 
 
@@ -6213,7 +7131,6 @@ def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
 
     required_aliases = {
         "layers": "13_layers_snapshot",
-        "modules": "modules",
         "slots": "slots",
         "runtime_requirements": "runtime_requirements",
         "memory_config": "memory_config",
@@ -6233,6 +7150,20 @@ def _v03_export_projection_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
                     root_key,
                 )
             )
+    if _normalized_module_semantics(dr.get("modules")) != (
+        _normalized_module_semantics(payload.get("modules"))
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_EXPORT_COMPATIBILITY_PROJECTION_DRIFT",
+                (
+                    "required compatibility alias 'modules' must be a "
+                    "normalized semantic projection of payload.modules"
+                ),
+                "modules",
+            )
+        )
     memory_config = _as_dict(payload.get("memory_config"))
     if memory_config.get("storage_backend") != "local_runtime":
         findings.append(
@@ -6362,13 +7293,124 @@ def _v03_frozen_root_field_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
                     field,
                 )
             )
+    frozen_scalars = {
+        "dr_version": DR_VERSION_V0_3,
+        "dr_schema_version": DR_SCHEMA_VERSION_V0_3,
+        "schema_version": SCHEMA_VERSION_V0_4,
+        "protocol_version": PROTOCOL_VERSION_V0_4,
+    }
+    for field, expected in frozen_scalars.items():
+        if dr.get(field) != expected:
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_V03_FROZEN_ROOT_FIELD_DRIFT",
+                    (
+                        f"frozen field {field!r} must remain "
+                        f"{expected!r}, got {dr.get(field)!r}"
+                    ),
+                    field,
+                )
+            )
+
+    payload = _as_dict(dr.get("payload"))
+    manifest = _as_dict(dr.get("manifest"))
+    expected_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
+    if manifest.get("required_capabilities") != expected_capabilities:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_V03_FROZEN_ROOT_FIELD_DRIFT",
+                (
+                    "manifest.required_capabilities must remain "
+                    f"{expected_capabilities!r}"
+                ),
+                "manifest.required_capabilities",
+            )
+        )
+
+    required_payload_fields = (
+        "resident_identity",
+        "memory_policy",
+        "lattice_config",
+        "voice_config",
+        "runtime_requirements",
+    )
+    for field in required_payload_fields:
+        if not isinstance(payload.get(field), dict) or not payload.get(field):
+            findings.append(
+                _finding(
+                    "FAIL",
+                    "DR_V03_FROZEN_ROOT_FIELD_MISSING",
+                    f"frozen payload field {field!r} is missing",
+                    f"payload.{field}",
+                )
+            )
+    projection_expected = (
+        _as_dict(payload.get("audit_policy")).get(
+            "runtime_dialogue_projection_expected"
+        )
+        is True
+    )
+    if (
+        projection_expected
+        and "runtime_dialogue_projection" not in payload
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_V03_FROZEN_ROOT_FIELD_MISSING",
+                (
+                    "the current compile produced a runtime dialogue "
+                    "projection and the frozen derived field is missing"
+                ),
+                "payload.runtime_dialogue_projection",
+            )
+        )
+    elif "runtime_dialogue_projection" in payload and (
+        not isinstance(payload.get("runtime_dialogue_projection"), dict)
+        or not payload.get("runtime_dialogue_projection")
+    ):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_V03_FROZEN_ROOT_FIELD_DRIFT",
+                (
+                    "runtime_dialogue_projection must remain a non-empty "
+                    "derived object when present; legacy-compatible absence "
+                    "remains optional"
+                ),
+                "payload.runtime_dialogue_projection",
+            )
+        )
+    if not isinstance(payload.get("modules"), list):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_V03_FROZEN_ROOT_FIELD_MISSING",
+                "authoritative payload.modules must be present",
+                "payload.modules",
+            )
+        )
+    if not isinstance(dr.get("visual_expression_mapping"), dict):
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_V03_FROZEN_ROOT_FIELD_MISSING",
+                "frozen visual_expression_mapping projection is missing",
+                "visual_expression_mapping",
+            )
+        )
     if not findings:
         findings.append(
             _finding(
                 "PASS",
                 "DR_V03_FROZEN_ROOT_FIELD_CHECK_PASSED",
-                "frozen DR v0.3 root fields layers/modules/slots are present",
-                "layers",
+                (
+                    "frozen versions, required capabilities, authority "
+                    "projection, and runtime projection fields are present"
+                ),
+                "payload",
             )
         )
     return findings
@@ -6405,6 +7447,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         )
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
+    _synchronize_a4_module_status_classifications(collection)
     _synchronize_expression_state_module_output(collection, findings)
     _synchronize_particle_avatar_module_output(collection, findings)
     visual_expression_mapping_raw, visual_expression_diagnostics = (
@@ -6475,7 +7518,21 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         )
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
-    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": {"nodes": collection["nodes"], "edges": collection["edges"], "layers": collection["layers"], "modules": collection["modules"], "slots": collection["slots"]}, "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": _build_lightweight_graph_snapshot(collection), "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    payload["voice_config"] = derive_voice_config_status(
+        payload["voice_config"]
+    )
+    payload["lattice_config"] = derive_lattice_config_status(
+        payload["lattice_config"]
+    )
+    payload["audit_policy"].update(
+        {
+            "content_revision": STAGE7_4_12_A4_CONTENT_REVISION,
+            "capability_status_governance": (
+                build_capability_status_governance()
+            ),
+        }
+    )
     # payload.modules is the sole module authority. The frozen memory surface
     # remains unchanged; Stage 7.4 policy is attached later as an extension.
     payload["memory_config"]["storage_backend"] = "local_runtime"
@@ -6484,7 +7541,6 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         for route in payload["fallback_routes"]
         if route.get("capability") in set(STAGE_7_4_REQUIRED_SLOT_TYPES)
     ]
-    payload["graph_snapshot"].pop("modules", None)
     payload["memory_config"]["memory_types"] = list(_V03_FROZEN_MEMORY_TYPES)
     payload["memory_config"]["namespace"] = "default"
     payload["graph_snapshot"]["layer_outputs"] = _assemble_identity_core_outputs(
@@ -6496,6 +7552,11 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer3_safety_outputs(collection))
     _merge_layer3_safety_into_safety_policy(payload)
     payload["graph_snapshot"]["layer_outputs"].update(_assemble_layer8_behavior_outputs(collection))
+    payload["graph_snapshot"]["layer_outputs_status"] = (
+        module_surface_classification(
+            "payload.graph_snapshot.layer_outputs"
+        )
+    )
     _merge_layer8_behavior_into_payload(payload)
     payload.update(_assemble_first_greeting_config_extensions(collection))
     memory_policy_extensions = _assemble_layer5_memory_policy(collection, resident_id, findings)
@@ -6572,6 +7633,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     )
     if runtime_dialogue_projection is not None:
         payload["runtime_dialogue_projection"] = runtime_dialogue_projection
+    payload["audit_policy"][
+        "runtime_dialogue_projection_expected"
+    ] = runtime_dialogue_projection is not None
     manifest = {"resident_id": resident_id, "resident_name": resident_name_final, "dr_schema_version": DR_SCHEMA_VERSION_V0_3, "revision": "1", "source_protocol_version": PROTOCOL_VERSION_V0_4, "compatible_runtime": RUNTIME_VERSION, "required_capabilities": required_capabilities, "checksum": f"mock-checksum:{resident_id}:{len(collection['layers'])}:{len(collection['modules'])}:{len(collection['slots'])}"}
     findings.extend(_identity_consistency_findings(manifest, payload, resident))
     findings.extend(_environment_mapping_findings(payload))
@@ -6601,8 +7665,23 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "pending_validation_check": _v03_pending_validation_findings(dr),
         "duplicate_source_check": _v03_duplicate_source_findings(dr),
         "memory_support_level_check": _v03_memory_support_level_findings(dr),
+        "capability_status_check": _v03_capability_status_findings(dr),
+        "security_configuration_check": (
+            _v03_security_configuration_findings(dr)
+        ),
+        "empty_layer_status_check": (
+            _v03_empty_layer_status_findings(dr)
+        ),
     }
-    _attach_v03_audit_report(dr, findings, checked_at, named_check_findings)
+    _attach_v03_audit_report(
+        dr,
+        findings,
+        checked_at,
+        named_check_findings,
+        compatibility_metrics=collection.get(
+            "compatibility_metrics"
+        ),
+    )
     return dr
 
 
@@ -6611,6 +7690,21 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
     manifest = _as_dict(dr.get("manifest"))
     payload = _as_dict(dr.get("payload"))
     resident = _as_dict(dr.get("resident"))
+    payload_modules = (
+        payload.get("modules")
+        if "modules" in payload
+        else dr.get("modules")
+    )
+    payload_slots = (
+        payload.get("slots")
+        if "slots" in payload
+        else dr.get("slots")
+    )
+    payload_layers = (
+        payload.get("13_layers_snapshot")
+        if "13_layers_snapshot" in payload
+        else dr.get("layers")
+    )
     resident_id = manifest.get("resident_id") or resident.get("resident_id") or _as_dict(payload.get("resident_identity")).get("resident_id")
     visual_expression_mapping, compatibility_diagnostics = (
         normalize_visual_expression_mapping(dr.get("visual_expression_mapping"))
@@ -6621,18 +7715,16 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
     contract_findings = validate_v03_runtime_contract(dr)
     contract_valid = not any(finding.get("status") == "FAIL" for finding in contract_findings)
     audit_valid = bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))
-    ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload.get("modules"), list) and isinstance(payload.get("slots"), list) and audit_valid and contract_valid)
+    ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload_modules, list) and isinstance(payload_slots, list) and audit_valid and contract_valid)
     return {
         "loaded": bool(ok),
         "mock": True,
         "resident_id": resident_id,
         "dr_version": dr.get("dr_version"),
         "runtime_version": RUNTIME_VERSION,
-        "layer_count": len(
-            payload.get("13_layers_snapshot") or dr.get("layers") or []
-        ),
-        "module_count": len(payload.get("modules") or dr.get("modules") or []),
-        "slot_count": len(payload.get("slots") or dr.get("slots") or []),
+        "layer_count": len(payload_layers or []),
+        "module_count": len(payload_modules or []),
+        "slot_count": len(payload_slots or []),
         "audit_valid": audit_valid,
         "visual_expression_mapping": visual_expression_mapping,
         "compatibility_diagnostics": compatibility_diagnostics,

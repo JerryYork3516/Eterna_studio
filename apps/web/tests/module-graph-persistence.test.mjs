@@ -16,6 +16,7 @@ import {
   mergeChecklistTemplateDefaults,
   mergeCatalogFieldsPreservingValues,
   materializeLayer8BehaviorPolicy,
+  migrateAuthoritativeFieldCompatibilityMirrors,
   migrateDialogueRuntimeProfileId,
   migrateDialogueRuntimeProfileContentCopies,
   migrateExpressionStateSemanticsGraph,
@@ -31,6 +32,7 @@ import {
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
   STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
+  STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
   REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
@@ -43,6 +45,169 @@ import {
   serializeCanvasState,
 } from "../src/lib/canvas-persistence.ts";
 import { resolveLayerColor, resolveModuleColor } from "../src/components/neural-graph/neuralGraphColors.ts";
+
+test("A4 authoritative fields regenerate compatibility mirrors without replacing resident values", () => {
+  const authoritativeFields = [
+    {
+      field_key: "resident_rule",
+      field_value: "保留当前居民规则",
+      custom_metadata: { keep: true },
+    },
+    {
+      field_key: "custom_resident_field",
+      field_value: { authored: true },
+    },
+  ];
+  const displayFields = [
+    {
+      field_key: "display_cache",
+      field_value: "保留既有 data.fields 显示缓存",
+    },
+  ];
+  const graph = {
+    nodes: [
+      {
+        id: "layer_8::language_habit::language_behavior_core_rules",
+        data: {
+          schemaNode: {
+            node_id:
+              "layer_8::language_habit::language_behavior_core_rules",
+            type: "text_config",
+            data: {
+              node_type: "text_config",
+              params: {
+                fields: authoritativeFields,
+                legacy_fields: [
+                  { field_key: "resident_rule", field_value: "旧值" },
+                ],
+                legacy_data_fields: [],
+                resident_owned_setting: { keep: true },
+              },
+              fields: displayFields,
+            },
+          },
+        },
+      },
+      {
+        node_id: "expression_context_input",
+        type: "reference_input",
+        data: {
+          node_type: "reference_input",
+          params: {
+            fields: [
+              {
+                field_key: "expression_state",
+                field_value: "caring",
+              },
+            ],
+          },
+        },
+      },
+    ],
+    edges: [{ source: "first", target: "second" }],
+  };
+  const before = JSON.parse(JSON.stringify(graph));
+
+  const first =
+    migrateAuthoritativeFieldCompatibilityMirrors(graph);
+
+  assert.equal(first.migrated, true);
+  assert.deepEqual(graph, before);
+  const firstParams =
+    first.value.nodes[0].data.schemaNode.data.params;
+  assert.deepEqual(firstParams.fields, authoritativeFields);
+  assert.deepEqual(firstParams.legacy_fields, authoritativeFields);
+  assert.deepEqual(firstParams.legacy_data_fields, authoritativeFields);
+  assert.notStrictEqual(firstParams.legacy_fields, firstParams.fields);
+  assert.notStrictEqual(firstParams.legacy_data_fields, firstParams.fields);
+  assert.notStrictEqual(
+    firstParams.legacy_fields[0],
+    firstParams.fields[0]
+  );
+  assert.deepEqual(firstParams.resident_owned_setting, { keep: true });
+  assert.deepEqual(
+    first.value.nodes[0].data.schemaNode.data.fields,
+    displayFields
+  );
+  assert.equal(
+    firstParams.compatibility_authority_status_governance_revision,
+    STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION
+  );
+
+  const secondParams = first.value.nodes[1].data.params;
+  assert.deepEqual(secondParams.legacy_fields, secondParams.fields);
+  assert.deepEqual(secondParams.legacy_data_fields, secondParams.fields);
+  assert.equal(
+    secondParams.compatibility_authority_status_governance_revision,
+    STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION
+  );
+
+  const repeated =
+    migrateAuthoritativeFieldCompatibilityMirrors(first.value);
+  assert.equal(repeated.migrated, false);
+  assert.strictEqual(repeated.value, first.value);
+
+  const userEdited = JSON.parse(JSON.stringify(first.value));
+  userEdited.nodes[0].data.schemaNode.data.params.fields[0].field_value =
+    "用户修订后的当前规则";
+  const afterUserEdit =
+    migrateAuthoritativeFieldCompatibilityMirrors(userEdited);
+  assert.equal(afterUserEdit.migrated, true);
+  assert.equal(
+    afterUserEdit.value.nodes[0].data.schemaNode.data.params
+      .legacy_fields[0].field_value,
+    "用户修订后的当前规则"
+  );
+  assert.equal(
+    afterUserEdit.value.nodes[0].data.schemaNode.data.params
+      .legacy_data_fields[0].field_value,
+    "用户修订后的当前规则"
+  );
+  assert.equal(
+    migrateAuthoritativeFieldCompatibilityMirrors(afterUserEdit.value)
+      .migrated,
+    false
+  );
+});
+
+test("A4 promotes only unambiguous legacy-only fields and preserves conflicts", () => {
+  const legacyOnly = {
+    nodes: [
+      {
+        node_id: "legacy-only",
+        data: {
+          params: {
+            legacy_fields: [
+              { field_key: "resident_rule", field_value: "保留旧居民值" },
+            ],
+            legacy_data_fields: [
+              { field_key: "resident_rule", field_value: "保留旧居民值" },
+            ],
+          },
+        },
+      },
+    ],
+    edges: [],
+  };
+
+  const promoted =
+    migrateAuthoritativeFieldCompatibilityMirrors(legacyOnly);
+  assert.equal(promoted.migrated, true);
+  const promotedParams = promoted.value.nodes[0].data.params;
+  assert.deepEqual(promotedParams.fields, legacyOnly.nodes[0].data.params.legacy_fields);
+  assert.deepEqual(promotedParams.legacy_fields, promotedParams.fields);
+  assert.deepEqual(promotedParams.legacy_data_fields, promotedParams.fields);
+
+  const ambiguous = JSON.parse(JSON.stringify(legacyOnly));
+  ambiguous.nodes[0].data.params.legacy_data_fields[0].field_value =
+    "冲突的旧值";
+  const before = JSON.parse(JSON.stringify(ambiguous));
+  const preserved =
+    migrateAuthoritativeFieldCompatibilityMirrors(ambiguous);
+  assert.equal(preserved.migrated, false);
+  assert.deepEqual(preserved.value, before);
+  assert.equal("fields" in preserved.value.nodes[0].data.params, false);
+});
 
 const RECOVERY_DR_FIXTURE = {
   file_type: "digital_resident",
@@ -1891,6 +2056,12 @@ test("Stage 7.4.11 rebuilds the legacy expression graph once and preserves resid
   assert.deepEqual(input.position, legacyNodes[0].position);
   assert.equal(input.data.ui_name, "保留的表达上下文名称");
   const migratedFields = input.data.params.fields;
+  assert.deepEqual(input.data.params.legacy_fields, migratedFields);
+  assert.deepEqual(input.data.params.legacy_data_fields, migratedFields);
+  assert.equal(
+    input.data.params.compatibility_authority_status_governance_revision,
+    STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION
+  );
   assert.equal(migratedFields.find((field) => field.field_key === "expression_state").field_value, "caring");
   assert.equal(migratedFields.find((field) => field.field_key === "expression_intensity").field_value, 0.72);
   assert.equal(
@@ -2192,6 +2363,12 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   assert.deepEqual(input.position, legacyNode.position);
   assert.equal(input.data.ui_name, "保留的粒子视觉输入");
   const fields = input.data.params.fields;
+  assert.deepEqual(input.data.params.legacy_fields, fields);
+  assert.deepEqual(input.data.params.legacy_data_fields, fields);
+  assert.equal(
+    input.data.params.compatibility_authority_status_governance_revision,
+    STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION
+  );
   const valueOf = (fieldKey) =>
     fields.find((field) => field.field_key === fieldKey)?.field_value;
   assert.equal(valueOf("resident_default_base_color"), "#2468ac");

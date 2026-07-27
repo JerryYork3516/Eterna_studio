@@ -97,6 +97,7 @@ class LatticeConfigV03(V03BaseModel):
     color_palette: List[str] = Field(default_factory=list)
     focus_target: str = "none"
     state_transition_policy: str = "mock_transition"
+    status_classification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class VoiceConfigV03(V03BaseModel):
@@ -107,6 +108,7 @@ class VoiceConfigV03(V03BaseModel):
     voice_lattice_sync_policy: Dict[str, Any] = Field(default_factory=dict)
     speech_event_schema: Dict[str, Any] = Field(default_factory=dict)
     subtitle_policy: Dict[str, Any] = Field(default_factory=dict)
+    status_classification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ScreenCapabilityDeclarationV03(V03BaseModel):
@@ -180,6 +182,8 @@ class AuditReportV03(V03BaseModel):
     findings: List[AuditFindingV03] = Field(default_factory=list)
     checked_at: str
     summary: Dict[str, int] = Field(default_factory=dict)
+    serialization_metrics: Dict[str, Any] = Field(default_factory=dict)
+    compatibility_metrics: Dict[str, int] = Field(default_factory=dict)
 
 
 class VisualExpressionIntensityRangeV03(V03BaseModel):
