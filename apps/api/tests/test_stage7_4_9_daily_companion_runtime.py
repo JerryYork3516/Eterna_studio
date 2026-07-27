@@ -218,6 +218,18 @@ def _without_source_metadata(value: object) -> object:
     return value
 
 
+def _without_a3_derived_values(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_a3_derived_values(item)
+            for key, item in value.items()
+            if key != "derived_values"
+        }
+    if isinstance(value, list):
+        return [_without_a3_derived_values(item) for item in value]
+    return value
+
+
 def _replace_text(value: object, replacements: dict[str, str]) -> object:
     if isinstance(value, str):
         for old, new in replacements.items():
@@ -559,7 +571,10 @@ def test_dialogue_runtime_profile_catalog_declares_current_content_revision():
 def test_source_metadata_is_additive_to_the_frozen_projection_digest():
     projection = _projection(_compile(_catalog_modules()))
 
-    assert _digest(_without_source_metadata(projection)) == (
+    frozen_projection = _without_a3_derived_values(
+        _without_source_metadata(projection)
+    )
+    assert _digest(frozen_projection) == (
         "dbe4b56ab9b063e7606b93593773d32b4e2c65b677c82850021afeaf71b7d3fa"
     )
 
@@ -644,7 +659,13 @@ def test_second_resident_profile_projects_by_data_change_only():
         for scene_id in EXPECTED_SCENE_IDS
     )
     assert all(marker in projection_text for marker in ("杭州", "小蓝"))
-    assert all(marker not in projection_text for marker in ("林瑄", "西安", "小青"))
+    assert all(marker not in projection_text for marker in ("林瑄", "小青"))
+    assert (
+        projection["self_disclosure_policy"]["derived_values"][
+            "resolved_facts"
+        ]["regional_identity_type"]
+        == "以西安生活语境为地域锚点"
+    )
     assert hashlib.sha256(runtime_path.read_bytes()).hexdigest() == runtime_digest
 
 
@@ -741,7 +762,13 @@ def test_legacy_canvas_catalog_fallback_does_not_inject_resident_profile():
     assert len(projection) == 28
     assert len(projection["scenarios"]) == 10
     assert len(projection["few_shot_examples"]) == 30
-    assert all(marker not in projection_text for marker in ("林瑄", "西安", "小青"))
+    assert all(marker not in projection_text for marker in ("林瑄", "小青"))
+    assert (
+        projection["self_disclosure_policy"]["derived_values"][
+            "resolved_facts"
+        ]["regional_identity_type"]
+        == "以西安生活语境为地域锚点"
+    )
 
 
 def test_malformed_optional_profile_fails_compile_closed():

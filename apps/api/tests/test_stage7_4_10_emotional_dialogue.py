@@ -112,6 +112,18 @@ def _without_profile_source_id(value: object) -> object:
     return value
 
 
+def _without_a3_derived_values(value: object) -> object:
+    if isinstance(value, list):
+        return [_without_a3_derived_values(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _without_a3_derived_values(item)
+            for key, item in value.items()
+            if key != "derived_values"
+        }
+    return value
+
+
 def _legacy_profile_modules() -> list[dict]:
     modules = deepcopy(_modules())
     module = _profile_module(modules)
@@ -163,7 +175,11 @@ def test_stage7_4_9_daily_semantics_stay_stable_and_legacy_profile_stays_compati
     assert len(legacy_projection) == 28
     assert "emotional_dialogue" not in legacy_projection
     assert (
-        _digest(_without_profile_source_id(legacy_projection))
+        _digest(
+            _without_a3_derived_values(
+                _without_profile_source_id(legacy_projection)
+            )
+        )
         == LEGACY_PROJECTION_DIGEST
     )
     assert legacy["manifest"]["required_capabilities"] == current["manifest"][

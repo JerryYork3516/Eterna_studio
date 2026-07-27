@@ -36,6 +36,56 @@ VISUAL_EXPRESSION_LIFECYCLE_COMPOSABLE_STATES = (
     "thinking",
     "speaking",
 )
+VISUAL_EXPRESSION_FIELD_MAPPING = {
+    "selection_rules": {
+        "source_layer": "layer_8",
+        "source_module": DETAIL_BEHAVIOR_MODULE_ID,
+        "source_node": EXPRESSION_STATE_NODE_IDS["state_selection_rules"],
+        "source_field": "selection_rules",
+        "target_path": (
+            "visual_expression_mapping.state_selection_policy.selection_rules"
+        ),
+    },
+    "particle_core_mapping": (
+        ("brightness_multiplier", "brightness_multiplier"),
+        ("saturation_multiplier", "saturation_multiplier"),
+        ("color_temperature_offset", "temperature_shift"),
+        ("energy_multiplier", "energy_multiplier"),
+        ("motion_speed_multiplier", "motion_speed_multiplier"),
+        ("diffusion_multiplier", "diffusion_multiplier"),
+    ),
+    "transition_policy": (
+        ("transition_duration", "transition_duration"),
+        ("minimum_hold_duration", "minimum_hold_duration"),
+        ("transition_style", "transition_style"),
+        (
+            "same_state_retriggers_transition",
+            "repeat_same_state_restarts_transition",
+        ),
+        (
+            "new_state_continues_from_current_visual",
+            "continue_from_current_visual_value",
+        ),
+        (
+            "uses_accumulated_idle_time_as_progress",
+            "uses_accumulated_idle_time_as_progress",
+        ),
+        (
+            "minimum_hold_prevents_flicker",
+            "minimum_hold_prevents_flicker",
+        ),
+        ("transition_executor", "transition_executor"),
+    ),
+}
+_PARTICLE_TARGET_BY_SOURCE = dict(
+    VISUAL_EXPRESSION_FIELD_MAPPING["particle_core_mapping"]
+)
+_TRANSITION_SOURCE_BY_TARGET = {
+    target_key: source_key
+    for source_key, target_key in VISUAL_EXPRESSION_FIELD_MAPPING[
+        "transition_policy"
+    ]
+}
 VISUAL_EXPRESSION_TRANSITION_DEFAULTS = {
     "transition_duration": 0.0,
     "minimum_hold_duration": 0.0,
@@ -46,43 +96,24 @@ VISUAL_EXPRESSION_TRANSITION_DEFAULTS = {
     "minimum_hold_prevents_flicker": True,
     "transition_executor": "aftelle",
 }
+_VISUAL_EXPRESSION_PARAMETER_IDENTITIES = {
+    "brightness_multiplier": 1.0,
+    "saturation_multiplier": 1.0,
+    "temperature_shift": 0.0,
+    "energy_multiplier": 1.0,
+    "motion_speed_multiplier": 1.0,
+    "diffusion_multiplier": 1.0,
+}
 VISUAL_EXPRESSION_PARAMETER_SPECS = {
-    "brightness_multiplier": {
-        "source_key": "brightness_multiplier",
-        "identity": 1.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["brightness_multiplier"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["brightness_multiplier"][1],
-    },
-    "saturation_multiplier": {
-        "source_key": "saturation_multiplier",
-        "identity": 1.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["saturation_multiplier"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["saturation_multiplier"][1],
-    },
-    "temperature_shift": {
-        "source_key": "color_temperature_offset",
-        "identity": 0.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["color_temperature_offset"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["color_temperature_offset"][1],
-    },
-    "energy_multiplier": {
-        "source_key": "energy_multiplier",
-        "identity": 1.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["energy_multiplier"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["energy_multiplier"][1],
-    },
-    "motion_speed_multiplier": {
-        "source_key": "motion_speed_multiplier",
-        "identity": 1.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["motion_speed_multiplier"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["motion_speed_multiplier"][1],
-    },
-    "diffusion_multiplier": {
-        "source_key": "diffusion_multiplier",
-        "identity": 1.0,
-        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES["diffusion_multiplier"][0],
-        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES["diffusion_multiplier"][1],
-    },
+    target_key: {
+        "source_key": source_key,
+        "identity": _VISUAL_EXPRESSION_PARAMETER_IDENTITIES[target_key],
+        "minimum": PARTICLE_RELATIVE_PARAMETER_RANGES[source_key][0],
+        "maximum": PARTICLE_RELATIVE_PARAMETER_RANGES[source_key][1],
+    }
+    for source_key, target_key in VISUAL_EXPRESSION_FIELD_MAPPING[
+        "particle_core_mapping"
+    ]
 }
 VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS = {
     output_key: float(spec["identity"])
@@ -125,6 +156,7 @@ def _node_id(node: Dict[str, Any]) -> str:
 
 
 def _expression_selection_rules(module: Dict[str, Any]) -> List[str]:
+    mapping = _as_dict(VISUAL_EXPRESSION_FIELD_MAPPING["selection_rules"])
     graph = _as_dict(module.get("module_graph"))
     nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
     selection_node = next(
@@ -132,13 +164,12 @@ def _expression_selection_rules(module: Dict[str, Any]) -> List[str]:
             node
             for node in nodes
             if isinstance(node, dict)
-            and _node_id(node)
-            == EXPRESSION_STATE_NODE_IDS["state_selection_rules"]
+            and _node_id(node) == mapping["source_node"]
         ),
         {},
     )
     selection_rules = _as_dict(selection_node.get("params")).get(
-        "selection_rules"
+        mapping["source_field"]
     )
     if not isinstance(selection_rules, list) or not all(
         isinstance(rule, str) for rule in selection_rules
@@ -173,9 +204,8 @@ def _state_mapping_value(
     mapping: Any, state: str, source_key: str
 ) -> tuple[bool, Any]:
     state_mapping = _as_dict(_as_dict(mapping).get(state))
-    candidate_keys = [source_key]
-    if source_key == "color_temperature_offset":
-        candidate_keys.append("temperature_shift")
+    target_key = _PARTICLE_TARGET_BY_SOURCE.get(source_key, source_key)
+    candidate_keys = dict.fromkeys((source_key, target_key))
     for candidate_key in candidate_keys:
         if candidate_key in state_mapping:
             return True, deepcopy(state_mapping[candidate_key])
@@ -512,7 +542,7 @@ def build_visual_expression_mapping(
         path = f"visual_expression_mapping.transition_policy.{field_key}"
         fallback = float(VISUAL_EXPRESSION_TRANSITION_DEFAULTS[field_key])
         found, raw_value, _source = particle_transition_rule_source_value(
-            a2, field_key
+            a2, _TRANSITION_SOURCE_BY_TARGET[field_key]
         )
         parsed = _number(raw_value) if found else None
         if parsed is None:
@@ -524,7 +554,9 @@ def build_visual_expression_mapping(
         return bounded
 
     _style_found, transition_style, _style_source = (
-        particle_transition_rule_source_value(a2, "transition_style")
+        particle_transition_rule_source_value(
+            a2, _TRANSITION_SOURCE_BY_TARGET["transition_style"]
+        )
     )
     if transition_style != "smooth":
         transition_style = "smooth"
@@ -533,7 +565,10 @@ def build_visual_expression_mapping(
         )
     _repeat_found, repeat_same_state, _repeat_source = (
         particle_transition_rule_source_value(
-            a2, "same_state_retriggers_transition"
+            a2,
+            _TRANSITION_SOURCE_BY_TARGET[
+                "repeat_same_state_restarts_transition"
+            ],
         )
     )
     if not isinstance(repeat_same_state, bool):
@@ -543,7 +578,10 @@ def build_visual_expression_mapping(
         )
     _continue_found, continue_from_current, _continue_source = (
         particle_transition_rule_source_value(
-            a2, "new_state_continues_from_current_visual"
+            a2,
+            _TRANSITION_SOURCE_BY_TARGET[
+                "continue_from_current_visual_value"
+            ],
         )
     )
     if not isinstance(continue_from_current, bool):
@@ -556,7 +594,7 @@ def build_visual_expression_mapping(
         path = f"visual_expression_mapping.transition_policy.{field_key}"
         fallback = bool(VISUAL_EXPRESSION_TRANSITION_DEFAULTS[field_key])
         found, value, _source = particle_transition_rule_source_value(
-            a2, field_key
+            a2, _TRANSITION_SOURCE_BY_TARGET[field_key]
         )
         if not found or not isinstance(value, bool):
             defaulted_paths.add(path)
@@ -564,7 +602,9 @@ def build_visual_expression_mapping(
         return value
 
     found_executor, transition_executor, _executor_source = (
-        particle_transition_rule_source_value(a2, "transition_executor")
+        particle_transition_rule_source_value(
+            a2, _TRANSITION_SOURCE_BY_TARGET["transition_executor"]
+        )
     )
     if not found_executor or transition_executor != "aftelle":
         transition_executor = str(

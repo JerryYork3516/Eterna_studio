@@ -34,6 +34,10 @@ from .daily_companion_runtime import (
     extract_dialogue_runtime_profile,
     validate_dialogue_runtime_profile,
 )
+from .projection_traceability import (
+    build_projection_traceability,
+    projection_field_mapping_errors,
+)
 
 from ..dr.v3.dr_v0_3_schema import (
     DRDocumentV03,
@@ -149,6 +153,7 @@ from ..dr.v2.validator.capability_validator import (
 )
 from .visual_expression_projection import (
     VISUAL_EXPRESSION_ALLOWED_STATES,
+    VISUAL_EXPRESSION_FIELD_MAPPING,
     VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS,
     VISUAL_EXPRESSION_TRANSITION_DEFAULTS,
     build_visual_expression_mapping,
@@ -454,6 +459,61 @@ _LAYER5_MEMORY_POLICY_MODULES: tuple[tuple[str, str, str], ...] = (
     (MEMORY_ACCESS_CONTROL_MODULE_ID, MEMORY_ACCESS_CONTROL_OUTPUT_KEY, "memory_access_control"),
     (MEMORY_PROVIDER_ROUTER_MODULE_ID, MEMORY_PROVIDER_ROUTER_OUTPUT_KEY, "memory_provider_router"),
 )
+_RUNTIME_PROJECTION_NORMALIZED_OUTPUTS: tuple[
+    tuple[str, str], ...
+] = (
+    *(
+        (module_id, output_key)
+        for module_id, output_key, _policy_key in _LAYER5_MEMORY_POLICY_MODULES
+    ),
+    ("user_relationship", "user_relationship_config"),
+    ("relationship_rule", "relationship_behavior_config"),
+    ("intimacy_level", "relationship_stage_config"),
+    ("role_positioning", "trust_mechanism_config"),
+    (
+        "growth_plan",
+        "growth_identity_continuity_governance_config",
+    ),
+)
+_RUNTIME_RELATIONSHIP_POLICY_OUTPUTS: tuple[
+    tuple[str, str, str], ...
+] = (
+    ("user_relationship", "user_relationship_config", "user_relationship"),
+    (
+        "relationship_rule",
+        "relationship_behavior_config",
+        "relationship_boundaries",
+    ),
+    ("intimacy_level", "relationship_stage_config", "intimacy_limits"),
+    ("role_positioning", "trust_mechanism_config", "role_boundaries"),
+)
+_RUNTIME_DIALOGUE_DERIVED_VALUE_DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "memory_usage_policy": {
+        "memory_access_limits": {},
+        "memory_write_limits": {},
+        "sensitive_memory_handling": {},
+        "narrative_memory_usage_rules": {},
+        "conversation_and_long_term_boundary": {},
+    },
+    "relationship_policy": {
+        "user_relationship": {},
+        "relationship_boundaries": {},
+        "intimacy_limits": {},
+        "role_boundaries": {},
+    },
+    "self_disclosure_policy": {
+        "resolved_facts": {},
+        "relationship_awareness": {},
+        "immutable_core": [],
+        "real_human_boundary": True,
+        "growth_limits": {},
+    },
+    "advice_policy": {
+        "capability_scope": [],
+        "capability_limits": [],
+        "real_human_boundary": True,
+    },
+}
 _LAYER3_SAFETY_POLICY_CONFIGS = {
     CONTENT_SAFETY_MODULE_ID: {
         "output_key": CONTENT_SAFETY_OUTPUT_KEY,
@@ -2216,11 +2276,29 @@ def _synchronize_layer8_validation_results(
 
 def _assemble_layer8_behavior_outputs(collection: Dict[str, Any]) -> Dict[str, Any]:
     modules = {module.get("module_id"): module for module in collection.get("modules", []) if isinstance(module, dict)}
+    materialized_output_keys = {
+        module_id: output_key
+        for module_id, _policy_key, _preset_id, output_key in (
+            _LAYER8_MATERIALIZED_OUTPUTS
+        )
+    }
     behavior_modules: Dict[str, Any] = {}
     for module_id, policy_key, preset_id in _LAYER8_BEHAVIOR_MODULES:
         module = modules.get(module_id)
         if isinstance(module, dict):
-            behavior_modules[policy_key] = _behavior_module_policy(module, policy_key, preset_id)
+            output_key = materialized_output_keys.get(module_id)
+            materialized_output = (
+                _compiled_module_output(module, output_key)
+                if output_key
+                else {}
+            )
+            behavior_modules[policy_key] = (
+                materialized_output
+                if materialized_output
+                else _behavior_module_policy(
+                    module, policy_key, preset_id
+                )
+            )
 
     if not behavior_modules:
         return {}
@@ -2364,6 +2442,342 @@ def _set_compiled_module_output(module: Dict[str, Any], output_key: str, value: 
         ):
             node_outputs[output_key] = deepcopy(value)
             node["outputs"] = node_outputs
+
+
+def _catalog_module_output(module_id: str, output_key: str) -> Dict[str, Any]:
+    catalog_module = next(
+        (
+            candidate.model_dump(mode="json")
+            for candidate in get_module_catalog()
+            if candidate.module_id == module_id
+        ),
+        {},
+    )
+    return _compiled_module_output(catalog_module, output_key)
+
+
+def _synchronize_runtime_projection_source_outputs(
+    collection: Dict[str, Any],
+    findings: List[Dict[str, str]],
+) -> None:
+    """Normalize current editable fields before A3 reads Module Output."""
+
+    modules = {
+        module.get("module_id"): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict)
+    }
+    rebuilt_paths: List[str] = []
+    missing_paths: List[str] = []
+    for module_id, output_key in _RUNTIME_PROJECTION_NORMALIZED_OUTPUTS:
+        module = modules.get(module_id)
+        output_path = f"payload.modules.{module_id}.outputs.{output_key}"
+        if not isinstance(module, dict):
+            missing_paths.append(output_path)
+            continue
+        fields = _module_fields_from_field_input(module)
+        current_output = _compiled_module_output(module, output_key)
+        if not current_output and fields:
+            current_output = _catalog_module_output(module_id, output_key)
+            rebuilt_paths.append(output_path)
+        if not current_output:
+            missing_paths.append(output_path)
+            continue
+        normalized_output = _module_output_with_field_values(
+            current_output, fields
+        )
+        _set_compiled_module_output(module, output_key, normalized_output)
+
+    if rebuilt_paths:
+        findings.append(
+            _finding(
+                "WARNING",
+                "DR_PROJECTION_SOURCE_NODE_NORMALIZED",
+                (
+                    "Current node fields were normalized into missing module "
+                    "outputs before runtime projection: "
+                    + ", ".join(sorted(rebuilt_paths))
+                ),
+                "payload.modules",
+            )
+        )
+    if missing_paths:
+        findings.append(
+            _finding(
+                "WARNING",
+                "DR_PROJECTION_SOURCE_MISSING",
+                (
+                    "Runtime projection sources are missing and will use "
+                    "protocol compatibility fallbacks where allowed: "
+                    + ", ".join(sorted(missing_paths))
+                ),
+                "payload.runtime_dialogue_projection",
+            )
+        )
+
+
+def _runtime_projection_module_output(
+    modules: Dict[str, Dict[str, Any]],
+    module_id: str,
+    output_key: str,
+) -> Dict[str, Any]:
+    module = modules.get(module_id)
+    return (
+        _compiled_module_output(module, output_key)
+        if isinstance(module, dict)
+        else {}
+    )
+
+
+def _selected_mapping(value: Any, *keys: str) -> Dict[str, Any]:
+    source = _as_dict(value)
+    return {
+        key: deepcopy(source[key])
+        for key in keys
+        if key in source
+    }
+
+
+def _assemble_runtime_dialogue_policy_values(
+    collection: Dict[str, Any],
+    memory_policy_extensions: Dict[str, Any],
+    findings: List[Dict[str, str]],
+) -> Dict[str, Dict[str, Any]]:
+    """Derive existing runtime policies from current Layer 5/11/12 outputs."""
+
+    modules = {
+        str(module.get("module_id")): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict) and module.get("module_id")
+    }
+    derived = deepcopy(_RUNTIME_DIALOGUE_DERIVED_VALUE_DEFAULTS)
+    fallback_sections: List[str] = []
+
+    short_term = _as_dict(memory_policy_extensions.get("short_term_memory"))
+    preference = _as_dict(memory_policy_extensions.get("preference_memory"))
+    event = _as_dict(memory_policy_extensions.get("event_memory"))
+    relationship_memory = _as_dict(
+        memory_policy_extensions.get("relationship_memory")
+    )
+    memory_update = _as_dict(
+        memory_policy_extensions.get("memory_update")
+    )
+    memory_access = _as_dict(
+        memory_policy_extensions.get("memory_access_control")
+    )
+    memory_router = _as_dict(
+        memory_policy_extensions.get("memory_provider_router")
+    )
+    if all(
+        (
+            short_term,
+            preference,
+            event,
+            relationship_memory,
+            memory_update,
+            memory_access,
+            memory_router,
+        )
+    ):
+        derived["memory_usage_policy"] = {
+            "memory_access_limits": {
+                **_selected_mapping(
+                    memory_access,
+                    "permission_policy",
+                    "recall_claim_policy",
+                    "policy_actions",
+                ),
+                **_selected_mapping(
+                    memory_router,
+                    "resident_scope",
+                    "namespace_policy",
+                    "memory_type_policy",
+                ),
+            },
+            "memory_write_limits": _selected_mapping(
+                memory_update,
+                "allowed_operations",
+                "policy_priority",
+                "confirmation_policy",
+                "conflict_policy",
+                "write_boundary",
+                "no_dr_writeback",
+                "no_raw_sensitive_content",
+                "no_multi_resident_memory_share",
+            ),
+            "sensitive_memory_handling": {
+                **_selected_mapping(memory_access, "sensitive_policy"),
+                "preference_save_forbidden": deepcopy(
+                    preference.get("save_forbidden", [])
+                ),
+                "event_save_forbidden": deepcopy(
+                    event.get("save_forbidden", [])
+                ),
+            },
+            "narrative_memory_usage_rules": {
+                "event_memory": _selected_mapping(
+                    event, "save_allowed", "save_forbidden"
+                ),
+                "relationship_memory": _selected_mapping(
+                    relationship_memory,
+                    "allowed_content",
+                    "forbidden_content",
+                    "change_policy",
+                ),
+            },
+            "conversation_and_long_term_boundary": {
+                "short_term_memory": _selected_mapping(
+                    short_term,
+                    "retention",
+                    "expires_on",
+                    "allowed_content",
+                    "forbidden_content",
+                    "session_scoped_only",
+                ),
+                "preference_memory": _selected_mapping(
+                    preference, "save_allowed", "save_forbidden"
+                ),
+                "event_memory": _selected_mapping(
+                    event, "save_allowed", "save_forbidden"
+                ),
+                "relationship_memory": _selected_mapping(
+                    relationship_memory,
+                    "change_policy",
+                    "allowed_content",
+                    "forbidden_content",
+                ),
+            },
+        }
+    else:
+        fallback_sections.append("memory_usage_policy")
+
+    relationship_values: Dict[str, Any] = {}
+    for module_id, output_key, derived_key in (
+        _RUNTIME_RELATIONSHIP_POLICY_OUTPUTS
+    ):
+        output = _runtime_projection_module_output(
+            modules, module_id, output_key
+        )
+        fields = _as_dict(output.get("fields"))
+        if fields:
+            relationship_values[derived_key] = {
+                key: deepcopy(value)
+                for key, value in fields.items()
+                if not (
+                    derived_key == "user_relationship"
+                    and key == "initial_relationship"
+                )
+            }
+        else:
+            fallback_sections.append(
+                f"relationship_policy.{derived_key}"
+            )
+    if relationship_values:
+        derived["relationship_policy"].update(relationship_values)
+
+    self_awareness = _runtime_projection_module_output(
+        modules, "self_awareness", "self_awareness_config"
+    )
+    growth = _runtime_projection_module_output(
+        modules,
+        "growth_plan",
+        "growth_identity_continuity_governance_config",
+    )
+    self_fields = _as_dict(self_awareness.get("fields"))
+    resolved_facts = _as_dict(self_awareness.get("resolved_facts"))
+    capability_awareness = _as_dict(
+        self_awareness.get("capability_awareness")
+    )
+    limitation_awareness = _as_dict(
+        self_awareness.get("limitation_awareness")
+    )
+    if self_awareness:
+        capability_scope = deepcopy(
+            self_fields.get(
+                "capability_scope",
+                capability_awareness.get("allowed", []),
+            )
+        )
+        capability_limits = deepcopy(
+            self_fields.get(
+                "capability_limits",
+                limitation_awareness.get("limits", []),
+            )
+        )
+        relationship_awareness = deepcopy(
+            _as_dict(self_awareness.get("relationship_awareness"))
+        )
+        if "default_relationship_role" in resolved_facts:
+            relationship_awareness["default_role"] = deepcopy(
+                resolved_facts["default_relationship_role"]
+            )
+        derived["self_disclosure_policy"].update(
+            {
+                "resolved_facts": deepcopy(resolved_facts),
+                "relationship_awareness": relationship_awareness,
+                "immutable_core": deepcopy(
+                    self_fields.get(
+                        "immutable_core",
+                        self_awareness.get("immutable_core", []),
+                    )
+                ),
+                "real_human_boundary": bool(
+                    self_fields.get(
+                        "real_human_boundary",
+                        self_awareness.get("real_human_boundary", True),
+                    )
+                ),
+            }
+        )
+        derived["advice_policy"] = {
+            "capability_scope": capability_scope,
+            "capability_limits": capability_limits,
+            "real_human_boundary": bool(
+                self_fields.get(
+                    "real_human_boundary",
+                    self_awareness.get("real_human_boundary", True),
+                )
+            ),
+        }
+    else:
+        fallback_sections.extend(
+            ("self_disclosure_policy.self_awareness", "advice_policy")
+        )
+
+    if growth:
+        derived["self_disclosure_policy"]["growth_limits"] = (
+            _selected_mapping(
+                growth,
+                "growth_governance_status",
+                "authorization_status",
+                "adaptation_allowed",
+                "allowed_change_amplitude",
+                "identity_continuity_status",
+                "save_allowed",
+                "long_term_memory_write_allowed",
+                "user_confirmation_required",
+                "rollback_required",
+                "rollback_conditions",
+                "forbidden_change_reason",
+            )
+        )
+    else:
+        fallback_sections.append("self_disclosure_policy.growth_limits")
+
+    if fallback_sections:
+        findings.append(
+            _finding(
+                "WARNING",
+                "DR_PROJECTION_COMPATIBILITY_FALLBACK",
+                (
+                    "Runtime dialogue projection used protocol compatibility "
+                    "fallbacks for missing deep values: "
+                    + ", ".join(sorted(set(fallback_sections)))
+                ),
+                "payload.runtime_dialogue_projection",
+            )
+        )
+    return derived
 
 
 def _ensure_layer8_materialized_output_nodes(
@@ -3255,17 +3669,16 @@ def _synchronize_particle_avatar_module_output(
         for parameter in PARTICLE_RELATIVE_PARAMETER_RANGES
     }
     state_mappings: Dict[str, Dict[str, float]] = {}
+    particle_target_by_source = dict(
+        VISUAL_EXPRESSION_FIELD_MAPPING["particle_core_mapping"]
+    )
     for state in PARTICLE_EXPRESSION_STATES:
         state_mappings[state] = {}
         for parameter, (minimum, maximum) in (
             PARTICLE_RELATIVE_PARAMETER_RANGES.items()
         ):
             field_key = f"{state}_{parameter}"
-            output_key = (
-                "temperature_shift"
-                if parameter == "color_temperature_offset"
-                else parameter
-            )
+            output_key = particle_target_by_source[parameter]
             state_mappings[state][parameter] = bounded_number(
                 field_key,
                 float(VISUAL_EXPRESSION_SAFE_PARAMETER_DEFAULTS[output_key]),
@@ -3965,7 +4378,9 @@ def _assemble_layer5_memory_policy(
             )
             continue
         if policy_key == "memory_access_control":
-            output["recall_claim_policy"] = deepcopy(MEMORY_RECALL_CLAIM_POLICY)
+            output["recall_claim_policy"] = deepcopy(
+                MEMORY_RECALL_CLAIM_POLICY
+            )
             _set_compiled_module_output(module, output_key, output)
         memory_policy[policy_key] = output
 
@@ -5415,7 +5830,11 @@ def compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] = Non
             "findings": warnings,
             "ok": valid,
         },
-        "compile_audit": {"ok": valid, "findings": findings},
+        "compile_audit": {
+            "ok": valid,
+            "findings": findings,
+            "projection_traceability": build_projection_traceability(),
+        },
         "orchestration_compatibility": True,
         "pseudo_dag": v03.get("payload", {}).get("runtime_plan", {}).get("steps", []),
         "lattice_config": v03.get("payload", {}).get("lattice_config"),
@@ -5973,6 +6392,17 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             )
         )
     ]
+    mapping_errors = projection_field_mapping_errors()
+    if mapping_errors:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_PROJECTION_FIELD_MAPPING_ERROR",
+                "Runtime projection field mapping is invalid: "
+                + "; ".join(mapping_errors),
+                "compile_audit.projection_traceability.mappings",
+            )
+        )
     _synchronize_layer3_module_outputs(collection)
     _synchronize_stage_7_4_module_scope(collection)
     _synchronize_expression_state_module_output(collection, findings)
@@ -5994,6 +6424,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         )
     _synchronize_layer8_validation_results(collection, findings)
     _synchronize_layer8_behavior_module_outputs(collection)
+    _synchronize_runtime_projection_source_outputs(
+        collection, findings
+    )
     _synchronize_self_awareness_fact_sources(collection)
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
@@ -6126,10 +6559,16 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         )
         if present
     ]
+    runtime_policy_values = _assemble_runtime_dialogue_policy_values(
+        collection,
+        memory_policy_extensions,
+        findings,
+    )
     runtime_dialogue_projection = build_runtime_dialogue_projection(
         _as_dict(payload.get("behavior_policy")),
         supporting_source_paths,
         dialogue_runtime_profile,
+        runtime_policy_values,
     )
     if runtime_dialogue_projection is not None:
         payload["runtime_dialogue_projection"] = runtime_dialogue_projection
@@ -6215,7 +6654,11 @@ def _v3_compile_dr_result(canvas: Dict[str, Any], resident_name: Optional[str] =
         "warnings": warnings,
         "module_audit": {"checked": len(v03.get("payload", {}).get("modules", [])), "findings": errors, "ok": valid},
         "layer_audit": {"present_layers": [layer["layer_id"] for layer in v03.get("layers", []) if layer.get("present")], "missing_layers": [], "findings": warnings, "ok": valid},
-        "compile_audit": {"ok": valid, "findings": findings},
+        "compile_audit": {
+            "ok": valid,
+            "findings": findings,
+            "projection_traceability": build_projection_traceability(),
+        },
         "orchestration_compatibility": True,
         "pseudo_dag": pseudo_dag,
         "dr_version": v03.get("dr_version"),

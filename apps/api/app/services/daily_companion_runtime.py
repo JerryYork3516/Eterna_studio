@@ -636,6 +636,12 @@ _TRANSLATED_SOURCE_RULE_REFS: Set[str] = {
 _EXPECTED_POLICY_KEYS = {
     rule_ref.split(":", 1)[0] for rule_ref in _TRANSLATED_SOURCE_RULE_REFS
 }
+_RUNTIME_DERIVED_POLICY_KEYS = (
+    "memory_usage_policy",
+    "relationship_policy",
+    "self_disclosure_policy",
+    "advice_policy",
+)
 
 
 def _selected_rule_refs(behavior_policy: Dict[str, Any]) -> tuple[Set[str], Set[str]]:
@@ -1493,6 +1499,7 @@ def build_runtime_dialogue_projection(
     behavior_policy: Dict[str, Any],
     supporting_source_paths: list[str],
     dialogue_runtime_profile: Optional[Dict[str, Any]] = None,
+    runtime_policy_values: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Compile the frozen public policy plus an optional resident profile."""
 
@@ -1549,6 +1556,13 @@ def build_runtime_dialogue_projection(
             policies["self_disclosure_policy"]["instruction"] = disclosure["policy_instruction"]
         if isinstance(disclosure.get("system_instruction_override"), str) and disclosure["system_instruction_override"].strip():
             resident_segment = disclosure["system_instruction_override"]
+
+    if isinstance(runtime_policy_values, dict):
+        for policy_key in _RUNTIME_DERIVED_POLICY_KEYS:
+            if policy_key in runtime_policy_values:
+                policies[policy_key]["derived_values"] = deepcopy(
+                    runtime_policy_values[policy_key]
+                )
 
     for key in policies:
         trace: Any = profile_trace if profile and key in {"language_policy", "response_style", "self_disclosure_policy"} else public_trace
