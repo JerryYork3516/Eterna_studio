@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  canonicalizeLegacyMaterializedReferencePointers,
   firstInteractionEnabledValue,
   DIALOGUE_RUNTIME_PROFILE_ID,
   DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION,
@@ -15,6 +16,7 @@ import {
   mergeCatalogReferenceDeclarations,
   mergeChecklistTemplateDefaults,
   mergeCatalogFieldsPreservingValues,
+  materializeLegacyCompileFields,
   materializeLayer8BehaviorPolicy,
   migrateAuthoritativeFieldCompatibilityMirrors,
   migrateDialogueRuntimeProfileId,
@@ -33,6 +35,7 @@ import {
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
   STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
+  synchronizeAuthoritativeFieldCompatibilityParams,
   REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
@@ -207,6 +210,247 @@ test("A4 promotes only unambiguous legacy-only fields and preserves conflicts", 
   assert.equal(preserved.migrated, false);
   assert.deepEqual(preserved.value, before);
   assert.equal("fields" in preserved.value.nodes[0].data.params, false);
+});
+
+test("A4 compile materializes catalog field metadata and re-synchronizes compatibility mirrors", () => {
+  const genericFields = [
+    {
+      field_key: "name",
+      field_value: "保留居民姓名",
+      custom_metadata: { keep: true },
+    },
+    {
+      field_key: "custom_resident_field",
+      field_value: "保留自定义字段",
+    },
+  ];
+  const catalogFields = [
+    {
+      field_id: "name",
+      value: "",
+      required: true,
+      edit_scope: "developer_only",
+      update_level: "locked_core",
+      requires_recompile: true,
+      i18n_keys: {
+        label: "field.identity.name.label",
+        placeholder: "field.identity.name.placeholder",
+        help: "field.identity.name.help",
+      },
+    },
+  ];
+
+  const compiledFields = materializeLegacyCompileFields(
+    genericFields,
+    [catalogFields, genericFields]
+  );
+
+  assert.equal(compiledFields[0].field_id, "name");
+  assert.equal(compiledFields[0].value, "保留居民姓名");
+  assert.equal(compiledFields[0].field_value, "保留居民姓名");
+  assert.equal(compiledFields[0].required, true);
+  assert.equal(compiledFields[0].edit_scope, "developer_only");
+  assert.equal(compiledFields[0].update_level, "locked_core");
+  assert.equal(compiledFields[0].requires_recompile, true);
+  assert.deepEqual(compiledFields[0].i18n_keys, catalogFields[0].i18n_keys);
+  assert.deepEqual(compiledFields[0].custom_metadata, { keep: true });
+
+  assert.equal(compiledFields[1].field_id, "custom_resident_field");
+  assert.equal(compiledFields[1].value, "保留自定义字段");
+  assert.equal(compiledFields[1].required, false);
+  assert.equal(compiledFields[1].edit_scope, "user_editable");
+  assert.equal(compiledFields[1].update_level, "versioned_core");
+  assert.deepEqual(compiledFields[1].i18n_keys, {
+    label: "field.identity.custom_resident_field.label",
+    placeholder: "field.identity.custom_resident_field.placeholder",
+    help: "field.identity.custom_resident_field.help",
+  });
+
+  const synchronized =
+    synchronizeAuthoritativeFieldCompatibilityParams({
+      fields: compiledFields,
+      legacy_fields: genericFields,
+      legacy_data_fields: genericFields,
+    });
+  assert.equal(synchronized.migrated, true);
+  assert.deepEqual(synchronized.value.legacy_fields, compiledFields);
+  assert.deepEqual(synchronized.value.legacy_data_fields, compiledFields);
+  assert.equal(
+    synchronizeAuthoritativeFieldCompatibilityParams(synchronized.value)
+      .migrated,
+    false
+  );
+});
+
+test("compile canonicalizes verified Layer 8 legacy reference-output pointers without guessing", () => {
+  const sourceSpecs = [
+    {
+      moduleId: "language_habit",
+      oldNodeId:
+        "layer_8::language_habit_reference_output_1783764276372_1",
+      outputNodeId: "language_behavior_reference_output",
+      count: 4,
+    },
+    {
+      moduleId: "decision_pattern",
+      oldNodeId:
+        "layer_8::decision_pattern_reference_output_1783765320559_2",
+      outputNodeId: "decision_behavior_reference_output",
+      count: 9,
+    },
+    {
+      moduleId: "interaction_strategy",
+      oldNodeId:
+        "layer_8::interaction_strategy_reference_output_1783764912319_2",
+      outputNodeId: "interaction_behavior_reference_output",
+      count: 10,
+    },
+    {
+      moduleId: "behavior_habit",
+      oldNodeId:
+        "layer_8::behavior_habit_reference_output_1783764954151_2",
+      outputNodeId: "task_behavior_reference_output",
+      count: 3,
+    },
+    {
+      moduleId: "emotion_mapper",
+      oldNodeId:
+        "layer_8::emotion_mapper_reference_output_1783765131641_2",
+      outputNodeId: "social_behavior_reference_output",
+      count: 1,
+    },
+  ];
+  const sourceModules = sourceSpecs.map((source) => ({
+    module_id: source.moduleId,
+    layer_id: "layer_8",
+    module_graph: {
+      nodes: [
+        {
+          node_id: `${source.moduleId}_core_rules`,
+          node_type: "text_config",
+        },
+        {
+          node_id: source.outputNodeId,
+          node_type: "reference_output",
+        },
+      ],
+    },
+  }));
+  const references = sourceSpecs.flatMap((source) =>
+    Array.from({ length: source.count }, (_, index) => ({
+      reference_id: `${source.moduleId}_${index + 1}`,
+      source_layer_id: "layer_8",
+      source_module_id: source.moduleId,
+      source_node_id: source.oldNodeId,
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "references",
+      required: index % 2 === 0,
+    }))
+  );
+  const before = JSON.parse(JSON.stringify(references));
+
+  const first =
+    canonicalizeLegacyMaterializedReferencePointers(
+      references,
+      sourceModules
+    );
+
+  assert.equal(first.repairedCount, 27);
+  assert.deepEqual(references, before);
+  first.references.forEach((reference) => {
+    const source = sourceSpecs.find(
+      (item) => item.moduleId === reference.source_module_id
+    );
+    assert.ok(source);
+    assert.equal(reference.source_node_id, source.outputNodeId);
+    const original = before.find(
+      (item) => item.reference_id === reference.reference_id
+    );
+    assert.ok(original);
+    assert.deepEqual(
+      { ...reference, source_node_id: original.source_node_id },
+      original
+    );
+  });
+
+  const repeated =
+    canonicalizeLegacyMaterializedReferencePointers(
+      first.references,
+      sourceModules
+    );
+  assert.equal(repeated.repairedCount, 0);
+  assert.deepEqual(repeated.references, first.references);
+
+  const preserved = [
+    {
+      ...before[0],
+      reference_id: "valid_stable",
+      source_node_id: "language_behavior_reference_output",
+    },
+    {
+      ...before[0],
+      reference_id: "unknown_manual",
+      source_node_id:
+        "layer_8::language_habit_reference_output_custom",
+    },
+    {
+      ...before[0],
+      reference_id: "field_scope",
+      source_scope: "field",
+      source_field_paths: [
+        "language_behavior_config.fields.tone",
+      ],
+    },
+    {
+      ...before[0],
+      reference_id: "node_scope",
+      source_scope: "node",
+    },
+    {
+      ...before[0],
+      reference_id: "missing_source",
+      source_module_id: "missing_module",
+    },
+  ];
+  const ambiguousModules = sourceModules.map((module) =>
+    module.module_id === "language_habit"
+      ? {
+          ...module,
+          module_graph: {
+            nodes: [
+              ...module.module_graph.nodes,
+              {
+                node_id:
+                  "language_behavior_reference_output_secondary",
+                node_type: "reference_output",
+              },
+            ],
+          },
+        }
+      : module
+  );
+  const ambiguous = [
+    {
+      ...before[0],
+      reference_id: "ambiguous_output",
+    },
+  ];
+
+  const preservedResult =
+    canonicalizeLegacyMaterializedReferencePointers(
+      preserved,
+      sourceModules
+    );
+  assert.equal(preservedResult.repairedCount, 0);
+  assert.deepEqual(preservedResult.references, preserved);
+  const ambiguousResult =
+    canonicalizeLegacyMaterializedReferencePointers(
+      ambiguous,
+      ambiguousModules
+    );
+  assert.equal(ambiguousResult.repairedCount, 0);
+  assert.deepEqual(ambiguousResult.references, ambiguous);
 });
 
 const RECOVERY_DR_FIXTURE = {

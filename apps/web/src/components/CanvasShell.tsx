@@ -32,7 +32,13 @@ import { ModuleLibrary, readModuleDragId } from "@/components/ModuleLibrary";
 import { StudioAssistantPanel } from "@/components/assistant/StudioAssistantPanel";
 import { getNodeDefinition, getNodeRegistryEntries, getNodeStatus, setBackendNodeRegistry, type NodeDefinition, type NodeInputField } from "@/registry/nodeRegistry";
 import { useCanvasStore } from "@/store/canvas-store";
-import { filterDanglingModuleGraphEdges, mergeCatalogReferenceDeclarations } from "@/store/module-graph-merge";
+import {
+  canonicalizeLegacyMaterializedReferencePointers,
+  filterDanglingModuleGraphEdges,
+  materializeLegacyCompileFields,
+  mergeCatalogReferenceDeclarations,
+  synchronizeAuthoritativeFieldCompatibilityParams,
+} from "@/store/module-graph-merge";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
 import { ResidentNeuralGraphPanel } from "@/components/neural-graph/ResidentNeuralGraphPanel";
@@ -1592,6 +1598,7 @@ const REFERENCE_INPUT_FORBIDDEN_KEYS = new Set([
 type ReferenceInputNormalizationStats = {
   beforeCount: number;
   afterCount: number;
+  repairedCount: number;
   duplicateCount: number;
   strippedCount: number;
   invalidCount: number;
@@ -1733,6 +1740,7 @@ function emptyReferenceInputStats(): ReferenceInputNormalizationStats {
   return {
     beforeCount: 0,
     afterCount: 0,
+    repairedCount: 0,
     duplicateCount: 0,
     strippedCount: 0,
     invalidCount: 0,
@@ -1922,7 +1930,7 @@ function normalizeWorkflowReferenceInputs(workflow: Workflow): { workflow: Workf
     ? structuredClone(workflow)
     : JSON.parse(JSON.stringify(workflow)) as Workflow;
   if (Array.isArray(nextWorkflow.modules)) {
-    nextWorkflow.modules = nextWorkflow.modules.map((module) => {
+    const normalizedModules = nextWorkflow.modules.map((module) => {
       if (!isRecord(module)) {
         return module;
       }
@@ -1943,6 +1951,61 @@ function normalizeWorkflowReferenceInputs(workflow: Workflow): { workflow: Workf
             return {
               ...node,
               params: normalizeReferenceInputParams(cloneRecord(node.params), stats, seen),
+            };
+          }),
+        },
+      };
+    });
+    nextWorkflow.modules =
+      normalizedModules as Workflow["modules"];
+    const compiledModules =
+      normalizedModules.filter(isRecord);
+    nextWorkflow.modules = normalizedModules.map((module) => {
+      if (!isRecord(module)) {
+        return module;
+      }
+      const graph = isRecord(module.module_graph)
+        ? module.module_graph
+        : null;
+      const nodes = Array.isArray(graph?.nodes)
+        ? graph.nodes
+        : null;
+      if (!graph || !nodes) {
+        return module;
+      }
+      return {
+        ...module,
+        module_graph: {
+          ...graph,
+          nodes: nodes.map((node) => {
+            if (
+              !isRecord(node) ||
+              String(node.node_type || "") !== "reference_input"
+            ) {
+              return node;
+            }
+            const params = isRecord(node.params)
+              ? node.params
+              : {};
+            const references = Array.isArray(params.references)
+              ? params.references.filter(isRecord)
+              : [];
+            const canonicalized =
+              canonicalizeLegacyMaterializedReferencePointers(
+                references,
+                compiledModules
+              );
+            stats.repairedCount +=
+              canonicalized.repairedCount;
+            if (canonicalized.repairedCount === 0) {
+              return node;
+            }
+            return {
+              ...node,
+              params: {
+                ...params,
+                references: canonicalized.references,
+              },
             };
           }),
         },
@@ -2281,44 +2344,28 @@ function normalizeMemoryRouterOperationParams(
   return nextParams;
 }
 
-function legacyFieldInputFieldsForCompile(data: Record<string, unknown>, params: Record<string, unknown>) {
+function legacyFieldInputFieldsForCompile(
+  data: Record<string, unknown>,
+  params: Record<string, unknown>,
+  module: ModuleCatalogEntryV04
+) {
   const genericFields = Array.isArray(params.fields) ? params.fields.filter(isRecord) : [];
-  const genericValues = genericFieldValueByKey(genericFields);
-  const legacyFields = Array.isArray(params.legacy_data_fields)
+  const catalogFields = fieldInputFieldsFromCatalogModule(module);
+  const displayFields = Array.isArray(data.fields)
+    ? data.fields.filter(isRecord)
+    : [];
+  const legacyDataFields = Array.isArray(params.legacy_data_fields)
     ? params.legacy_data_fields.filter(isRecord)
-    : Array.isArray(data.fields)
-      ? data.fields.filter(isRecord)
-      : [];
-
-  if (legacyFields.length) {
-    return safeClone(legacyFields).map((field, index) => {
-      const fieldId = String(field.field_id || field.field_key || field.key || field.id || `field_${index + 1}`);
-      if (!genericValues.has(fieldId)) {
-        return field;
-      }
-      return {
-        ...field,
-        value: genericValues.get(fieldId),
-      };
-    });
-  }
-
-  return genericFields.map((field, index) => {
-    const fieldId = String(field.field_key || field.field_id || field.key || field.id || `field_${index + 1}`);
-    return {
-      field_id: fieldId,
-      value: "field_value" in field ? field.field_value : field.value,
-      required: false,
-      edit_scope: "user_editable",
-      update_level: "versioned_core",
-      requires_recompile: true,
-      i18n_keys: {
-        label: `field.identity.${fieldId}.label`,
-        placeholder: `field.identity.${fieldId}.placeholder`,
-        help: `field.identity.${fieldId}.help`,
-      },
-    };
-  });
+    : [];
+  const legacyFields = Array.isArray(params.legacy_fields)
+    ? params.legacy_fields.filter(isRecord)
+    : [];
+  return materializeLegacyCompileFields(genericFields, [
+    catalogFields,
+    displayFields,
+    legacyDataFields,
+    legacyFields,
+  ]);
 }
 
 function updateFieldValue(fields: Record<string, unknown>[], index: number, value: unknown) {
@@ -2343,10 +2390,17 @@ function compileNodeRecord(schemaNode: WorkflowNode, module: ModuleCatalogEntryV
     (typeof data.layer_id === "string" && data.layer_id) ||
     layerIdFromInstanceId(String(data.parent_module || "")) ||
     module.layer_id;
+  let fieldsRebuiltForCompile = false;
   if (nodeType === "text_input" && legacyNodeType && Array.isArray(params.fields)) {
-    params.fields = legacyFieldInputFieldsForCompile(data, params);
+    params.fields = legacyFieldInputFieldsForCompile(data, params, module);
+    fieldsRebuiltForCompile = true;
   } else if (compileNodeType === "field_input" || compileNodeType === "text_config") {
     params.fields = fieldInputFields(schemaNode);
+    fieldsRebuiltForCompile = true;
+  }
+  if (fieldsRebuiltForCompile) {
+    params =
+      synchronizeAuthoritativeFieldCompatibilityParams(params).value;
   }
   if (compileNodeType === "reference_output") {
     params = normalizeReferenceOutputParams(params, compileLayerId);
@@ -4956,7 +5010,7 @@ export function CanvasShell() {
     setBottomTab("logs");
     setActiveDrawer("logs");
     appendLog(
-      `[reference-input] pure pointer normalize: ${referenceStats.beforeCount} -> ${referenceStats.afterCount}; invalid=${referenceStats.invalidCount}; duplicates=${referenceStats.duplicateCount}; stripped=${referenceStats.strippedCount}; cycles=${referenceStats.cycleCount}`,
+      `[reference-input] pure pointer normalize: ${referenceStats.beforeCount} -> ${referenceStats.afterCount}; repaired=${referenceStats.repairedCount}; invalid=${referenceStats.invalidCount}; duplicates=${referenceStats.duplicateCount}; stripped=${referenceStats.strippedCount}; cycles=${referenceStats.cycleCount}`,
       referenceStats.invalidCount > 0 || referenceStats.cycleCount > 0 ? "warn" : "info"
     );
     for (const sample of referenceStats.invalidSamples) {

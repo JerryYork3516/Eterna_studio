@@ -376,6 +376,85 @@ export function synchronizeAuthoritativeFieldCompatibilityParams(
   };
 }
 
+function compileFieldId(
+  field: Record<string, unknown>,
+  index: number
+): string {
+  return String(
+    field.field_id ||
+      field.field_key ||
+      field.key ||
+      field.id ||
+      `field_${index + 1}`
+  );
+}
+
+export function materializeLegacyCompileFields(
+  currentFields: Record<string, unknown>[],
+  metadataSources: Record<string, unknown>[][]
+): Record<string, unknown>[] {
+  const metadataByFieldId = new Map<string, Record<string, unknown>>();
+  metadataSources.forEach((fields) => {
+    fields.forEach((field, index) => {
+      const fieldId = compileFieldId(field, index);
+      if (!metadataByFieldId.has(fieldId)) {
+        metadataByFieldId.set(fieldId, field);
+      }
+    });
+  });
+
+  return currentFields.map((field, index) => {
+    const fieldId = compileFieldId(field, index);
+    const metadata = metadataByFieldId.get(fieldId) ?? {};
+    const currentI18n = isRecord(field.i18n_keys)
+      ? field.i18n_keys
+      : {};
+    const metadataI18n = isRecord(metadata.i18n_keys)
+      ? metadata.i18n_keys
+      : {};
+    const value =
+      "field_value" in field ? field.field_value : field.value;
+    return {
+      ...cloneJsonValue(metadata),
+      ...cloneJsonValue(field),
+      field_id: fieldId,
+      value,
+      required:
+        typeof metadata.required === "boolean"
+          ? metadata.required
+          : typeof field.required === "boolean"
+            ? field.required
+            : false,
+      edit_scope:
+        metadata.edit_scope || field.edit_scope || "user_editable",
+      update_level:
+        metadata.update_level || field.update_level || "versioned_core",
+      requires_recompile:
+        typeof metadata.requires_recompile === "boolean"
+          ? metadata.requires_recompile
+          : typeof field.requires_recompile === "boolean"
+            ? field.requires_recompile
+            : true,
+      i18n_keys: {
+        ...currentI18n,
+        ...metadataI18n,
+        label:
+          metadataI18n.label ||
+          currentI18n.label ||
+          `field.identity.${fieldId}.label`,
+        placeholder:
+          metadataI18n.placeholder ||
+          currentI18n.placeholder ||
+          `field.identity.${fieldId}.placeholder`,
+        help:
+          metadataI18n.help ||
+          currentI18n.help ||
+          `field.identity.${fieldId}.help`,
+      },
+    };
+  });
+}
+
 function compatibilityGraphSchemaNode(
   value: unknown
 ): Record<string, unknown> | null {
@@ -1589,4 +1668,111 @@ export function mergeAvailableModuleReferencePointers(
     repairedCount,
     changed: addedCount > 0 || repairedCount > 0,
   };
+}
+
+const LAYER8_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = new Set([
+  "language_habit",
+  "decision_pattern",
+  "interaction_strategy",
+  "behavior_habit",
+  "emotion_mapper",
+]);
+
+function compiledModuleGraphNodes(
+  module: Record<string, unknown>
+): Record<string, unknown>[] {
+  const graph = isRecord(module.module_graph) ? module.module_graph : {};
+  return Array.isArray(graph.nodes)
+    ? graph.nodes.filter(isRecord)
+    : [];
+}
+
+function isLegacyMaterializedReferenceOutputId(
+  sourceNodeId: string,
+  sourceLayerId: string,
+  sourceModuleId: string
+): boolean {
+  const prefix =
+    `${sourceLayerId}::${sourceModuleId}_reference_output_`;
+  if (!sourceNodeId.startsWith(prefix)) {
+    return false;
+  }
+  const suffix = sourceNodeId.slice(prefix.length).split("_");
+  return (
+    suffix.length === 2 &&
+    suffix.every((part) => /^\d+$/.test(part))
+  );
+}
+
+export function canonicalizeLegacyMaterializedReferencePointers(
+  currentReferences: Record<string, unknown>[],
+  sourceModules: Record<string, unknown>[]
+): {
+  references: Record<string, unknown>[];
+  repairedCount: number;
+} {
+  const modulesById = new Map(
+    sourceModules
+      .map((module) => [String(module.module_id || ""), module] as const)
+      .filter(([moduleId]) => Boolean(moduleId))
+  );
+  let repairedCount = 0;
+  const references = currentReferences.map((reference) => {
+    const sourceModuleId = String(reference.source_module_id || "");
+    const sourceLayerId = String(reference.source_layer_id || "");
+    const sourceNodeId = String(reference.source_node_id || "");
+    const sourceModule = modulesById.get(sourceModuleId);
+    if (
+      !sourceModule ||
+      !LAYER8_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS.has(
+        sourceModuleId
+      ) ||
+      String(sourceModule.layer_id || "") !== sourceLayerId ||
+      String(reference.source_scope || "module") !== "module" ||
+      (Array.isArray(reference.source_field_paths) &&
+        reference.source_field_paths.length > 0) ||
+      !isLegacyMaterializedReferenceOutputId(
+        sourceNodeId,
+        sourceLayerId,
+        sourceModuleId
+      )
+    ) {
+      return cloneJsonValue(reference);
+    }
+    const nodes = compiledModuleGraphNodes(sourceModule);
+    const nodeIds = new Set<string>();
+    nodes.forEach((node) => {
+      const nodeId = String(node.node_id || node.id || "");
+      if (!nodeId) {
+        return;
+      }
+      nodeIds.add(nodeId);
+      nodeIds.add(
+        `${sourceLayerId}::${sourceModuleId}::${nodeId}`
+      );
+    });
+    if (nodeIds.has(sourceNodeId)) {
+      return cloneJsonValue(reference);
+    }
+    const referenceOutputIds = [
+      ...new Set(
+        nodes
+          .filter(
+            (node) =>
+              String(node.node_type || "") === "reference_output"
+          )
+          .map((node) => String(node.node_id || node.id || ""))
+          .filter(Boolean)
+      ),
+    ];
+    if (referenceOutputIds.length !== 1) {
+      return cloneJsonValue(reference);
+    }
+    repairedCount += 1;
+    return {
+      ...cloneJsonValue(reference),
+      source_node_id: referenceOutputIds[0],
+    };
+  });
+  return { references, repairedCount };
 }
