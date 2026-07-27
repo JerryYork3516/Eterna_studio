@@ -22,6 +22,8 @@ import {
   migrateDialogueRuntimeProfileId,
   migrateDialogueRuntimeProfileContentCopies,
   migrateExpressionStateSemanticsGraph,
+  migrateFirstGreetingIdentityLiteralGraph,
+  migrateFirstGreetingIdentityLiterals,
   migrateParticleExpressionRelativeMappingGraph,
   normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
@@ -33,6 +35,7 @@ import {
   mergeAvailableModuleReferencePointers,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+  STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
   STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
   synchronizeAuthoritativeFieldCompatibilityParams,
@@ -765,6 +768,51 @@ test("Stage 7.4.8 migrates only Linxuan greeting content once", () => {
   assert.deepEqual(otherResident.value, stored);
 });
 
+test("Stage 7.4.12 removes only the resident self-introduction from first greetings", () => {
+  const stored = {
+    locale: "zh-CN",
+    content_status: "authored",
+    variants: [
+      "你好，我叫林瑄。刚见面，先认识一下吧。",
+      "你好，我是林瑄。第一次见面，请多关照。",
+      { text: "你好，我是林瑄。你叫什么名字？", variant_id: "question" },
+    ],
+    max_sentences: 2,
+  };
+  const migrated = migrateFirstGreetingIdentityLiterals(stored, [
+    "林瑄",
+    "linxuan_hum_cn_xian_01",
+  ]);
+  assert.equal(migrated.migrated, true);
+  assert.equal(migrated.markComplete, true);
+  assert.equal(migrated.value.content_status, "authored");
+  assert.deepEqual(migrated.value.variants, [
+    "你好。刚见面，先认识一下吧。",
+    "你好。第一次见面，请多关照。",
+    { text: "你好。你叫什么名字？", variant_id: "question" },
+  ]);
+  assert.equal(migrated.value.max_sentences, 2);
+  assert.doesNotMatch(JSON.stringify(migrated.value), /林瑄|linxuan/i);
+
+  const repeated = migrateFirstGreetingIdentityLiterals(
+    migrated.value,
+    ["林瑄", "linxuan_hum_cn_xian_01"]
+  );
+  assert.equal(repeated.migrated, false);
+  assert.equal(repeated.markComplete, true);
+  assert.deepEqual(repeated.value, migrated.value);
+
+  const unsupported = migrateFirstGreetingIdentityLiterals(
+    {
+      content_status: "authored",
+      variants: ["你好。叫我林瑄就好。"],
+    },
+    ["林瑄"]
+  );
+  assert.equal(unsupported.migrated, false);
+  assert.equal(unsupported.markComplete, false);
+});
+
 test("Stage 7.4.8 checkbox derives true and false from the stored nested value", () => {
   assert.equal(firstInteractionEnabledValue({ enabled: false }), false);
   assert.equal(firstInteractionEnabledValue({ enabled: true }), true);
@@ -805,6 +853,20 @@ test("Stage 7.4.8 editor migration marker is local-only and resident-scoped", ()
       hasEditorMigrationMarker(STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION, LINXUAN_RESIDENT_ID),
       true
     );
+    assert.equal(
+      saveEditorMigrationMarker(
+        STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
+        LINXUAN_RESIDENT_ID
+      ),
+      true
+    );
+    assert.equal(
+      hasEditorMigrationMarker(
+        STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
+        LINXUAN_RESIDENT_ID
+      ),
+      true
+    );
     assert.doesNotMatch(
       JSON.stringify(serializeCanvasState({})),
       /stage7_4_8_first_(interaction_enabled|greeting_integrity)_v1/
@@ -827,6 +889,128 @@ test("Stage 7.4.8 greeting content migration writes the exact visual-style field
   assert.match(bridgeSource, /STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION/);
   assert.match(bridgeSource, /hasFirstGreetingConfigField[\s\S]*?Array\.isArray\(params\.fields\)/s);
   assert.match(bridgeSource, /moduleNodeId === VISUAL_STYLE_GRAPH_ID[\s\S]*?saveModuleGraphState\(moduleNodeId, mergedGraph\.nodes, mergedGraph\.edges\)/s);
+});
+
+test("Stage 7.4.12 greeting identity migration synchronizes real Studio graph copies and output", () => {
+  const greeting = {
+    locale: "zh-CN",
+    content_status: "authored",
+    variants: ["你好，我是林瑄。第一次见面，请多关照。"],
+  };
+  const firstPresence = {
+    particle_state: "calm",
+    custom_visual_note: "resident-authored",
+  };
+  const greetingField = {
+    field_key: "first_greeting",
+    field_value: greeting,
+    description:
+      "Optional first-greeting presentation configuration; greeting copy remains unauthored.",
+  };
+  const presenceField = {
+    field_key: "first_presence",
+    field_value: firstPresence,
+  };
+  const graph = {
+    moduleNodeId: "layer_10::visual_style",
+    nodes: [
+      {
+        id: "input-wrapper",
+        data: {
+          schemaNode: {
+            data: {
+              catalog_node_id: "visual_style_first_greeting_config",
+              params: {
+                fields: [greetingField, presenceField],
+                legacy_fields: [greetingField, presenceField],
+                legacy_data_fields: [greetingField, presenceField],
+                unrelated: "preserved",
+              },
+              fields: [greetingField, presenceField],
+            },
+          },
+        },
+      },
+      {
+        id: "output-wrapper",
+        data: {
+          schemaNode: {
+            data: {
+              catalog_node_id: "visual_style_first_presence_output",
+              outputs: {
+                first_presence_config: {
+                  first_greeting: greeting,
+                  first_presence: firstPresence,
+                  unrelated_output: "preserved",
+                },
+                module_output: "first_presence_config",
+              },
+            },
+          },
+        },
+      },
+    ],
+    edges: [],
+  };
+
+  const migration = migrateFirstGreetingIdentityLiteralGraph(
+    graph,
+    ["林瑄", "linxuan_hum_cn_xian_01"]
+  );
+  assert.equal(migration.migrated, true);
+  assert.equal(migration.markComplete, true);
+  const inputData = migration.value.nodes[0].data.schemaNode.data;
+  const outputData = migration.value.nodes[1].data.schemaNode.data;
+  for (const key of ["fields", "legacy_fields", "legacy_data_fields"]) {
+    assert.equal(
+      inputData.params[key][0].field_value.variants[0],
+      "你好。第一次见面，请多关照。"
+    );
+    assert.doesNotMatch(
+      inputData.params[key][0].description,
+      /unauthored/
+    );
+    assert.match(
+      inputData.params[key][0].description,
+      /authored/
+    );
+    assert.deepEqual(inputData.params[key][1].field_value, firstPresence);
+  }
+  assert.equal(
+    inputData.fields[0].field_value.variants[0],
+    "你好。第一次见面，请多关照。"
+  );
+  assert.equal(inputData.params.unrelated, "preserved");
+  assert.equal(
+    inputData.params.identity_literal_export_gate_revision,
+    STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION
+  );
+  assert.equal(
+    outputData.outputs.first_presence_config.first_greeting.variants[0],
+    "你好。第一次见面，请多关照。"
+  );
+  assert.deepEqual(
+    outputData.outputs.first_presence_config.first_presence,
+    firstPresence
+  );
+  assert.equal(
+    outputData.outputs.first_presence_config.unrelated_output,
+    "preserved"
+  );
+
+  const repeated = migrateFirstGreetingIdentityLiteralGraph(
+    migration.value,
+    ["林瑄", "linxuan_hum_cn_xian_01"]
+  );
+  assert.equal(repeated.migrated, false);
+  assert.equal(repeated.markComplete, true);
+
+  const incomplete = migrateFirstGreetingIdentityLiteralGraph(
+    { ...graph, nodes: [graph.nodes[0]] },
+    ["林瑄"]
+  );
+  assert.equal(incomplete.migrated, true);
+  assert.equal(incomplete.markComplete, false);
 });
 
 test("Stage 7.4.8 first-interaction enabled uses params fields through save and reload", () => {

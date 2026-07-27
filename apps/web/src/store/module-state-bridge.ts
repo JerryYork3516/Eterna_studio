@@ -28,6 +28,7 @@ import {
   materializeLayer8BehaviorPolicy,
   migrateAuthoritativeFieldCompatibilityMirrors,
   migrateDialogueRuntimeProfileContentCopies,
+  migrateFirstGreetingIdentityLiteralGraph,
   LINXUAN_RESIDENT_ID,
   migrateLinxuanFirstGreetingValue,
   migrateLinxuanFirstInteractionEnabledValue,
@@ -38,6 +39,7 @@ import {
   preserveStoredModuleNodePosition,
   STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION,
   STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION,
+  STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
   STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   type AvailableModuleReferenceSource,
 } from "./module-graph-merge";
@@ -3355,6 +3357,8 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
     migrateAuthoritativeFieldCompatibilityMirrors(
       graphAfterGenericFieldsMigration
     );
+  let graphAfterCompatibilityMigration =
+    graphAfterGenericFieldsMigration;
   if (compatibilityFieldMigration.migrated) {
     const synchronizedGraph = compatibilityFieldMigration.value;
     store.updateModuleGraph(
@@ -3372,9 +3376,17 @@ function applyGenericFieldsMigration(graph: ModuleGraph): ModuleGraph {
       "[P1-BRIDGE] synchronized authoritative fields into compatibility mirrors",
       { moduleNodeId: synchronizedGraph.moduleNodeId }
     );
-    return synchronizedGraph;
+    graphAfterCompatibilityMigration = synchronizedGraph;
   }
-  return graphAfterGenericFieldsMigration;
+  if (
+    graphAfterCompatibilityMigration.moduleNodeId ===
+    VISUAL_STYLE_GRAPH_ID
+  ) {
+    return migrateLinxuanFirstGreetingIdentityLiteralsInGraph(
+      graphAfterCompatibilityMigration
+    );
+  }
+  return graphAfterCompatibilityMigration;
 }
 
 function migrateExistingGenericFieldsGraphs() {
@@ -3563,6 +3575,73 @@ function migrateLinxuanFirstGreetingContentOnce() {
   );
 }
 
+function migrateLinxuanFirstGreetingIdentityLiteralsInGraph(
+  visualStyleGraph: ModuleGraph
+): ModuleGraph {
+  if (
+    hasEditorMigrationMarker(
+      STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
+      LINXUAN_RESIDENT_ID
+    )
+  ) {
+    return visualStyleGraph;
+  }
+
+  const identityGraph = persistedOrHydratedGraph(LINXUAN_IDENTITY_GRAPH_ID);
+  if (!identityGraph || graphFieldValue(identityGraph, "resident_id") !== LINXUAN_RESIDENT_ID) {
+    return visualStyleGraph;
+  }
+  const identityLiterals = [
+    "name",
+    "pinyin",
+    "nickname",
+    "display_alias",
+    "codename",
+    "export_name",
+    "resident_id",
+  ]
+    .map((fieldId) => graphFieldValue(identityGraph, fieldId))
+    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+  if (identityLiterals.length === 0) {
+    return visualStyleGraph;
+  }
+
+  const migration = migrateFirstGreetingIdentityLiteralGraph(
+    visualStyleGraph,
+    identityLiterals
+  );
+  const nextGraph = migration.value as ModuleGraph;
+  if (migration.migrated) {
+    const store = useCanvasStore.getState();
+    store.updateModuleGraph(
+      nextGraph.moduleNodeId,
+      nextGraph.nodes,
+      nextGraph.edges,
+      nextGraph.viewport
+    );
+    if (!saveModuleGraphState(nextGraph.moduleNodeId, nextGraph.nodes, nextGraph.edges)) {
+      return visualStyleGraph;
+    }
+  }
+  if (migration.markComplete) {
+    saveEditorMigrationMarker(
+      STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
+      LINXUAN_RESIDENT_ID
+    );
+  }
+  return nextGraph;
+}
+
+function migrateLinxuanFirstGreetingIdentityLiteralsOnce() {
+  const visualStyleGraph = persistedOrHydratedGraph(VISUAL_STYLE_GRAPH_ID);
+  if (!visualStyleGraph) {
+    return;
+  }
+  migrateLinxuanFirstGreetingIdentityLiteralsInGraph(
+    visualStyleGraph
+  );
+}
+
 /**
  * 初始化 module state 水合
  * 
@@ -3623,6 +3702,7 @@ export function initializeModuleState() {
   store.setModuleInstanceRegistry(moduleState.moduleInstanceRegistry);
   migrateLinxuanFirstInteractionEnabledOnce();
   migrateLinxuanFirstGreetingContentOnce();
+  migrateLinxuanFirstGreetingIdentityLiteralsOnce();
   migrateExistingGenericFieldsGraphs();
   
   console.log("[P1-BRIDGE] initializeModuleState: hydration completed", {
@@ -3648,6 +3728,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
   }
   if (moduleNodeId === LINXUAN_IDENTITY_GRAPH_ID || moduleNodeId === VISUAL_STYLE_GRAPH_ID) {
     migrateLinxuanFirstGreetingContentOnce();
+    migrateLinxuanFirstGreetingIdentityLiteralsOnce();
   }
   const store = useCanvasStore.getState();
   const hasInitialGraph = Boolean(initialNodes?.length || initialEdges?.length);

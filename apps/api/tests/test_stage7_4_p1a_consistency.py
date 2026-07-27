@@ -7,6 +7,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.services import dr_compiler as dr_compiler_module
 from app.main import app
 from app.registry.module_catalog import get_module_catalog
 from app.services.dr_compiler import (
@@ -543,14 +544,23 @@ def test_identity_source_allows_resident_name():
     canvas, _values = _basic_identity_canvas()
     result = compile_dr_result_v0_3(canvas)
     assert result["valid"] is True
-    assert not any("NAME_HARDCODED" in item["code"] for item in result["warnings"])
+    assert not any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
+    assert result["dr_payload"]["audit_policy"][
+        "identity_literal_export_gate_revision"
+    ] == "stage7_4_12_identity_literal_export_gate_fix_v1"
 
 
 def test_resident_identity_summary_allows_resident_name():
     canvas, values = _basic_identity_canvas()
     dr = compile_dr_v0_3(canvas)
     assert dr["payload"]["resident_identity"]["name"] == values["name"]
-    assert not any("NAME_HARDCODED" in item["code"] for item in dr["audit_report"]["findings"])
+    assert not any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in dr["audit_report"]["findings"]
+    )
 
 
 def test_resident_identity_fallback_name_is_used_for_scanning():
@@ -558,7 +568,11 @@ def test_resident_identity_fallback_name_is_used_for_scanning():
     personality = _module(modules, "personality_traits")
     _field(personality, "personality_base")["field_value"] = "林瑄会保持温和。"
     result = compile_dr_result_v0_3(_canvas(modules), resident_name="林瑄")
-    assert any(item["code"] == "DR_RESIDENT_NAME_HARDCODED" for item in result["warnings"])
+    assert result["valid"] is False
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
 
 
 def test_technical_resident_id_reference_is_allowed():
@@ -569,7 +583,10 @@ def test_technical_resident_id_reference_is_allowed():
     )
     result = compile_dr_result_v0_3(canvas)
     assert result["valid"] is True
-    assert not any("NAME_HARDCODED" in item["code"] for item in result["warnings"])
+    assert not any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
 
 
 def test_reference_key_does_not_hide_natural_language_name():
@@ -580,16 +597,74 @@ def test_reference_key_does_not_hide_natural_language_name():
     )
     result = compile_dr_result_v0_3(canvas)
     assert any(
-        item["code"] == "DR_RESIDENT_NAME_HARDCODED" and "field_id=character_reference" in item["message"]
-        for item in result["warnings"]
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "field_id=character_reference" in item["message"]
+        for item in result["errors"]
     )
 
 
-def test_technical_config_enum_is_not_reported_as_codename_text():
+def test_short_technical_codename_does_not_match_unrelated_catalog_enums():
     canvas, _values = _basic_identity_canvas()
     _field(_module(canvas["modules"], "module_basic_identity"), "codename")["value"] = "core"
     result = compile_dr_result_v0_3(canvas)
-    assert not any("NAME_HARDCODED" in item["code"] for item in result["warnings"])
+    assert not any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
+
+
+def test_short_ascii_identity_is_not_inferred_from_prose_but_is_blocked_in_config_id():
+    canvas, _values = _basic_identity_canvas()
+    _field(_module(canvas["modules"], "module_basic_identity"), "name")["value"] = "May"
+    personality = _module(canvas["modules"], "personality_traits")
+    _field(personality, "personality_base")["field_value"] = (
+        "The resident may respond after a short pause."
+    )
+    assert compile_dr_result_v0_3(canvas)["valid"] is True
+
+    personality["config"]["profile_id"] = "may_profile"
+    blocked = compile_dr_result_v0_3(canvas)
+    assert blocked["valid"] is False
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "field_id=config.profile_id" in item["message"]
+        for item in blocked["errors"]
+    )
+
+
+def test_generic_value_text_is_not_forced_into_identifier_matching():
+    canvas, _values = _basic_identity_canvas()
+    _field(_module(canvas["modules"], "module_basic_identity"), "name")[
+        "value"
+    ] = "May"
+    personality = _module(canvas["modules"], "personality_traits")
+    _field_node(personality)["params"]["display_copy"] = {
+        "value": "May I help with that?"
+    }
+
+    assert compile_dr_result_v0_3(canvas)["valid"] is True
+
+
+def test_ascii_resident_name_does_not_match_protocol_keys_or_enums():
+    for resident_name in ("Memory", "Calm"):
+        canvas, _values = _basic_identity_canvas()
+        identity = _module(
+            canvas["modules"],
+            "module_basic_identity",
+        )
+        _field(identity, "name")["value"] = resident_name
+        _field(identity, "codename")["value"] = ""
+        _field(identity, "export_name")["value"] = ""
+        _field(identity, "resident_id")["value"] = "dr_test_0001"
+
+        result = compile_dr_result_v0_3(canvas)
+
+        assert result["valid"] is True
+        assert not any(
+            item["code"]
+            == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+            for item in result["errors"]
+        )
 
 
 def test_single_character_nickname_is_reported_inside_natural_text():
@@ -599,8 +674,9 @@ def test_single_character_nickname_is_reported_inside_natural_text():
     _field(personality, "personality_base")["field_value"] = "小瑄会在表达中保持温和。"
     result = compile_dr_result_v0_3(canvas)
     assert any(
-        item["code"] == "DR_RESIDENT_NAME_HARDCODED" and "identity_fields=display_alias" in item["message"]
-        for item in result["warnings"]
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "identity_fields=display_alias" in item["message"]
+        for item in result["errors"]
     )
 
 
@@ -610,17 +686,28 @@ def test_ascii_codename_is_reported_next_to_chinese_text():
     _field(personality, "personality_base")["field_value"] = "请让linxuan_hum_cn_xian_01保持温和。"
     result = compile_dr_result_v0_3(canvas)
     assert any(
-        item["code"] == "DR_RESIDENT_NAME_HARDCODED" and "codename" in item["message"]
-        for item in result["warnings"]
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "codename" in item["message"]
+        for item in result["errors"]
     )
 
 
 def test_non_identity_natural_language_name_is_reported():
     canvas, _text = _identity_warning_canvas()
     result = compile_dr_result_v0_3(canvas)
-    finding = next(item for item in result["warnings"] if item["code"] == "DR_RESIDENT_NAME_HARDCODED")
-    assert result["valid"] is True
+    finding = next(
+        item
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+    )
+    assert result["valid"] is False
     assert all(token in finding["message"] for token in ("layer_id=layer_2", "module_id=personality_traits", "node_id=", "field_id=personality_base", "text_type=non_identity_module_text"))
+    response = client.post("/dr/export", json=canvas)
+    assert response.status_code == 422
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in response.json()["detail"]["errors"]
+    )
 
 
 def test_non_identity_module_description_name_is_reported():
@@ -629,8 +716,9 @@ def test_non_identity_module_description_name_is_reported():
     result = compile_dr_result_v0_3(canvas)
     finding = next(
         item
-        for item in result["warnings"]
-        if item["code"] == "DR_RESIDENT_NAME_HARDCODED" and "field_id=description" in item["message"]
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "field_id=description" in item["message"]
     )
     assert "node_id=module" in finding["message"]
     assert "text_type=non_identity_module_text" in finding["message"]
@@ -661,12 +749,215 @@ def test_name_scanner_covers_required_text_regions():
     result = compile_dr_result_v0_3(canvas)
     text_types = {
         marker
-        for item in result["warnings"]
-        if item["code"] == "DR_RESIDENT_NAME_HARDCODED"
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
         for marker in ("memory_seed", "dialogue_rule", "visual_hint", "template_default", "behavior_policy")
         if f"text_type={marker}" in item["message"]
     }
     assert text_types == {"memory_seed", "dialogue_rule", "visual_hint", "template_default", "behavior_policy"}
+
+
+def test_identity_gate_scans_config_ids_and_nested_few_shots():
+    canvas, values = _basic_identity_canvas()
+    _field(
+        _module(canvas["modules"], "module_basic_identity"),
+        "export_name",
+    )["value"] = ""
+    personality = _module(canvas["modules"], "personality_traits")
+    personality["config"]["profile_id"] = "linxuan_profile"
+    personality["config"]["profiles"] = {
+        f"{values['codename']}_profile": {"enabled": True}
+    }
+    field_node = _field_node(personality)
+    field_node["params"]["selected_options"] = [values["codename"]]
+    field_node["params"]["few_shot_examples"] = [
+        {"assistant": "林瑄会先听完，再温和回应。"}
+    ]
+
+    result = compile_dr_result_v0_3(canvas)
+    assert result["valid"] is False
+    findings = [
+        item
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+    ]
+    assert any(
+        "field_id=config.profile_id" in item["message"]
+        and "identity_fields=pinyin" in item["message"]
+        for item in findings
+    )
+    assert any(".__key__" in item["message"] for item in findings)
+    assert any("selected_options" in item["message"] for item in findings)
+    assert any("few_shot_examples" in item["message"] for item in findings)
+    assert (
+        result["metadata"]["v03_audit_report"]["summary"][
+            "identity_literal_export_gate_check_fail"
+        ]
+        >= 2
+    )
+
+
+def test_identity_gate_scans_raw_reference_strings():
+    canvas, values = _basic_identity_canvas()
+    personality = _module(canvas["modules"], "personality_traits")
+    _field_node(personality)["params"]["references"] = [
+        f"{values['codename']}_profile"
+    ]
+
+    result = compile_dr_result_v0_3(canvas)
+
+    assert result["valid"] is False
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "references[0]" in item["message"]
+        for item in result["errors"]
+    )
+
+
+def test_exact_resident_id_in_reference_value_is_allowed():
+    canvas, values = _basic_identity_canvas()
+    personality = _module(canvas["modules"], "personality_traits")
+    _field_node(personality)["params"]["references"] = [
+        {
+            "key": "resident_id",
+            "value": values["resident_id"],
+        }
+    ]
+
+    result = compile_dr_result_v0_3(canvas)
+
+    assert result["valid"] is True
+    assert not any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
+
+
+def test_identity_gate_scans_projection_only_identity_literals(monkeypatch):
+    canvas, _values = _basic_identity_canvas()
+    original_builder = (
+        dr_compiler_module.build_runtime_dialogue_projection
+    )
+
+    def projection_with_illegal_literal(*args, **kwargs):
+        projection = original_builder(*args, **kwargs)
+        assert projection is not None
+        projection["few_shot_examples"] = [
+            {
+                "user": "你好",
+                "assistant": "林瑄会先听完，再温和回应。",
+            }
+        ]
+        return projection
+
+    monkeypatch.setattr(
+        dr_compiler_module,
+        "build_runtime_dialogue_projection",
+        projection_with_illegal_literal,
+    )
+    result = compile_dr_result_v0_3(canvas)
+
+    assert result["valid"] is False
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and item["path"].startswith(
+            "payload.runtime_dialogue_projection."
+        )
+        for item in result["errors"]
+    )
+
+
+def test_identity_gate_scans_root_visual_projection_only_literals(
+    monkeypatch,
+):
+    canvas, _values = _basic_identity_canvas()
+    original_builder = (
+        dr_compiler_module.build_visual_expression_mapping
+    )
+
+    def visual_projection_with_illegal_literal(*args, **kwargs):
+        projection, diagnostics = original_builder(*args, **kwargs)
+        projection["state_selection_policy"][
+            "selection_rules"
+        ][0] = "林瑄会直接选择本轮表达状态。"
+        return projection, diagnostics
+
+    monkeypatch.setattr(
+        dr_compiler_module,
+        "build_visual_expression_mapping",
+        visual_projection_with_illegal_literal,
+    )
+    result = compile_dr_result_v0_3(canvas)
+
+    assert result["valid"] is False
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and item["path"].startswith(
+            "visual_expression_mapping."
+        )
+        for item in result["errors"]
+    )
+
+
+def test_fixed_resident_id_is_allowed_only_as_an_exact_resident_scoped_reference():
+    canvas, values = _basic_identity_canvas()
+    personality = _module(canvas["modules"], "personality_traits")
+    _field_node(personality)["params"]["fields"].extend(
+        [
+            {
+                "field_key": "resident_id",
+                "field_value": values["resident_id"],
+                "required": False,
+            },
+            {
+                "field_key": "profile_id",
+                "field_value": f"profile_{values['resident_id']}",
+                "required": False,
+            },
+        ]
+    )
+
+    result = compile_dr_result_v0_3(canvas)
+    findings = [
+        item
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+    ]
+    assert result["valid"] is False
+    assert not any("field_id=resident_id," in item["message"] for item in findings)
+    assert any("field_id=profile_id" in item["message"] for item in findings)
+
+
+def test_identity_gate_scans_node_outputs_without_duplicate_mirror_findings():
+    canvas, _values = _basic_identity_canvas()
+    personality = _module(canvas["modules"], "personality_traits")
+    field_node = _field_node(personality)
+    identity_text = "林瑄会在表达中保持温和和克制。"
+    _field(personality, "personality_base")["field_value"] = identity_text
+    field_node["outputs"] = {"rule": identity_text}
+    personality.setdefault("outputs", {})["identity_echo"] = identity_text
+
+    result = compile_dr_result_v0_3(canvas)
+    findings = [
+        item
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+    ]
+    assert result["valid"] is False
+    assert len(findings) == 1
+    assert "field_id=personality_base" in findings[0]["message"]
+
+    clean_canvas, _clean_values = _basic_identity_canvas()
+    clean_personality = _module(clean_canvas["modules"], "personality_traits")
+    _field_node(clean_personality)["outputs"] = {
+        "rule": "林瑄只存在于节点输出。"
+    }
+    output_only = compile_dr_result_v0_3(clean_canvas)
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "field_id=outputs.rule" in item["message"]
+        for item in output_only["errors"]
+    )
 
 
 def test_template_default_name_is_reported_once():
@@ -676,8 +967,9 @@ def test_template_default_name_is_reported_once():
     result = compile_dr_result_v0_3(canvas)
     findings = [
         item
-        for item in result["warnings"]
-        if item["code"] == "DR_RESIDENT_NAME_HARDCODED" and "text_type=template_default" in item["message"]
+        for item in result["errors"]
+        if item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        and "text_type=template_default" in item["message"]
     ]
     assert len(findings) == 1
 
@@ -696,5 +988,8 @@ def test_generic_template_cannot_embed_resident_name():
     canvas, _text = _identity_warning_canvas(generic=True)
     result = compile_dr_result_v0_3(canvas)
     assert result["valid"] is False
-    assert any(item["code"] == "DR_GENERIC_TEMPLATE_RESIDENT_NAME_HARDCODED" for item in result["errors"])
+    assert any(
+        item["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+        for item in result["errors"]
+    )
     assert client.post("/dr/export", json=canvas).status_code == 422

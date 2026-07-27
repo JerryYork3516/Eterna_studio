@@ -149,6 +149,9 @@ from ..registry.module_catalog import (
     RELATIONSHIP_MEMORY_OUTPUT_KEY,
     SHORT_TERM_MEMORY_MODULE_ID,
     SHORT_TERM_MEMORY_OUTPUT_KEY,
+    FIRST_GREETING_AUTHORED_DESCRIPTION,
+    FIRST_GREETING_STALE_UNAUTHORED_DESCRIPTION,
+    STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
 )
 from ..registry.slot_catalog import get_slot_catalog
 from ..dr.v2.validator.capability_validator import (
@@ -215,6 +218,7 @@ _V03_AUDIT_CHECK_NAMES = (
     "capability_status_check",
     "formal_schema_check",
     "security_configuration_check",
+    "identity_literal_export_gate_check",
     "empty_layer_status_check",
     "file_size_check",
 )
@@ -4076,6 +4080,44 @@ def _synchronize_first_presence_module_output(
     if not isinstance(module, dict):
         return
 
+    input_node = next(
+        (
+            node
+            for node in _module_graph_nodes(module)
+            if _module_graph_node_id(node)
+            == "visual_style_first_greeting_config"
+        ),
+        None,
+    )
+    if isinstance(input_node, dict):
+        input_params = (
+            input_node.get("params")
+            if isinstance(input_node.get("params"), dict)
+            else {}
+        )
+        for field_list_key in (
+            "fields",
+            "legacy_fields",
+            "legacy_data_fields",
+        ):
+            field_list = input_params.get(field_list_key)
+            if not isinstance(field_list, list):
+                continue
+            for field in field_list:
+                if (
+                    isinstance(field, dict)
+                    and _field_identifier(field, 0) == "first_greeting"
+                    and field.get("description")
+                    == FIRST_GREETING_STALE_UNAUTHORED_DESCRIPTION
+                ):
+                    field["description"] = (
+                        FIRST_GREETING_AUTHORED_DESCRIPTION
+                    )
+        input_params["identity_literal_export_gate_revision"] = (
+            STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION
+        )
+        input_node["params"] = input_params
+
     greeting_found, greeting = _configured_module_field_value(
         collection, "visual_style", "first_greeting"
     )
@@ -5153,6 +5195,27 @@ def _identity_hardcode_terms(payload: Dict[str, Any]) -> Dict[str, str]:
         value = _nonempty_str(basic_fields.get(field_id)) or _nonempty_str(resident_identity.get(field_id))
         if value:
             terms[field_id] = value
+    if "pinyin" not in terms:
+        codename_tokens = [
+            token
+            for token in re.split(r"[^A-Za-z0-9]+", terms.get("codename", ""))
+            if token
+        ]
+        resident_id_tokens = [
+            token
+            for token in re.split(r"[^A-Za-z0-9]+", terms.get("resident_id", ""))
+            if token
+        ]
+        while resident_id_tokens and resident_id_tokens[-1].isdigit():
+            resident_id_tokens.pop()
+        if (
+            codename_tokens
+            and resident_id_tokens
+            and len(codename_tokens[0]) >= 3
+            and codename_tokens[0].casefold()
+            == resident_id_tokens[-1].casefold()
+        ):
+            terms["pinyin"] = codename_tokens[0]
     return terms
 
 
@@ -5164,7 +5227,7 @@ def _text_contains_identity_term(text: str, term: str) -> bool:
         return term in text
     return bool(
         re.search(
-            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])",
             text,
             flags=re.IGNORECASE,
         )
@@ -5174,8 +5237,24 @@ def _text_contains_identity_term(text: str, term: str) -> bool:
 def _technical_identity_reference_field(field_id: str) -> bool:
     normalized = field_id.lower()
     leaf = normalized.rsplit(".", 1)[-1].split("[", 1)[0]
+    reference_value = (
+        leaf == "value"
+        and any(
+            container in normalized
+            for container in (
+                ".reference[",
+                ".references[",
+                ".reference_option[",
+                ".reference_options[",
+                ".recommended_reference[",
+                ".recommended_references[",
+            )
+        )
+    )
     return (
         leaf in {"resident_id", "resident_ids", "namespace", "memory_namespace"}
+        or leaf == "source_id"
+        or reference_value
         or leaf.endswith("_resident_id")
         or leaf.endswith("_resident_ids")
         or leaf.endswith("_ref")
@@ -5213,6 +5292,10 @@ def _natural_language_text_path(field_path: str) -> bool:
         "behavior_policy",
         "behavior_rule",
         "behavior_rules",
+        "few_shot",
+        "few_shots",
+        "few_shot_example",
+        "few_shot_examples",
     }
     suffixes = (
         "_description",
@@ -5237,8 +5320,109 @@ def _natural_language_text_path(field_path: str) -> bool:
         "_visual_hints",
         "_behavior_policy",
         "_behavior_rules",
+        "_few_shot",
+        "_few_shots",
+        "_few_shot_example",
+        "_few_shot_examples",
     )
     return leaf in exact or leaf.endswith(suffixes)
+
+
+def _identity_identifier_path(field_path: str) -> bool:
+    normalized = field_path.lower()
+    leaf = normalized.rsplit(".", 1)[-1].split("[", 1)[0]
+    option_containers = {
+        "option",
+        "options",
+        "selected_option",
+        "selected_options",
+        "default_selected_option",
+        "default_selected_options",
+        "reference_option",
+        "reference_options",
+        "reference",
+        "references",
+        "recommended_reference",
+        "recommended_references",
+    }
+    path_segments = {
+        segment.split("[", 1)[0]
+        for segment in normalized.split(".")
+    }
+    return (
+        leaf in {
+            "id",
+            "key",
+            "name",
+            "module_id",
+            "node_id",
+            "config_id",
+            "profile_id",
+            "template_id",
+            "preset_id",
+            "option",
+            "options",
+            "selected_option",
+            "selected_options",
+            "default_selected_option",
+            "default_selected_options",
+            "reference_option",
+            "reference_options",
+            "reference",
+            "references",
+            "recommended_reference",
+            "recommended_references",
+        }
+        or (
+            leaf in {"value", "values"}
+            and bool(path_segments.intersection(option_containers))
+        )
+        or leaf.endswith(("_id", "_key", "_identifier"))
+    )
+
+
+def _identity_config_identifier_path(field_path: str) -> bool:
+    normalized = field_path.lower()
+    leaf = normalized.rsplit(".", 1)[-1].split("[", 1)[0]
+    return (
+        leaf
+        in {
+            "config_id",
+            "profile_id",
+            "template_id",
+            "preset_id",
+            "option",
+            "options",
+            "selected_option",
+            "selected_options",
+            "default_selected_option",
+            "default_selected_options",
+            "reference_option",
+            "reference_options",
+            "reference",
+            "references",
+            "recommended_reference",
+            "recommended_references",
+        }
+        or (
+            leaf in {"value", "values"}
+            and any(
+                container in normalized
+                for container in (
+                    ".option[",
+                    ".options[",
+                    ".selected_option[",
+                    ".selected_options[",
+                    ".reference_option[",
+                    ".reference_options[",
+                    ".reference[",
+                    ".references[",
+                    ".recommended_reference[",
+                    ".recommended_references[",
+                )
+            )
+        )
+    )
 
 
 def _identity_text_type(layer_id: str, module: Dict[str, Any], field_id: str, source_kind: str) -> str:
@@ -5264,18 +5448,96 @@ def _identity_text_type(layer_id: str, module: Dict[str, Any], field_id: str, so
 
 
 def _identity_hardcode_findings(
-    collection: Dict[str, Any], payload: Dict[str, Any]
+    collection: Dict[str, Any],
+    payload: Dict[str, Any],
+    root_projections: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, str]]:
     terms = _identity_hardcode_terms(payload)
     if not terms:
-        return []
-    workflow = _as_dict(collection.get("workflow"))
-    metadata = _as_dict(workflow.get("metadata"))
-    generic_template = workflow.get("type") == "template" or metadata.get("is_generic_template") is True or metadata.get("is_template") is True
-    status = "FAIL" if generic_template else "WARNING"
-    code = "DR_GENERIC_TEMPLATE_RESIDENT_NAME_HARDCODED" if generic_template else "DR_RESIDENT_NAME_HARDCODED"
+        return [
+            _finding(
+                "PASS",
+                "DR_IDENTITY_LITERAL_EXPORT_GATE_PASSED",
+                "未发现可用于跨层扫描的居民身份字面值；导出 Gate 无需阻止导出",
+                "payload.modules",
+            )
+        ]
     findings: List[Dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, tuple[str, ...]]] = set()
+    source_text_matches: set[tuple[str, str, tuple[str, ...]]] = set()
+    mirror_text_matches: set[tuple[str, str, tuple[str, ...]]] = set()
+    authoritative_text_matches: set[tuple[str, tuple[str, ...]]] = set()
+    derived_text_matches: set[tuple[str, tuple[str, ...]]] = set()
+
+    def matched_identity_fields(
+        text: str, source_kind: str, field_id: str
+    ) -> List[str]:
+        matched = [
+            field
+            for field, term in terms.items()
+            if _text_contains_identity_term(text, term)
+        ]
+        # Short generic ASCII values such as "May", "Joy", or "core" are
+        # ambiguous in prose. They remain enforceable in identifier fields or
+        # when the entire configured value is the identity literal.
+        def has_short_ascii_identity_evidence(field: str) -> bool:
+            term = terms[field]
+            if not term.isascii():
+                return True
+            normalized_text = text.strip()
+            normalized_term = term.strip()
+            ambiguous_person_labels = {
+                "name",
+                "nickname",
+                "display_alias",
+            }
+            if field in ambiguous_person_labels:
+                if source_kind in {"structure_key", "projection"}:
+                    return False
+                if source_kind == "identifier":
+                    if not _identity_config_identifier_path(
+                        field_id
+                    ):
+                        return False
+                    return bool(
+                        re.match(
+                            rf"^{re.escape(normalized_term.casefold())}"
+                            rf"(?:[^a-z0-9]|$)",
+                            normalized_text.casefold(),
+                        )
+                    )
+                return bool(
+                    re.search(
+                        rf"(?<![A-Za-z0-9])"
+                        rf"{re.escape(normalized_term)}"
+                        rf"(?![A-Za-z0-9])",
+                        text,
+                    )
+                )
+            if len(normalized_term) >= 5:
+                return True
+            if source_kind in {"structure_key", "projection"}:
+                return False
+            if field == "codename":
+                return False
+            casefolded_text = normalized_text.casefold()
+            casefolded_term = normalized_term.casefold()
+            if casefolded_text == casefolded_term:
+                return True
+            if source_kind != "identifier":
+                return False
+            return bool(
+                re.match(
+                    rf"^{re.escape(casefolded_term)}(?:[^a-z0-9]|$)",
+                    casefolded_text,
+                )
+            )
+
+        return sorted(
+            field
+            for field in matched
+            if has_short_ascii_identity_evidence(field)
+        )
 
     def inspect_text(
         text: Any,
@@ -5288,29 +5550,75 @@ def _identity_hardcode_findings(
     ) -> None:
         if not isinstance(text, str) or not text:
             return
-        matched = sorted(field for field, term in terms.items() if _text_contains_identity_term(text, term))
+        matched = matched_identity_fields(
+            text,
+            source_kind,
+            field_id,
+        )
         if not matched:
             return
-        # Technical foreign keys may carry the exact resident_id. A natural
-        # language name/codename inside a *_ref field is still persona text and
-        # must be reported rather than hidden by the key name.
-        if _technical_identity_reference_field(field_id) and set(matched) == {"resident_id"}:
+        # Exact resident-scoped foreign keys are allowed. A resident_id
+        # embedded in a rule, identifier, or surrounding text is not.
+        resident_id = terms.get("resident_id")
+        if (
+            resident_id
+            and _technical_identity_reference_field(field_id)
+            and text.strip().casefold() == resident_id.casefold()
+        ):
             return
         module_id = _nonempty_str(module.get("module_id")) or "(canvas)"
+        text_match_key = (
+            module_id,
+            text.casefold(),
+            tuple(matched),
+        )
+        derived_match_key = (text.casefold(), tuple(matched))
+        if source_kind == "projection":
+            if (
+                derived_match_key in authoritative_text_matches
+                or derived_match_key in derived_text_matches
+            ):
+                return
+            derived_text_matches.add(derived_match_key)
+        else:
+            authoritative_text_matches.add(derived_match_key)
+        if source_kind in {"output", "canvas_mirror"}:
+            if (
+                text_match_key in source_text_matches
+                or text_match_key in mirror_text_matches
+            ):
+                return
+            mirror_text_matches.add(text_match_key)
+        else:
+            source_text_matches.add(text_match_key)
         text_type = _identity_text_type(layer_id, module, field_id, source_kind)
-        dedupe_key = (module_id, node_id, field_id, text_type)
+        dedupe_key = (
+            module_id,
+            node_id,
+            field_id,
+            text_type,
+            tuple(matched),
+        )
         if dedupe_key in seen:
             return
         seen.add(dedupe_key)
-        path = f"layers[{layer_id}].modules[{module_id}].nodes[{node_id}].fields[{field_id}]"
+        path = (
+            field_id
+            if layer_id == "derived_projection"
+            else (
+                f"layers[{layer_id}].modules[{module_id}]."
+                f"nodes[{node_id}].fields[{field_id}]"
+            )
+        )
         findings.append(
             _finding(
-                status,
-                code,
+                "FAIL",
+                "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE",
                 (
-                    "在非基础身份自然语言中检测到居民身份硬编码；"
+                    "在允许的身份事实源和居民作用域字段之外检测到居民身份字面值；"
                     f"layer_id={layer_id}, module_id={module_id}, node_id={node_id}, "
-                    f"field_id={field_id}, text_type={text_type}, identity_fields={','.join(matched)}；未自动改写文本"
+                    f"field_id={field_id}, text_type={text_type}, "
+                    f"identity_fields={','.join(matched)}；未自动改写居民内容，已阻止导出"
                 ),
                 path,
             )
@@ -5320,15 +5628,8 @@ def _identity_hardcode_findings(
         "fields",
         "legacy_fields",
         "legacy_data_fields",
+        "field_registry",
         "i18n_keys",
-        "reference_registry",
-        "recommended_references",
-        "references",
-        "reference_options",
-        "selected_options",
-        "default_selected_options",
-        "checkbox_config",
-        "checklist_config",
     }
 
     def scan_structure(
@@ -5339,22 +5640,58 @@ def _identity_hardcode_findings(
         node_id: str,
         field_path: str,
         source_kind: str,
+        scan_all_strings: bool = False,
     ) -> None:
-        if isinstance(value, dict):
+        if isinstance(value, str):
+            if (
+                scan_all_strings
+                or _natural_language_text_path(field_path)
+                or _identity_identifier_path(field_path)
+            ):
+                inspect_text(
+                    value,
+                    layer_id=layer_id,
+                    module=module,
+                    node_id=node_id,
+                    field_id=field_path,
+                    source_kind=(
+                        "identifier"
+                        if _identity_identifier_path(field_path)
+                        else source_kind
+                    ),
+                )
+        elif isinstance(value, dict):
             for key, item in value.items():
                 key_text = str(key)
                 if key_text in skipped_branches:
                     continue
                 nested_path = f"{field_path}.{key_text}" if field_path else key_text
+                inspect_text(
+                    key_text,
+                    layer_id=layer_id,
+                    module=module,
+                    node_id=node_id,
+                    field_id=f"{nested_path}.__key__",
+                    source_kind="structure_key",
+                )
                 if isinstance(item, str):
-                    if _natural_language_text_path(nested_path) or _natural_language_text_path(field_path):
+                    if (
+                        scan_all_strings
+                        or _natural_language_text_path(nested_path)
+                        or _natural_language_text_path(field_path)
+                        or _identity_identifier_path(nested_path)
+                    ):
                         inspect_text(
                             item,
                             layer_id=layer_id,
                             module=module,
                             node_id=node_id,
                             field_id=nested_path,
-                            source_kind=source_kind,
+                            source_kind=(
+                                "identifier"
+                                if _identity_identifier_path(nested_path)
+                                else source_kind
+                            ),
                         )
                 elif isinstance(item, (dict, list)):
                     scan_structure(
@@ -5364,19 +5701,28 @@ def _identity_hardcode_findings(
                         node_id=node_id,
                         field_path=nested_path,
                         source_kind=source_kind,
+                        scan_all_strings=scan_all_strings,
                     )
         elif isinstance(value, list):
             for index, item in enumerate(value):
                 nested_path = f"{field_path}[{index}]"
                 if isinstance(item, str):
-                    if _natural_language_text_path(field_path):
+                    if (
+                        scan_all_strings
+                        or _natural_language_text_path(field_path)
+                        or _identity_identifier_path(field_path)
+                    ):
                         inspect_text(
                             item,
                             layer_id=layer_id,
                             module=module,
                             node_id=node_id,
                             field_id=nested_path,
-                            source_kind=source_kind,
+                            source_kind=(
+                                "identifier"
+                                if _identity_identifier_path(field_path)
+                                else source_kind
+                            ),
                         )
                 elif isinstance(item, (dict, list)):
                     scan_structure(
@@ -5386,20 +5732,41 @@ def _identity_hardcode_findings(
                         node_id=node_id,
                         field_path=nested_path,
                         source_kind=source_kind,
+                        scan_all_strings=scan_all_strings,
                     )
 
     for module in collection.get("modules", []):
-        if not isinstance(module, dict) or module.get("module_id") == "module_basic_identity":
+        if not isinstance(module, dict):
             continue
         layer_id = _nonempty_str(module.get("layer_id")) or "(unknown)"
-        for field_id in ("module_name", "description", "text", "content", "prompt"):
+        if layer_id == "layer_1":
+            continue
+        inspect_text(
+            module.get("module_id"),
+            layer_id=layer_id,
+            module=module,
+            node_id="module",
+            field_id="module_id",
+            source_kind="identifier",
+        )
+        for field_id in (
+            "module_name",
+            "description",
+            "text",
+            "content",
+            "prompt",
+        ):
             inspect_text(
                 module.get(field_id),
                 layer_id=layer_id,
                 module=module,
                 node_id="module",
                 field_id=field_id,
-                source_kind="module",
+                source_kind=(
+                    "identifier"
+                    if field_id == "module_name"
+                    else "module"
+                ),
             )
         scan_structure(
             _as_dict(module.get("config")),
@@ -5417,8 +5784,36 @@ def _identity_hardcode_findings(
             field_path="inputs",
             source_kind="module",
         )
-        for node in _module_graph_nodes(module):
+        for branch_name in ("metadata", "ui_config"):
+            scan_structure(
+                _as_dict(module.get(branch_name)),
+                layer_id=layer_id,
+                module=module,
+                node_id="module",
+                field_path=branch_name,
+                source_kind="module",
+            )
+        for branch_name in ("tags", "output_schema"):
+            scan_structure(
+                module.get(branch_name) or [],
+                layer_id=layer_id,
+                module=module,
+                node_id="module",
+                field_path=branch_name,
+                source_kind="identifier",
+                scan_all_strings=True,
+            )
+        module_nodes = _module_graph_nodes(module)
+        for node in module_nodes:
             node_id = _module_graph_node_id(node) or "(unknown)"
+            inspect_text(
+                node_id,
+                layer_id=layer_id,
+                module=module,
+                node_id=node_id,
+                field_id="node_id",
+                source_kind="identifier",
+            )
             params = node.get("params") if isinstance(node.get("params"), dict) else {}
             fields = params.get("fields") if isinstance(params.get("fields"), list) else []
             for index, field in enumerate(fields):
@@ -5426,7 +5821,27 @@ def _identity_hardcode_findings(
                     continue
                 field_id = _field_identifier(field, index)
                 value = field.get("field_value") if "field_value" in field else field.get("value")
-                inspect_text(value, layer_id=layer_id, module=module, node_id=node_id, field_id=field_id, source_kind="field")
+                scan_structure(
+                    value,
+                    layer_id=layer_id,
+                    module=module,
+                    node_id=node_id,
+                    field_path=field_id,
+                    source_kind="field",
+                    scan_all_strings=True,
+                )
+                scan_structure(
+                    {
+                        key: item
+                        for key, item in field.items()
+                        if key not in {"field_value", "value"}
+                    },
+                    layer_id=layer_id,
+                    module=module,
+                    node_id=node_id,
+                    field_path=f"{field_id}.metadata",
+                    source_kind="field",
+                )
             checkbox_config = _as_dict(params.get("checkbox_config") or params.get("checklist_config"))
             inspect_text(
                 checkbox_config.get("custom_text"),
@@ -5444,6 +5859,25 @@ def _identity_hardcode_findings(
                 field_path="params",
                 source_kind="params",
             )
+            scan_structure(
+                node.get("metadata") if isinstance(node.get("metadata"), dict) else {},
+                layer_id=layer_id,
+                module=module,
+                node_id=node_id,
+                field_path="metadata",
+                source_kind="params",
+            )
+        for node in module_nodes:
+            node_id = _module_graph_node_id(node) or "(unknown)"
+            scan_structure(
+                node.get("outputs") if isinstance(node.get("outputs"), dict) else {},
+                layer_id=layer_id,
+                module=module,
+                node_id=node_id,
+                field_path="outputs",
+                source_kind="output",
+                scan_all_strings=True,
+            )
         input_schema = module.get("input_schema") if isinstance(module.get("input_schema"), list) else []
         scan_structure(
             input_schema,
@@ -5453,30 +5887,113 @@ def _identity_hardcode_findings(
             field_path="input_schema",
             source_kind="default",
         )
-        if layer_id in {"layer_5", "layer_10"}:
-            scan_structure(
-                _as_dict(module.get("outputs")),
-                layer_id=layer_id,
-                module=module,
-                node_id="module_output",
-                field_path="outputs",
-                source_kind="output",
-            )
+        scan_structure(
+            _as_dict(module.get("outputs")),
+            layer_id=layer_id,
+            module=module,
+            node_id="module_output",
+            field_path="outputs",
+            source_kind="output",
+            scan_all_strings=True,
+        )
     for node in collection.get("nodes", []):
-        if not isinstance(node, dict) or node.get("module_id") == "module_basic_identity":
+        if not isinstance(node, dict):
             continue
         layer_id = _nonempty_str(node.get("layer_id")) or _nonempty_str(_as_dict(node.get("data")).get("layer_id")) or "(unknown)"
         module_id = _nonempty_str(node.get("module_id")) or _nonempty_str(_as_dict(node.get("data")).get("module_id"))
+        if layer_id == "layer_1" or module_id == "module_basic_identity":
+            continue
         module = {"module_id": module_id or "(canvas)", "layer_id": layer_id, "module_type": node.get("node_type") or node.get("type")}
         scan_structure(
-            node.get("params") or node.get("data") or {},
+            node.get("params") or {},
             layer_id=layer_id,
             module=module,
             node_id=_nonempty_str(node.get("node_id")) or _nonempty_str(node.get("id")) or "(unknown)",
             field_path="params",
-            source_kind="params",
+            source_kind="canvas_mirror",
         )
-    return findings
+        scan_structure(
+            node.get("data") or {},
+            layer_id=layer_id,
+            module=module,
+            node_id=_nonempty_str(node.get("node_id")) or _nonempty_str(node.get("id")) or "(unknown)",
+            field_path="data",
+            source_kind="canvas_mirror",
+        )
+    projection_branches = (
+        "behavior",
+        "expression",
+        "relationship",
+        "behavior_policy",
+        "runtime_dialogue_projection",
+    )
+    for branch_name in projection_branches:
+        branch_value = payload.get(branch_name)
+        if branch_value is None:
+            continue
+        projection_path = f"payload.{branch_name}"
+        scan_structure(
+            branch_value,
+            layer_id="derived_projection",
+            module={
+                "module_id": projection_path,
+                "layer_id": "derived_projection",
+                "module_type": "read_only_projection",
+            },
+            node_id="projection",
+            field_path=projection_path,
+            source_kind="projection",
+            scan_all_strings=True,
+        )
+    layer_outputs = _as_dict(
+        _as_dict(payload.get("graph_snapshot")).get("layer_outputs")
+    )
+    for output_name, output_value in layer_outputs.items():
+        if output_name in {"identity_profile", "layer_1"}:
+            continue
+        projection_path = (
+            f"payload.graph_snapshot.layer_outputs.{output_name}"
+        )
+        scan_structure(
+            output_value,
+            layer_id="derived_projection",
+            module={
+                "module_id": projection_path,
+                "layer_id": "derived_projection",
+                "module_type": "read_only_projection",
+            },
+            node_id="projection",
+            field_path=projection_path,
+            source_kind="projection",
+            scan_all_strings=True,
+        )
+    for projection_name, projection_value in (
+        root_projections or {}
+    ).items():
+        projection_path = projection_name
+        scan_structure(
+            projection_value,
+            layer_id="derived_projection",
+            module={
+                "module_id": projection_path,
+                "layer_id": "derived_projection",
+                "module_type": "read_only_projection",
+            },
+            node_id="projection",
+            field_path=projection_path,
+            source_kind="projection",
+            scan_all_strings=True,
+        )
+    if findings:
+        return findings
+    return [
+        _finding(
+            "PASS",
+            "DR_IDENTITY_LITERAL_EXPORT_GATE_PASSED",
+            "居民身份字面值仅存在于 Layer 1、身份兼容投影或允许的居民作用域字段",
+            "payload.modules",
+        )
+    ]
 
 
 def _collect_layer_contexts(workflow: Dict[str, Any], layers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -7404,6 +7921,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             "schema_traceability_gate_revision": (
                 STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION
             ),
+            "identity_literal_export_gate_revision": (
+                STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION
+            ),
             "capability_status_governance": (
                 build_capability_status_governance()
             ),
@@ -7522,7 +8042,6 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     findings.extend(_identity_consistency_findings(manifest, payload, resident))
     findings.extend(_environment_mapping_findings(payload))
     findings.extend(_v03_version_findings(resident, manifest, payload, compile_info))
-    findings.extend(_identity_hardcode_findings(collection, payload))
     dr = {
         "file_type": FILE_TYPE,
         "dr_version": DR_VERSION_V0_3,
@@ -7547,6 +8066,17 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "duplicate_source_check": _v03_duplicate_source_findings(dr),
         "memory_support_level_check": _v03_memory_support_level_findings(dr),
         "capability_status_check": _v03_capability_status_findings(dr),
+        "identity_literal_export_gate_check": (
+            _identity_hardcode_findings(
+                collection,
+                payload,
+                {
+                    "visual_expression_mapping": (
+                        visual_expression_mapping
+                    )
+                },
+            )
+        ),
         "empty_layer_status_check": (
             _v03_empty_layer_status_findings(dr)
         ),

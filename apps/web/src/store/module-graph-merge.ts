@@ -278,6 +278,12 @@ export const STAGE7_4_8_FIRST_INTERACTION_ENABLED_MIGRATION =
   "stage7_4_8_first_interaction_enabled_v1";
 export const STAGE7_4_8_FIRST_GREETING_CONTENT_MIGRATION =
   "stage7_4_8_first_greeting_integrity_v1";
+export const STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION =
+  "stage7_4_12_identity_literal_export_gate_fix_v1";
+const FIRST_GREETING_STALE_UNAUTHORED_DESCRIPTION =
+  "Optional first-greeting presentation configuration; greeting copy remains unauthored.";
+const FIRST_GREETING_AUTHORED_DESCRIPTION =
+  "Optional first-greeting presentation configuration; content_status authored indicates that greeting variants have been authored.";
 export const REMOVED_LINXUAN_FIRST_GREETING_VARIANT =
   "你好，我是林瑄。今天开始，我们可以慢慢熟悉。";
 
@@ -322,6 +328,242 @@ export function migrateLinxuanFirstGreetingValue(
     value: migratedValue,
     migrated: stableComparableValue(migratedValue) !== stableComparableValue(value),
     markComplete: true,
+  };
+}
+
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function firstGreetingTextContainsIdentityLiteral(
+  text: string,
+  identityLiterals: string[]
+): boolean {
+  return identityLiterals.some((literal) =>
+    new RegExp(escapeRegularExpression(literal), "iu").test(text)
+  );
+}
+
+function neutralizeFirstGreetingText(
+  text: string,
+  identityLiterals: string[]
+): string {
+  return identityLiterals.reduce((current, literal) => {
+    const escaped = escapeRegularExpression(literal);
+    return current
+      .replace(new RegExp(`，(?:我叫|我是)${escaped}。`, "giu"), "。")
+      .replace(new RegExp(`^(?:我叫|我是)${escaped}。`, "giu"), "");
+  }, text);
+}
+
+export function migrateFirstGreetingIdentityLiterals(
+  value: unknown,
+  identityLiterals: string[]
+): {
+  value: unknown;
+  migrated: boolean;
+  markComplete: boolean;
+} {
+  if (!isRecord(value) || !Array.isArray(value.variants)) {
+    return { value, migrated: false, markComplete: false };
+  }
+  const literals = Array.from(
+    new Set(
+      identityLiterals
+        .map((literal) => literal.trim())
+        .filter(Boolean)
+        .sort((left, right) => right.length - left.length)
+    )
+  );
+  if (literals.length === 0) {
+    return { value, migrated: false, markComplete: false };
+  }
+  const variants = value.variants.map((variant) => {
+    if (typeof variant === "string") {
+      return neutralizeFirstGreetingText(variant, literals);
+    }
+    if (isRecord(variant) && typeof variant.text === "string") {
+      return {
+        ...variant,
+        text: neutralizeFirstGreetingText(variant.text, literals),
+      };
+    }
+    return variant;
+  });
+  const hasRemainingLiteral = variants.some((variant) => {
+    const text =
+      typeof variant === "string"
+        ? variant
+        : isRecord(variant) && typeof variant.text === "string"
+          ? variant.text
+          : "";
+    return firstGreetingTextContainsIdentityLiteral(text, literals);
+  });
+  const migratedValue = {
+    ...value,
+    content_status: variants.length > 0 ? "authored" : "pending_authoring",
+    variants,
+  };
+  return {
+    value: migratedValue,
+    migrated:
+      stableComparableValue(migratedValue) !== stableComparableValue(value),
+    markComplete: !hasRemainingLiteral,
+  };
+}
+
+function firstGreetingIdentityGraphSchemaNode(
+  value: unknown
+): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const wrapperData = isRecord(value.data) ? value.data : {};
+  return isRecord(wrapperData.schemaNode)
+    ? wrapperData.schemaNode
+    : value;
+}
+
+function firstGreetingIdentityGraphNodeData(
+  schemaNode: Record<string, unknown>
+): Record<string, unknown> {
+  return isRecord(schemaNode.data)
+    ? schemaNode.data
+    : schemaNode;
+}
+
+function firstGreetingIdentityGraphNodeId(value: unknown): string {
+  const schemaNode = firstGreetingIdentityGraphSchemaNode(value);
+  if (!schemaNode) {
+    return "";
+  }
+  const data = firstGreetingIdentityGraphNodeData(schemaNode);
+  return normalizeCatalogNodeId(
+    data.catalog_node_id ||
+      data.node_id ||
+      schemaNode.node_id ||
+      (isRecord(value) ? value.id : "")
+  );
+}
+
+export function migrateFirstGreetingIdentityLiteralGraph<
+  TGraph extends { nodes: unknown[]; edges: unknown[] },
+>(
+  graph: TGraph,
+  identityLiterals: string[]
+): {
+  value: TGraph;
+  migrated: boolean;
+  markComplete: boolean;
+} {
+  let targetFound = false;
+  let greetingIsIdentityFree = false;
+  let authoritativeGreeting: unknown;
+  const fieldSynchronizedNodes = graph.nodes.map((node) => {
+    if (
+      firstGreetingIdentityGraphNodeId(node) !==
+      "visual_style_first_greeting_config"
+    ) {
+      return node;
+    }
+    const nextNode = cloneJsonValue(node);
+    const schemaNode = firstGreetingIdentityGraphSchemaNode(nextNode);
+    if (!schemaNode) {
+      return node;
+    }
+    const data = firstGreetingIdentityGraphNodeData(schemaNode);
+    const params = isRecord(data.params) ? { ...data.params } : {};
+    if (!Array.isArray(params.fields)) {
+      return node;
+    }
+    const nextFields = params.fields.map((field) => {
+      if (
+        !isRecord(field) ||
+        String(field.field_id || field.field_key || "") !== "first_greeting"
+      ) {
+        return field;
+      }
+      targetFound = true;
+      const valueKey = "field_value" in field ? "field_value" : "value";
+      const migration = migrateFirstGreetingIdentityLiterals(
+        field[valueKey],
+        identityLiterals
+      );
+      greetingIsIdentityFree = migration.markComplete;
+      authoritativeGreeting = migration.value;
+      const description =
+        field.description ===
+        FIRST_GREETING_STALE_UNAUTHORED_DESCRIPTION
+          ? FIRST_GREETING_AUTHORED_DESCRIPTION
+          : field.description;
+      return migration.migrated ||
+        description !== field.description
+        ? {
+            ...field,
+            [valueKey]: migration.value,
+            description,
+          }
+        : field;
+    });
+    if (!targetFound) {
+      return node;
+    }
+    params.fields = cloneJsonValue(nextFields);
+    params.legacy_fields = cloneJsonValue(nextFields);
+    params.legacy_data_fields = cloneJsonValue(nextFields);
+    params.identity_literal_export_gate_revision =
+      STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION;
+    data.params = params;
+    if (Array.isArray(data.fields)) {
+      data.fields = cloneJsonValue(nextFields);
+    }
+    return nextNode;
+  });
+
+  let outputSynchronized = false;
+  const synchronizedNodes = fieldSynchronizedNodes.map((node) => {
+    if (
+      authoritativeGreeting === undefined ||
+      firstGreetingIdentityGraphNodeId(node) !==
+        "visual_style_first_presence_output"
+    ) {
+      return node;
+    }
+    const nextNode = cloneJsonValue(node);
+    const schemaNode = firstGreetingIdentityGraphSchemaNode(nextNode);
+    if (!schemaNode) {
+      return node;
+    }
+    const data = firstGreetingIdentityGraphNodeData(schemaNode);
+    const outputs = isRecord(data.outputs) ? data.outputs : null;
+    const output = outputs && isRecord(outputs.first_presence_config)
+      ? outputs.first_presence_config
+      : null;
+    if (!outputs || !output) {
+      return node;
+    }
+    data.outputs = {
+      ...outputs,
+      first_presence_config: {
+        ...output,
+        first_greeting: cloneJsonValue(authoritativeGreeting),
+      },
+    };
+    outputSynchronized = true;
+    return nextNode;
+  });
+  const value = {
+    ...graph,
+    nodes: synchronizedNodes,
+  } as TGraph;
+  return {
+    value,
+    migrated:
+      stableComparableValue(value) !== stableComparableValue(graph),
+    markComplete:
+      targetFound &&
+      greetingIsIdentityFree &&
+      outputSynchronized,
   };
 }
 

@@ -2003,6 +2003,17 @@ DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config"
 DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION = (
     "stage7_4_10_few_shot_resident_name_decoupling_v1"
 )
+STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION = (
+    "stage7_4_12_identity_literal_export_gate_fix_v1"
+)
+FIRST_GREETING_STALE_UNAUTHORED_DESCRIPTION = (
+    "Optional first-greeting presentation configuration; "
+    "greeting copy remains unauthored."
+)
+FIRST_GREETING_AUTHORED_DESCRIPTION = (
+    "Optional first-greeting presentation configuration; "
+    "content_status authored indicates that greeting variants have been authored."
+)
 DIALOGUE_RUNTIME_PROFILE_CONFIG_PATH = Path(__file__).with_name(
     "dialogue_runtime_profile.json"
 )
@@ -4991,7 +5002,7 @@ def _visual_style_module() -> ModuleV04:
                 "repeat_on_return": False,
             },
             "field_type": "object",
-            "description": "Optional first-greeting presentation configuration; greeting copy remains unauthored.",
+            "description": FIRST_GREETING_AUTHORED_DESCRIPTION,
             "dr_mapping": "payload.expression.first_greeting",
             "reference_enabled": False,
             "required": False,
@@ -5167,7 +5178,15 @@ def _visual_style_module() -> ModuleV04:
         (
             "input",
             "text_input",
-            {"mode": "generic_fields", "text": "", "fields": fields, "config_mode": "static_config"},
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "config_mode": "static_config",
+                "identity_literal_export_gate_revision": (
+                    STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION
+                ),
+            },
             "input",
         ),
         (

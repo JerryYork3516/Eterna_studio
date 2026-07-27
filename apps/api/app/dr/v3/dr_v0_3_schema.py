@@ -529,6 +529,9 @@ class AuditPolicyV03(V03BaseModel):
     schema_traceability_gate_revision: Optional[
         Literal["stage7_4_12_final_schema_traceability_gate_fix_v1"]
     ] = None
+    identity_literal_export_gate_revision: Optional[
+        Literal["stage7_4_12_identity_literal_export_gate_fix_v1"]
+    ] = None
 
 
 class BehaviorProjectionV03(V03BaseModel):

@@ -112,6 +112,8 @@ def test_visual_style_fields_references_validation_and_exports_are_optional_and_
     assert greeting["required"] is False
     assert greeting["field_value"]["content_status"] == "pending_authoring"
     assert greeting["field_value"]["variants"] == []
+    assert "unauthored" not in greeting["description"]
+    assert "authored" in greeting["description"]
     assert [
         option["value"] for option in greeting["structured_options"]["content_status"]
     ] == ["pending_authoring", "authored"]
@@ -217,6 +219,11 @@ def test_config_values_survive_module_snapshot_compile_and_export():
     assert output["optional_config_status"]["variants"] == "empty_allowed"
     assert dr["dr_schema_version"] == "0.3.0"
     assert dr["manifest"]["required_capabilities"] == ["llm", "memory", "lattice"]
+    legacy = deepcopy(dr)
+    legacy["payload"]["audit_policy"].pop(
+        "identity_literal_export_gate_revision"
+    )
+    assert mock_load_dr_v0_3(legacy)["loaded"] is True
 
 
 @pytest.mark.parametrize("enabled", [True, False])
@@ -255,7 +262,7 @@ def test_current_linxuan_first_interaction_enabled_compiles_true():
     assert dr["payload"]["behavior"]["first_interaction"]["enabled"] is True
 
 
-def test_current_linxuan_authored_greeting_exports_only_the_three_retained_variants():
+def test_current_linxuan_authored_greeting_exports_three_identity_neutral_variants():
     catalog = _catalog()
     identity = catalog["module_basic_identity"]
     _field(identity, "basic_identity_field_input", "name")["value"] = "林瑄"
@@ -265,23 +272,86 @@ def test_current_linxuan_authored_greeting_exports_only_the_three_retained_varia
     _field(identity, "basic_identity_field_input", "resident_id")["value"] = (
         "dr_eterna_hum_cn_xian_linxuan_0001"
     )
-    retained_variants = [
-        "你好，我叫林瑄。刚见面，先认识一下吧。",
-        "你好，我是林瑄。第一次见面，请多关照。",
-        "你好，我是林瑄。你叫什么名字？",
+    neutral_variants = [
+        "你好。刚见面，先认识一下吧。",
+        "你好。第一次见面，请多关照。",
+        "你好。你叫什么名字？",
     ]
     greeting = _field(
         catalog["visual_style"], "visual_style_first_greeting_config", "first_greeting"
     )
     greeting["field_value"]["content_status"] = "authored"
-    greeting["field_value"]["variants"] = retained_variants
+    greeting["field_value"]["variants"] = neutral_variants
+    stale_description = (
+        "Optional first-greeting presentation configuration; "
+        "greeting copy remains unauthored."
+    )
+    greeting["description"] = stale_description
 
     dr = _compile(list(catalog.values()))
     compiled = dr["payload"]["expression"]["first_greeting"]
     assert compiled["content_status"] == "authored"
-    assert compiled["variants"] == retained_variants
-    assert "你好，我是林瑄。今天开始，我们可以慢慢熟悉。" not in compiled["variants"]
+    assert compiled["variants"] == neutral_variants
     assert _compiled_visual_output(dr)["first_greeting"] == compiled
+
+    visual_style = next(
+        module for module in dr["payload"]["modules"] if module["module_id"] == "visual_style"
+    )
+    params = _node(
+        visual_style, "visual_style_first_greeting_config"
+    )["params"]
+    for field_list_key in ("fields", "legacy_fields", "legacy_data_fields"):
+        mirror = next(
+            field
+            for field in params[field_list_key]
+            if (field.get("field_id") or field.get("field_key")) == "first_greeting"
+        )
+        assert (mirror.get("field_value") or mirror.get("value")) == compiled
+        assert "unauthored" not in mirror["description"]
+        assert "authored" in mirror["description"]
+    assert (
+        _node(visual_style, "visual_style_first_presence_output")["outputs"][
+            "first_presence_config"
+        ]["first_greeting"]
+        == compiled
+    )
+    root_visual_style = next(
+        module for module in dr["modules"] if module["module_id"] == "visual_style"
+    )
+    assert root_visual_style == visual_style
+    assert not any(
+        token in json.dumps(visual_style, ensure_ascii=False).lower()
+        for token in ("林瑄", "linxuan")
+    )
+    assert dr["payload"]["audit_policy"][
+        "identity_literal_export_gate_revision"
+    ] == "stage7_4_12_identity_literal_export_gate_fix_v1"
+    assert dr["dr_version"] == "0.3"
+    assert dr["dr_schema_version"] == "0.3.0"
+    assert dr["manifest"]["required_capabilities"] == ["llm", "memory", "lattice"]
+
+
+def test_literal_identity_in_layer10_first_greeting_blocks_export():
+    catalog = _catalog()
+    identity = catalog["module_basic_identity"]
+    _field(identity, "basic_identity_field_input", "name")["value"] = "林瑄"
+    greeting = _field(
+        catalog["visual_style"], "visual_style_first_greeting_config", "first_greeting"
+    )
+    greeting["field_value"]["content_status"] = "authored"
+    greeting["field_value"]["variants"] = ["你好，我是林瑄。第一次见面，请多关照。"]
+
+    result = _compile_result(list(catalog.values()))
+    assert result["valid"] is False
+    findings = [
+        error
+        for error in result["errors"]
+        if error["code"] == "DR_IDENTITY_LITERAL_OUTSIDE_ALLOWED_SCOPE"
+    ]
+    assert len(findings) == 1
+    finding = findings[0]
+    assert "layer_id=layer_10" in finding["message"]
+    assert "field_id=first_greeting.variants[0]" in finding["message"]
 
 
 @pytest.mark.parametrize("value", [0, 1])
