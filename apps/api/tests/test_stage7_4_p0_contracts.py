@@ -337,14 +337,25 @@ def test_runtime_rejects_tampered_lattice_fallback_requirement():
 
 def test_runtime_consumes_compiled_policy_summaries_in_fixed_order_and_keeps_dr_read_only(monkeypatch):
     dr = _valid_dr()
-    dr["payload"]["safety_policy"]["p0_test_marker"] = "SAFETY_POLICY_MARKER"
-    dr["payload"]["behavior_policy"]["p0_test_marker"] = "BEHAVIOR_POLICY_MARKER"
-    dr["payload"]["behavior_policy"]["future_optional_policy"] = {"unknown": True}
-    dr["payload"]["resident_identity"]["p0_test_marker"] = "IDENTITY_POLICY_MARKER"
-    dr["payload"]["memory_policy"]["p0_test_marker"] = "MEMORY_POLICY_MARKER"
+    dr["payload"]["safety_policy"]["notes"].append("SAFETY_POLICY_MARKER")
+    dr["payload"]["behavior_policy"]["modules"]["detail_behavior"][
+        "custom_text"
+    ] = "BEHAVIOR_POLICY_MARKER"
+    dr["payload"]["resident_identity"][
+        "personality_summary"
+    ] = "IDENTITY_POLICY_MARKER"
+    dr["payload"]["memory_policy"]["preference_memory"][
+        "p0_test_marker"
+    ] = "MEMORY_POLICY_MARKER"
     dr["payload"]["modules"][0]["module_graph"]["nodes"][0].setdefault("params", {})[
         "runtime_forbidden_marker"
     ] = "MODULE_GRAPH_MUST_NOT_EXECUTE"
+    dr["payload"]["resident_blueprint"]["behavior_policy"] = deepcopy(
+        dr["payload"]["behavior_policy"]
+    )
+    dr["safety_policy"] = deepcopy(dr["payload"]["safety_policy"])
+    dr["memory_policy"] = deepcopy(dr["payload"]["memory_policy"])
+    dr["modules"] = deepcopy(dr["payload"]["modules"])
     before = deepcopy(dr)
     original_route = resident_runtime.route_provider_for_engine
 
@@ -389,7 +400,10 @@ def test_runtime_consumes_compiled_policy_summaries_in_fixed_order_and_keeps_dr_
     assert state.behavior_policy == before["payload"]["behavior_policy"]
     assert state.safety_policy == before["payload"]["safety_policy"]
     assert state.memory_policy == before["payload"]["memory_policy"]
-    assert state.memory_policy["p0_test_marker"] == "MEMORY_POLICY_MARKER"
+    assert (
+        state.memory_policy["preference_memory"]["p0_test_marker"]
+        == "MEMORY_POLICY_MARKER"
+    )
     assert dr == before
 
 

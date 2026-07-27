@@ -28,12 +28,15 @@ from uuid import uuid4
 from ..models.v0_4 import LatticeEmotion, LatticeMotion, LatticeStateV04, LatticeVoiceState
 
 from ..dr.v2.validator import validate_dr_v0_2
-from ..dr.v2.validator.capability_validator import validate_v03_runtime_contract
+from ..dr.v3.validator import validate_dr_document_v0_3
 
 from .provider_adapters import route_provider_for_engine
 from .runtime_llm_config import get_runtime_llm_profile
 from .runtime_state_manager import RuntimeStateManager, reset_history
 from .runtime_trace_collector import TraceCollector
+from .visual_expression_projection import (
+    normalize_visual_expression_mapping,
+)
 
 
 @dataclass
@@ -1803,10 +1806,19 @@ def load_digital_resident(file_or_dict: Any, input_text: str = "load digital res
     if dr_version == "0.3" or "manifest" in file_or_dict or "payload" in file_or_dict:
         audit = dict(file_or_dict.get("audit_report") or file_or_dict.get("audit") or {})
         audit_findings = list(audit.get("findings", []))
-        contract_findings = validate_v03_runtime_contract(file_or_dict)
-        findings = [*audit_findings, *contract_findings]
+        normalized_visual, _compatibility_diagnostics = (
+            normalize_visual_expression_mapping(
+                file_or_dict.get("visual_expression_mapping")
+            )
+        )
+        validation_document = deepcopy(file_or_dict)
+        validation_document["visual_expression_mapping"] = (
+            normalized_visual
+        )
+        gate = validate_dr_document_v0_3(validation_document)
+        findings = [*audit_findings, *gate["findings"]]
         validation = {
-            "valid": bool(audit.get("valid")) and not any(finding.get("status") == "FAIL" for finding in contract_findings),
+            "valid": bool(audit.get("valid")) and bool(gate["valid"]),
             "dr_version": dr_version or "0.3",
             "errors": [finding for finding in findings if finding.get("status") == "FAIL"],
             "warnings": [finding for finding in findings if finding.get("status") == "WARNING"],

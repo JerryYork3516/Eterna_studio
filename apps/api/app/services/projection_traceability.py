@@ -13,6 +13,9 @@ from typing import Any, Dict
 STAGE7_4_12_A3_CONTENT_REVISION = (
     "stage7_4_12_a3_projection_traceability_mapping_v1"
 )
+STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION = (
+    "stage7_4_12_final_schema_traceability_gate_fix_v1"
+)
 PROJECTION_SOURCE_PRIORITY = (
     "current_module_output",
     "normalized_current_node",
@@ -169,11 +172,16 @@ PROJECTION_FIELD_MAPPINGS: tuple[Dict[str, Any], ...] = (
             "interaction_behavior_config",
             "social_behavior_config",
             "task_behavior_config",
-            "detail_behavior_config",
             "dialogue_runtime_profile_config",
         ),
-        "source_field": "normalized behavior and dialogue rules",
-        "source_path": "payload.modules[layer_8].outputs",
+        "source_field": (
+            "materialized behavior outputs; current emotion_reaction rule "
+            "nodes; dialogue runtime profile output"
+        ),
+        "source_path": (
+            "payload.modules[layer_8].outputs; "
+            "payload.modules.emotion_reaction.module_graph.nodes"
+        ),
         "target_path": (
             "payload.behavior_policy; payload.runtime_dialogue_projection"
         ),
@@ -188,6 +196,104 @@ PROJECTION_FIELD_MAPPINGS: tuple[Dict[str, Any], ...] = (
         "missing_fallback": "current-node normalization then public template",
         "consumer": "RuntimeCore LLM context",
         "projection_type": "derived_read_only",
+        "source_structure": "multiple",
+        "sources": (
+            {
+                "source_id": "materialized_layer8_behavior_outputs",
+                "source_layer": "layer_8",
+                "source_module": (
+                    "language_habit",
+                    "decision_pattern",
+                    "interaction_strategy",
+                    "emotion_mapper",
+                    "behavior_habit",
+                ),
+                "source_node": "module_output",
+                "source_output": (
+                    "language_behavior_config",
+                    "decision_behavior_config",
+                    "interaction_behavior_config",
+                    "social_behavior_config",
+                    "task_behavior_config",
+                ),
+                "source_field": "current compiled module output",
+                "source_path": "payload.modules[layer_8].outputs",
+                "projection_path": "payload.behavior_policy.modules",
+                "transform": "_assemble_layer8_behavior_outputs",
+            },
+            {
+                "source_id": "detail_behavior_current_rule_nodes",
+                "source_layer": "layer_8",
+                "source_module": "emotion_reaction",
+                "source_node": (
+                    "expression_context_input",
+                    "expression_allowed_state_recognition",
+                    "expression_state_selection_rules",
+                    "expression_personality_consistency_validation",
+                    "expression_relationship_safety_validation",
+                    "expression_intensity_calculation",
+                    "expression_state_normalize_fallback_validation",
+                    "expression_state_output",
+                    "expression_state_reference_output",
+                ),
+                "source_output": None,
+                "source_field": (
+                    "module_id",
+                    "module_type",
+                    "tags",
+                    "module_graph.nodes[*].node_id",
+                    (
+                        "module_graph.nodes.expression_context_input."
+                        "params.references"
+                    ),
+                    (
+                        "module_graph.nodes.expression_state_selection_rules."
+                        "params.checkbox_config.preset_id"
+                    ),
+                    (
+                        "module_graph.nodes.expression_state_selection_rules."
+                        "params.checkbox_config.selected_options"
+                    ),
+                    (
+                        "module_graph.nodes.expression_state_selection_rules."
+                        "params.checkbox_config.custom_text"
+                    ),
+                    (
+                        "module_graph.nodes."
+                        "expression_state_normalize_fallback_validation."
+                        "params.checkbox_config.selected_options"
+                    ),
+                    (
+                        "module_graph.nodes."
+                        "expression_state_normalize_fallback_validation."
+                        "params.checkbox_config.custom_text"
+                    ),
+                ),
+                "source_path": (
+                    "payload.modules.emotion_reaction.module_graph.nodes"
+                ),
+                "projection_path": (
+                    "payload.behavior_policy.modules.detail_behavior"
+                ),
+                "transform": "_behavior_module_policy",
+            },
+            {
+                "source_id": "dialogue_runtime_profile_output",
+                "source_layer": "layer_8",
+                "source_module": "dialogue_runtime_profile",
+                "source_node": "module_output",
+                "source_output": "dialogue_runtime_profile_config",
+                "source_field": "current compiled dialogue runtime rules",
+                "source_path": (
+                    "payload.modules.dialogue_runtime_profile.outputs."
+                    "dialogue_runtime_profile_config"
+                ),
+                "projection_path": (
+                    "payload.runtime_dialogue_projection"
+                ),
+                "transform": "build_runtime_dialogue_projection",
+            },
+        ),
     },
     {
         "mapping_id": "visual_expression_state_selection",
@@ -358,6 +464,9 @@ def build_projection_traceability() -> Dict[str, Any]:
 
     return {
         "content_revision": STAGE7_4_12_A3_CONTENT_REVISION,
+        "schema_traceability_gate_revision": (
+            STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION
+        ),
         "projection_type": "derived_read_only",
         "source_priority": list(PROJECTION_SOURCE_PRIORITY),
         "mappings": deepcopy(list(PROJECTION_FIELD_MAPPINGS)),
@@ -383,6 +492,17 @@ def projection_field_mapping_errors() -> list[str]:
     }
     errors: list[str] = []
     mapping_ids: set[str] = set()
+    source_required_keys = {
+        "source_id",
+        "source_layer",
+        "source_module",
+        "source_node",
+        "source_output",
+        "source_field",
+        "source_path",
+        "projection_path",
+        "transform",
+    }
     for index, mapping in enumerate(PROJECTION_FIELD_MAPPINGS):
         missing = sorted(required_keys - set(mapping))
         if missing:
@@ -400,6 +520,39 @@ def projection_field_mapping_errors() -> list[str]:
             errors.append(
                 f"mapping[{index}] projection_type must be derived_read_only"
             )
+        if mapping.get("source_structure") == "multiple":
+            sources = mapping.get("sources")
+            if not isinstance(sources, (list, tuple)) or not sources:
+                errors.append(
+                    f"mapping[{index}] multiple source registry is empty"
+                )
+                continue
+            source_ids: set[str] = set()
+            for source_index, source in enumerate(sources):
+                if not isinstance(source, dict):
+                    errors.append(
+                        f"mapping[{index}].sources[{source_index}] must be an object"
+                    )
+                    continue
+                missing_source_keys = sorted(
+                    source_required_keys - set(source)
+                )
+                if missing_source_keys:
+                    errors.append(
+                        f"mapping[{index}].sources[{source_index}] missing keys: "
+                        + ", ".join(missing_source_keys)
+                    )
+                source_id = source.get("source_id")
+                if not isinstance(source_id, str) or not source_id:
+                    errors.append(
+                        f"mapping[{index}].sources[{source_index}] has no stable source_id"
+                    )
+                elif source_id in source_ids:
+                    errors.append(
+                        f"mapping[{index}] duplicate source_id: {source_id}"
+                    )
+                else:
+                    source_ids.add(source_id)
     if len(PROJECTION_FIELD_MAPPINGS) != 14:
         errors.append(
             "projection registry must contain exactly 14 mappings"

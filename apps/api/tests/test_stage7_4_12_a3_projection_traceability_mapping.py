@@ -14,6 +14,7 @@ from app.services.dr_compiler import (
 from app.services.projection_traceability import (
     PROJECTION_FIELD_MAPPINGS,
     STAGE7_4_12_A3_CONTENT_REVISION,
+    STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION,
     projection_field_mapping_errors,
 )
 
@@ -470,6 +471,9 @@ def test_compile_audit_contains_exact_stable_fourteen_mapping_registry():
     assert projection_field_mapping_errors() == []
     assert traceability == {
         "content_revision": STAGE7_4_12_A3_CONTENT_REVISION,
+        "schema_traceability_gate_revision": (
+            STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION
+        ),
         "projection_type": "derived_read_only",
         "source_priority": [
             "current_module_output",

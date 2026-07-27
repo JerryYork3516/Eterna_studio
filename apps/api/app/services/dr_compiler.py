@@ -35,6 +35,7 @@ from .daily_companion_runtime import (
     validate_dialogue_runtime_profile,
 )
 from .projection_traceability import (
+    STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION,
     build_projection_traceability,
     projection_field_mapping_errors,
 )
@@ -63,6 +64,10 @@ from ..dr.v3.dr_v0_3_schema import (
     VisualExpressionMappingV03,
     VoiceConfigV03,
     build_runtime_plan_steps,
+)
+from ..dr.v3.validator import (
+    validate_dr_document_v0_3,
+    validate_v03_security_configuration,
 )
 from ..models.v0_4 import (
     CANONICAL_LAYERS,
@@ -149,7 +154,6 @@ from ..registry.slot_catalog import get_slot_catalog
 from ..dr.v2.validator.capability_validator import (
     STAGE_7_4_REQUIRED_SLOT_TYPES,
     build_v03_runtime_contract,
-    validate_v03_runtime_contract,
 )
 from .visual_expression_projection import (
     VISUAL_EXPRESSION_ALLOWED_STATES,
@@ -209,6 +213,7 @@ _V03_AUDIT_CHECK_NAMES = (
     "duplicate_source_check",
     "memory_support_level_check",
     "capability_status_check",
+    "formal_schema_check",
     "security_configuration_check",
     "empty_layer_status_check",
     "file_size_check",
@@ -231,44 +236,6 @@ _FORBIDDEN_SECRET_KEYS = {
     "provider_binding",
 }
 _SECRET_REF_KEYS = {"key_ref", "secret_ref", "credential_ref", "api_key_ref"}
-_OUTPUT_CREDENTIAL_KEYS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "api_token",
-        "auth_token",
-        "authorization",
-        "token",
-        "access_token",
-        "refresh_token",
-        "bearer",
-        "bearer_credential",
-        "bearer_token",
-        "base_url",
-        "endpoint",
-        "endpoint_url",
-        "api_endpoint",
-        "credential",
-        "credentials",
-        "secret",
-        "provider_secret",
-        "password",
-        "client_secret",
-        "private_key",
-        "provider",
-        "provider_binding",
-        "provider_config",
-        "provider_profile",
-        "provider_profile_id",
-    }
-)
-_OUTPUT_CREDENTIAL_VALUE_PATTERNS = (
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}"),
-    re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-)
 _IDENTITY_CORE_OUTPUTS = {str(spec["module_id"]): str(spec["output"]) for spec in IDENTITY_CORE_MODULE_SPECS}
 _IDENTITY_CORE_IDS = set(_IDENTITY_CORE_OUTPUTS)
 _IDENTITY_CORE_REQUIRED_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
@@ -711,6 +678,20 @@ def _normalize_language(value: Any) -> str:
     if raw in {"en", "en-us", "english"}:
         return "en"
     return _nonempty_str(value) or "zh-CN"
+
+
+def _normalize_ui_language(value: Any) -> Optional[str]:
+    """Keep UI locale separate from open-ended resident language facts."""
+
+    raw = _nonempty_str(value)
+    if not raw:
+        return None
+    normalized = _normalize_language(raw)
+    if normalized in {"zh-CN", "en"}:
+        return normalized
+    if raw in {"zh", "en-US"}:
+        return raw
+    return None
 
 
 def _language_display(value: str) -> str:
@@ -6840,120 +6821,12 @@ def _v03_capability_status_findings(
     return findings
 
 
-def _contains_actual_credential_value(value: Any) -> bool:
-    if value is None or value is False:
-        return False
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {
-            "",
-            "mock",
-            "placeholder",
-            "reserved",
-            "policy_only",
-            "compatibility_fallback",
-            "disabled",
-            "runtime_disabled",
-            "not_configured",
-            "none",
-            "null",
-        }:
-            return False
-        if normalized.endswith("_mock") or normalized.startswith("mock_"):
-            return False
-        return True
-    if isinstance(value, dict):
-        return any(
-            _contains_actual_credential_value(item)
-            for item in value.values()
-        )
-    if isinstance(value, list):
-        return any(
-            _contains_actual_credential_value(item) for item in value
-        )
-    return bool(value)
-
-
-def _normalized_credential_key(value: Any) -> str:
-    text = re.sub(
-        r"(?<!^)(?=[A-Z])",
-        "_",
-        str(value or "").strip(),
-    )
-    return re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
-
-
-def _compiled_credential_paths(value: Any, path: str = "") -> List[str]:
-    paths: List[str] = []
-    if isinstance(value, dict):
-        for key, item in value.items():
-            item_path = f"{path}.{key}" if path else str(key)
-            if (
-                _normalized_credential_key(key)
-                in _OUTPUT_CREDENTIAL_KEYS
-                and _contains_actual_credential_value(item)
-            ):
-                paths.append(item_path)
-                continue
-            paths.extend(
-                _compiled_credential_paths(item, item_path)
-            )
-        return paths
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            paths.extend(
-                _compiled_credential_paths(
-                    item, f"{path}[{index}]"
-                )
-            )
-        return paths
-    if isinstance(value, str) and any(
-        pattern.search(value)
-        for pattern in _OUTPUT_CREDENTIAL_VALUE_PATTERNS
-    ):
-        paths.append(path or "$")
-    return paths
-
-
 def _v03_security_configuration_findings(
     dr: Dict[str, Any],
 ) -> List[Dict[str, str]]:
-    """Block actual credentials in the fully assembled export document."""
+    """Compatibility wrapper around the single formal v0.3 gate scanner."""
 
-    export_surface = {
-        key: value
-        for key, value in dr.items()
-        if key not in {"audit", "audit_report"}
-    }
-    credential_paths = sorted(
-        set(_compiled_credential_paths(export_surface))
-    )
-    if credential_paths:
-        return [
-            _finding(
-                "FAIL",
-                "DR_COMPILED_CREDENTIAL_VALUE",
-                (
-                    "compiled DR contains a non-empty credential, endpoint, "
-                    "or Provider Profile value; the value was not included "
-                    "in this diagnostic"
-                ),
-                path,
-            )
-            for path in credential_paths
-        ]
-    return [
-        _finding(
-            "PASS",
-            "DR_SECURITY_CONFIGURATION_CHECK_PASSED",
-            (
-                "compiled DR contains no actual API key, token, bearer "
-                "credential, base URL, Provider secret, password, or real "
-                "Provider Profile"
-            ),
-            "payload",
-        )
-    ]
+    return validate_v03_security_configuration(dr)
 
 
 def _v03_empty_layer_status_findings(
@@ -7518,7 +7391,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         )
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
-    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": collection["workflow"].get("metadata", {}).get("ui_language") if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": _build_lightweight_graph_snapshot(collection), "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": _normalize_ui_language(collection["workflow"].get("metadata", {}).get("ui_language")) if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": _build_lightweight_graph_snapshot(collection), "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
     payload["voice_config"] = derive_voice_config_status(
         payload["voice_config"]
     )
@@ -7528,6 +7401,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     payload["audit_policy"].update(
         {
             "content_revision": STAGE7_4_12_A4_CONTENT_REVISION,
+            "schema_traceability_gate_revision": (
+                STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION
+            ),
             "capability_status_governance": (
                 build_capability_status_governance()
             ),
@@ -7582,7 +7458,13 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     if identity_sync.get("description"):
         payload["resident_blueprint"]["description"] = identity_sync["description"]
     if identity_sync.get("primary_language"):
-        payload["resident_blueprint"]["ui_language"] = identity_sync["primary_language"]
+        identity_ui_language = _normalize_ui_language(
+            identity_sync["primary_language"]
+        )
+        if identity_ui_language is not None:
+            payload["resident_blueprint"][
+                "ui_language"
+            ] = identity_ui_language
     if identity_sync.get("tags"):
         payload["resident_blueprint"]["tags"] = identity_sync["tags"]
     for config_key in ("memory_policy", "memory_config", "lattice_config"):
@@ -7641,7 +7523,6 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     findings.extend(_environment_mapping_findings(payload))
     findings.extend(_v03_version_findings(resident, manifest, payload, compile_info))
     findings.extend(_identity_hardcode_findings(collection, payload))
-    findings.extend(validate_v03_runtime_contract({"manifest": manifest, "payload": payload}))
     dr = {
         "file_type": FILE_TYPE,
         "dr_version": DR_VERSION_V0_3,
@@ -7666,13 +7547,27 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "duplicate_source_check": _v03_duplicate_source_findings(dr),
         "memory_support_level_check": _v03_memory_support_level_findings(dr),
         "capability_status_check": _v03_capability_status_findings(dr),
-        "security_configuration_check": (
-            _v03_security_configuration_findings(dr)
-        ),
         "empty_layer_status_check": (
             _v03_empty_layer_status_findings(dr)
         ),
     }
+    _attach_v03_audit_report(
+        dr,
+        findings,
+        checked_at,
+        named_check_findings,
+        compatibility_metrics=collection.get(
+            "compatibility_metrics"
+        ),
+    )
+    gate = validate_dr_document_v0_3(dr)
+    named_check_findings["formal_schema_check"] = list(
+        gate["schema_findings"]
+    )
+    named_check_findings["security_configuration_check"] = list(
+        gate["security_findings"]
+    )
+    findings.extend(gate["runtime_contract_findings"])
     _attach_v03_audit_report(
         dr,
         findings,
@@ -7709,13 +7604,22 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
     visual_expression_mapping, compatibility_diagnostics = (
         normalize_visual_expression_mapping(dr.get("visual_expression_mapping"))
     )
+    validation_document = deepcopy(dr)
+    validation_document["visual_expression_mapping"] = (
+        visual_expression_mapping
+    )
+    gate = validate_dr_document_v0_3(validation_document)
     visual_expression_mapping = VisualExpressionMappingV03.model_validate(
         visual_expression_mapping
     ).model_dump(mode="json")
-    contract_findings = validate_v03_runtime_contract(dr)
-    contract_valid = not any(finding.get("status") == "FAIL" for finding in contract_findings)
     audit_valid = bool(_as_dict(dr.get("audit_report") or dr.get("audit")).get("valid"))
-    ok = bool(dr.get("file_type") == FILE_TYPE and dr.get("dr_version") == DR_VERSION_V0_3 and dr.get("not_executable") is True and resident_id and isinstance(payload_modules, list) and isinstance(payload_slots, list) and audit_valid and contract_valid)
+    ok = bool(
+        gate["valid"]
+        and audit_valid
+        and resident_id
+        and isinstance(payload_modules, list)
+        and isinstance(payload_slots, list)
+    )
     return {
         "loaded": bool(ok),
         "mock": True,
@@ -7727,7 +7631,14 @@ def _v3_mock_load_dr(dr: Dict[str, Any]) -> Dict[str, Any]:
         "slot_count": len(payload_slots or []),
         "audit_valid": audit_valid,
         "visual_expression_mapping": visual_expression_mapping,
-        "compatibility_diagnostics": compatibility_diagnostics,
+        "compatibility_diagnostics": [
+            *compatibility_diagnostics,
+            *[
+                finding
+                for finding in gate["findings"]
+                if finding.get("status") == "FAIL"
+            ],
+        ],
     }
 
 
