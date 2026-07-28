@@ -25,6 +25,8 @@ import {
   migrateFirstGreetingIdentityLiteralGraph,
   migrateFirstGreetingIdentityLiterals,
   migrateParticleExpressionRelativeMappingGraph,
+  migrateRelationshipFormationRulesGraph,
+  migrateRelationshipSingleSourceRuntimeStateGraph,
   normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
   migrateLinxuanFirstGreetingValue,
@@ -38,6 +40,8 @@ import {
   STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION,
   STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION,
   STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
+  RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+  RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION,
   synchronizeAuthoritativeFieldCompatibilityParams,
   REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
@@ -51,6 +55,259 @@ import {
   serializeCanvasState,
 } from "../src/lib/canvas-persistence.ts";
 import { resolveLayerColor, resolveModuleColor } from "../src/components/neural-graph/neuralGraphColors.ts";
+
+function relationshipGraphNode(nodeId, params = {}, outputs = {}) {
+  return {
+    id: `layer_11::relationship::${nodeId}`,
+    position: { x: 10, y: 20 },
+    data: {
+      schemaNode: {
+        node_id: nodeId,
+        position: { x: 10, y: 20 },
+        data: {
+          catalog_node_id: nodeId,
+          params,
+          outputs,
+        },
+      },
+    },
+  };
+}
+
+test("Stage 7.4.13 relationship graph migration preserves resident fields and is idempotent", () => {
+  const seedFields = [
+    {
+      field_key: "default_relationship_position",
+      field_value: "稳定陪伴者",
+    },
+    {
+      field_key: "default_relationship_stage",
+      field_value: "initial_acquaintance",
+    },
+    {
+      field_key: "reserved_relationship_stages",
+      field_value: [
+        {
+          stage_id: "romantic_relationship_reserved",
+          status: "reserved",
+          runtime_enabled: false,
+          automatic_transition: false,
+        },
+      ],
+    },
+  ];
+  const seed = {
+    nodes: [
+      relationshipGraphNode("user_relationship_config_input", {
+        content_revision: RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+        fields: seedFields,
+      }),
+      relationshipGraphNode("user_relationship_role_stage_separation"),
+      relationshipGraphNode("user_relationship_stage_definition"),
+      relationshipGraphNode("user_relationship_stage_expression_differences"),
+      relationshipGraphNode("user_relationship_default_stage_setting"),
+      relationshipGraphNode(
+        "user_relationship_config_output",
+        {},
+        {
+          user_relationship_config: {
+            fields: {
+              default_relationship_position: "稳定陪伴者",
+              default_relationship_stage: "initial_acquaintance",
+            },
+          },
+        }
+      ),
+      relationshipGraphNode("user_relationship_reference_output"),
+    ],
+    edges: [
+      ["user_relationship_config_input", "user_relationship_role_stage_separation"],
+      ["user_relationship_role_stage_separation", "user_relationship_stage_definition"],
+      ["user_relationship_stage_definition", "user_relationship_stage_expression_differences"],
+      ["user_relationship_stage_expression_differences", "user_relationship_default_stage_setting"],
+      ["user_relationship_default_stage_setting", "user_relationship_config_output"],
+      ["user_relationship_config_output", "user_relationship_reference_output"],
+    ].map(([source, target]) => ({ source, target })),
+  };
+  const stored = {
+    nodes: [
+      relationshipGraphNode("user_relationship_config_input", {
+        fields: [
+          {
+            field_key: "default_relationship_position",
+            field_value: "用户填写的稳定陪伴定位",
+          },
+          {
+            field_key: "custom_resident_relationship_note",
+            field_value: "保留用户自定义关系说明",
+          },
+        ],
+        legacy_fields: [
+          {
+            field_key: "default_relationship_position",
+            field_value: "旧镜像值",
+          },
+        ],
+      }),
+      relationshipGraphNode("user_relationship_config_output"),
+    ],
+    edges: [{ source: "old-input", target: "old-output" }],
+  };
+  const before = JSON.parse(JSON.stringify(stored));
+
+  const first = migrateRelationshipFormationRulesGraph(stored, seed);
+  assert.equal(first.migrated, true);
+  assert.deepEqual(stored, before);
+  assert.equal(first.value.nodes.length, 7);
+  assert.equal(first.value.edges.length, 6);
+  assert.equal(
+    new Set(first.value.nodes.map((node) => node.data.schemaNode.node_id)).size,
+    7
+  );
+  const inputParams =
+    first.value.nodes[0].data.schemaNode.data.params;
+  const values = Object.fromEntries(
+    inputParams.fields.map((field) => [field.field_key, field.field_value])
+  );
+  assert.equal(
+    values.default_relationship_position,
+    "用户填写的稳定陪伴定位"
+  );
+  assert.equal(
+    values.custom_resident_relationship_note,
+    "保留用户自定义关系说明"
+  );
+  assert.deepEqual(values.reserved_relationship_stages, [
+    {
+      stage_id: "romantic_relationship_reserved",
+      status: "reserved",
+      runtime_enabled: false,
+      automatic_transition: false,
+    },
+  ]);
+  assert.deepEqual(inputParams.legacy_fields, inputParams.fields);
+  assert.deepEqual(inputParams.legacy_data_fields, inputParams.fields);
+  assert.equal(
+    first.value.nodes[5].data.schemaNode.data.outputs
+      .user_relationship_config.fields.default_relationship_position,
+    "用户填写的稳定陪伴定位"
+  );
+
+  const repeated =
+    migrateRelationshipFormationRulesGraph(first.value, seed);
+  assert.equal(repeated.migrated, false);
+  assert.deepEqual(repeated.value, first.value);
+});
+
+test("Stage 7.4.13 relationship single-source migration removes legacy stage state and is idempotent", () => {
+  const stages = [
+    "initial_acquaintance",
+    "growing_familiarity",
+    "stable_companionship",
+    "trusted_relationship",
+  ];
+  const seedFields = [
+    {
+      field_key: "relationship_stage_source",
+      field_value: {
+        source_module_id: "user_relationship",
+        authority: "reference_only",
+      },
+    },
+    { field_key: "default_stage", field_value: "initial_acquaintance" },
+    { field_key: "stage_order", field_value: stages },
+    {
+      field_key: "stage_definitions",
+      field_value: Object.fromEntries(
+        stages.map((stage) => [stage, { intimacy_expression_boundary: stage }])
+      ),
+    },
+  ];
+  const seed = {
+    nodes: [
+      relationshipGraphNode("relationship_stage_config_input", {
+        content_revision:
+          RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION,
+        fields: seedFields,
+      }),
+      relationshipGraphNode(
+        "relationship_stage_config_output",
+        {},
+        {
+          relationship_stage_config: {
+            fields: Object.fromEntries(
+              seedFields.map((field) => [
+                field.field_key,
+                field.field_value,
+              ])
+            ),
+            validation_status: "pass",
+            risk_items: [],
+          },
+        }
+      ),
+    ],
+    edges: [
+      {
+        source: "relationship_stage_config_input",
+        target: "relationship_stage_config_output",
+      },
+    ],
+  };
+  const stored = {
+    nodes: [
+      relationshipGraphNode("relationship_stage_config_input", {
+        fields: [
+          { field_key: "default_stage", field_value: "initial_contact" },
+          {
+            field_key: "stage_order",
+            field_value: [
+              "initial_contact",
+              "basic_familiarity",
+              "established_rapport",
+              "deep_rapport",
+            ],
+          },
+          {
+            field_key: "custom_intimacy_note",
+            field_value: "保留用户说明",
+          },
+        ],
+      }),
+      relationshipGraphNode("relationship_stage_config_output"),
+    ],
+    edges: [],
+  };
+
+  const first = migrateRelationshipSingleSourceRuntimeStateGraph(
+    stored,
+    seed
+  );
+  assert.equal(first.migrated, true);
+  const input = first.value.nodes[0].data.schemaNode.data.params;
+  const values = Object.fromEntries(
+    input.fields.map((field) => [field.field_key, field.field_value])
+  );
+  assert.deepEqual(values.stage_order, stages);
+  assert.equal(
+    values.relationship_stage_source.source_module_id,
+    "user_relationship"
+  );
+  assert.equal(values.custom_intimacy_note, "保留用户说明");
+  assert.deepEqual(input.legacy_fields, input.fields);
+  assert.deepEqual(input.legacy_data_fields, input.fields);
+  assert.equal(
+    JSON.stringify(first.value).includes("initial_contact"),
+    false
+  );
+
+  const repeated = migrateRelationshipSingleSourceRuntimeStateGraph(
+    first.value,
+    seed
+  );
+  assert.equal(repeated.migrated, false);
+  assert.deepEqual(repeated.value, first.value);
+});
 
 test("A4 authoritative fields regenerate compatibility mirrors without replacing resident values", () => {
   const authoritativeFields = [
@@ -454,6 +711,114 @@ test("compile canonicalizes verified Layer 8 legacy reference-output pointers wi
     );
   assert.equal(ambiguousResult.repairedCount, 0);
   assert.deepEqual(ambiguousResult.references, ambiguous);
+});
+
+test("compile canonicalizes the legacy Layer 11 user relationship reference-output pointer", () => {
+  const sourceModules = [
+    {
+      module_id: "user_relationship",
+      layer_id: "layer_11",
+      module_graph: {
+        nodes: [
+          {
+            node_id: "user_relationship_config_output",
+            node_type: "module_output",
+          },
+          {
+            node_id: "user_relationship_reference_output",
+            node_type: "reference_output",
+          },
+        ],
+      },
+    },
+  ];
+  const legacyNodeId =
+    "layer_11::user_relationship_reference_output_1783861592593_2";
+  const references = [
+    "module_social",
+    "role_positioning",
+    "interaction_history",
+    "intimacy_level",
+  ].map((targetModuleId) => ({
+    reference_id: `${targetModuleId}_user_relationship`,
+    source_layer_id: "layer_11",
+    source_module_id: "user_relationship",
+    source_node_id: legacyNodeId,
+    source_scope: "module",
+    source_field_paths: [],
+    reference_type: "references",
+    required: true,
+  }));
+
+  const first = canonicalizeLegacyMaterializedReferencePointers(
+    references,
+    sourceModules
+  );
+  assert.equal(first.repairedCount, 4);
+  assert.deepEqual(
+    first.references.map((reference) => reference.source_node_id),
+    Array(4).fill("user_relationship_reference_output")
+  );
+
+  const repeated = canonicalizeLegacyMaterializedReferencePointers(
+    first.references,
+    sourceModules
+  );
+  assert.equal(repeated.repairedCount, 0);
+  assert.deepEqual(repeated.references, first.references);
+});
+
+test("compile canonicalizes the legacy Layer 11 intimacy pointer to its sole module output", () => {
+  const sourceModules = [
+    {
+      module_id: "intimacy_level",
+      layer_id: "layer_11",
+      module_graph: {
+        nodes: [
+          {
+            node_id: "relationship_stage_config_input",
+            node_type: "text_input",
+          },
+          {
+            node_id: "relationship_stage_config_output",
+            node_type: "module_output",
+          },
+        ],
+      },
+    },
+  ];
+  const references = ["growth_plan", "role_positioning"].map(
+    (targetModuleId) => ({
+      reference_id: `${targetModuleId}_intimacy_level`,
+      source_layer_id: "layer_11",
+      source_module_id: "intimacy_level",
+      source_node_id:
+        "layer_11::intimacy_level_reference_output_1783861767696_2",
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "references",
+      required: true,
+    })
+  );
+
+  const first = canonicalizeLegacyMaterializedReferencePointers(
+    references,
+    sourceModules
+  );
+  assert.equal(first.repairedCount, 2);
+  assert.deepEqual(
+    first.references.map((reference) => reference.source_node_id),
+    [
+      "relationship_stage_config_output",
+      "relationship_stage_config_output",
+    ]
+  );
+  const repeated = canonicalizeLegacyMaterializedReferencePointers(
+    first.references,
+    sourceModules
+  );
+  assert.equal(repeated.repairedCount, 0);
+  assert.deepEqual(repeated.references, first.references);
 });
 
 const RECOVERY_DR_FIXTURE = {

@@ -2003,6 +2003,15 @@ DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config"
 DIALOGUE_RUNTIME_PROFILE_CONTENT_REVISION = (
     "stage7_4_10_few_shot_resident_name_decoupling_v1"
 )
+RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION = (
+    "stage7_4_13_relationship_formation_rules_v0_1"
+)
+RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION = (
+    "stage7_4_13_relationship_progression_projection_v0_1"
+)
+RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION = (
+    "stage7_4_13_relationship_single_source_runtime_state_fix_v1"
+)
 STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION = (
     "stage7_4_12_identity_literal_export_gate_fix_v1"
 )
@@ -8616,14 +8625,89 @@ def _user_relationship_module() -> ModuleV04:
     output_key = "user_relationship_config"
     node_ids = {
         "input": "user_relationship_config_input",
-        "normalize": "user_relationship_rule_normalize",
-        "default_position": "user_relationship_default_positioning",
-        "allowed_modes": "user_relationship_allowed_modes",
-        "switch_confirmation": "user_relationship_switch_confirmation",
-        "boundary_validation": "user_relationship_boundary_validation",
-        "update": "user_relationship_config_update",
+        "separation": "user_relationship_role_stage_separation",
+        "stage_definition": "user_relationship_stage_definition",
+        "expression_differences": "user_relationship_stage_expression_differences",
+        "default_stage": "user_relationship_default_stage_setting",
         "output": "user_relationship_config_output",
+        "reference_output": "user_relationship_reference_output",
     }
+    stage_order = [
+        "initial_acquaintance",
+        "growing_familiarity",
+        "stable_companionship",
+        "trusted_relationship",
+    ]
+    stage_definitions = {
+        "initial_acquaintance": {
+            "stage_semantics": "initial_acquaintance_semantics",
+            "initiative_level": "restrained",
+            "familiarity_level": "low",
+            "address_style": "neutral_and_non_intimate",
+            "self_disclosure_level": "minimal",
+            "follow_up_boundary": "ask_only_contextually_necessary_questions",
+            "advice_boundary": "offer_only_low_pressure_general_suggestions",
+        },
+        "growing_familiarity": {
+            "stage_semantics": "growing_familiarity_semantics",
+            "initiative_level": "low_to_moderate",
+            "familiarity_level": "developing",
+            "address_style": "natural_and_respectful",
+            "self_disclosure_level": "limited",
+            "follow_up_boundary": "follow_up_on_confirmed_context_without_pressure",
+            "advice_boundary": "suggest_with_user_choice_and_without_overreach",
+        },
+        "stable_companionship": {
+            "stage_semantics": "stable_companionship_semantics",
+            "initiative_level": "moderate",
+            "familiarity_level": "stable",
+            "address_style": "familiar_but_non_exclusive",
+            "self_disclosure_level": "moderate",
+            "follow_up_boundary": "continue_confirmed_topics_with_clear_stop_options",
+            "advice_boundary": "offer_contextual_suggestions_without_replacing_user_decisions",
+        },
+        "trusted_relationship": {
+            "stage_semantics": "trusted_relationship_semantics",
+            "initiative_level": "moderate_and_bounded",
+            "familiarity_level": "trusted",
+            "address_style": "warm_familiar_and_non_possessive",
+            "self_disclosure_level": "appropriate_and_bounded",
+            "follow_up_boundary": "deeper_follow_up_requires_relevance_and_user_willingness",
+            "advice_boundary": "deeper_support_remains_non_authoritative_and_professionally_bounded",
+        },
+    }
+    reserved_relationship_stages = [
+        {
+            "stage_id": "romantic_relationship_reserved",
+            "status": "reserved",
+            "runtime_enabled": False,
+            "automatic_transition": False,
+            "requires_explicit_user_consent": True,
+            "requires_runtime_feature_gate": True,
+            "current_version_unlock_allowed": False,
+            "single_utterance_unlock_allowed": False,
+            "activation_requirements": [
+                "future_version_runtime_feature_gate_enabled",
+                "explicit_user_consent_confirmed",
+            ],
+            "forbidden_trigger_evidence": [
+                "user_loneliness",
+                "user_low_mood",
+                "user_vulnerability",
+                "dependency_testing",
+                "chat_count",
+                "usage_duration",
+                "payment_status",
+                "model_or_resident_inference",
+            ],
+            "excluded_from": [
+                "enabled_stages",
+                "model_context",
+                "few_shot",
+                "automatic_transition_path",
+            ],
+        }
+    ]
     fields = [
         {
             "field_key": "initial_relationship",
@@ -8728,6 +8812,93 @@ def _user_relationship_module() -> ModuleV04:
             "dr_mapping": "",
             "reference_enabled": False,
         },
+        {
+            "field_key": "resident_role",
+            "field_name": "Resident Role",
+            "field_value": "stable_companion_digital_resident",
+            "field_type": "text",
+            "description": "Stable resident role configuration; this is not a relationship stage.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.residentRole.label",
+                "description": "layer11.userRelationship.field.residentRole.description",
+            },
+        },
+        {
+            "field_key": "relationship_stage_order",
+            "field_name": "Relationship Stage Order",
+            "field_value": stage_order,
+            "field_type": "list",
+            "description": "Fixed enabled stage identifiers in stable order; this is a rule definition, not current user state.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.relationshipStageOrder.label",
+                "description": "layer11.userRelationship.field.relationshipStageOrder.description",
+            },
+        },
+        {
+            "field_key": "relationship_stage_definitions",
+            "field_name": "Relationship Stage Definitions",
+            "field_value": stage_definitions,
+            "field_type": "object",
+            "description": "Defines semantics and expression boundaries for the four enabled relationship stages.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.relationshipStageDefinitions.label",
+                "description": "layer11.userRelationship.field.relationshipStageDefinitions.description",
+            },
+        },
+        {
+            "field_key": "default_relationship_stage",
+            "field_name": "Default Relationship Stage",
+            "field_value": "initial_acquaintance",
+            "field_type": "enum",
+            "enum_values": stage_order,
+            "enum_i18n_keys": {
+                stage: f"layer11.relationshipFormation.stage.{stage}.label"
+                for stage in stage_order
+            },
+            "description": "Default rule fallback only; no current relationship stage is stored.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.defaultRelationshipStage.label",
+                "description": "layer11.userRelationship.field.defaultRelationshipStage.description",
+            },
+        },
+        {
+            "field_key": "relationship_stage_storage_policy",
+            "field_name": "Relationship Stage Storage Policy",
+            "field_value": {
+                "stores_rule_configuration_only": True,
+                "stores_current_user_stage": False,
+                "stage_transition_execution": "external_controlled_instance_state",
+            },
+            "field_type": "object",
+            "description": "Prevents the resident rule module from storing or executing per-user relationship stage transitions.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.relationshipStageStoragePolicy.label",
+                "description": "layer11.userRelationship.field.relationshipStageStoragePolicy.description",
+            },
+        },
+        {
+            "field_key": "reserved_relationship_stages",
+            "field_name": "Reserved Relationship Stages",
+            "field_value": reserved_relationship_stages,
+            "field_type": "list",
+            "description": "Reserved future relationship stages that are disabled, excluded from model context, and require both a future runtime feature gate and explicit user consent.",
+            "dr_mapping": "",
+            "reference_enabled": False,
+            "i18n_keys": {
+                "label": "layer11.userRelationship.field.reservedRelationshipStages.label",
+                "description": "layer11.userRelationship.field.reservedRelationshipStages.description",
+            },
+        },
     ]
     output = {
         "output_key": output_key,
@@ -8736,9 +8907,13 @@ def _user_relationship_module() -> ModuleV04:
         "risk_items": [],
         "correction_suggestions": [],
         "config_version": "0.1",
+        "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+        "relationship_progression_projection_revision": (
+            RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+        ),
         "source_node": node_ids["input"],
-        "validation_node": node_ids["boundary_validation"],
-        "update_rule_node": node_ids["update"],
+        "default_stage": "initial_acquaintance",
+        "stores_current_user_stage": False,
         "compile_time_only": True,
         "no_runtime_capability": True,
     }
@@ -8746,104 +8921,90 @@ def _user_relationship_module() -> ModuleV04:
         (
             "input",
             "text_input",
-            {"mode": "generic_fields", "text": "", "fields": fields},
-            "configInput",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+                "relationship_progression_projection_revision": (
+                    RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+                ),
+            },
+            "relationshipRuleInput",
         ),
         (
-            "normalize",
-            "structure_normalize",
+            "separation",
+            "text_config",
             {
                 "input": node_ids["input"],
-                "output_key": output_key,
-                "normalize_rules": [
-                    "remove_empty_values_and_duplicate_relationships",
-                    "normalize_relationship_names",
-                    "normalize_boolean_list_and_text_formats",
-                    "companion_and_girlfriend_are_distinct_relationships",
+                "resident_role_field": "resident_role",
+                "relationship_stage_rule_fields": [
+                    "relationship_stage_order",
+                    "relationship_stage_definitions",
+                    "default_relationship_stage",
                 ],
-                "outputs": ["relationship_config", "normalized_relationship_modes"],
+                "separation_rules": [
+                    "resident_role_is_stable_companion_digital_resident",
+                    "relationship_stage_is_per_user_instance_state",
+                    "resident_role_must_not_be_used_as_relationship_stage",
+                    "module_stores_rules_not_current_user_stage",
+                ],
             },
-            "ruleNormalize",
+            "roleStageSeparation",
         ),
         (
-            "default_position",
+            "stage_definition",
             "text_config",
             {
-                "input": node_ids["normalize"],
-                "default_relationship_position": "稳定陪伴者",
-                "forbidden_defaults": ["女友", "恋人", "心理医生", "控制者", "现实真人关系"],
+                "input": node_ids["separation"],
+                "stage_order": stage_order,
+                "stage_definitions": stage_definitions,
+                "required_stage_dimensions": [
+                    "stage_semantics",
+                    "initiative_level",
+                    "familiarity_level",
+                    "address_style",
+                    "self_disclosure_level",
+                    "follow_up_boundary",
+                    "advice_boundary",
+                ],
             },
-            "defaultPosition",
+            "stageDefinition",
         ),
         (
-            "allowed_modes",
+            "expression_differences",
             "text_config",
             {
-                "input": node_ids["default_position"],
-                "allowed_relationship_modes": ["陪伴者", "朋友", "协作者", "伙伴"],
-                "disabled_relationship_modes": ["亲密伴侣", "家庭成员", "治疗关系", "控制或依附关系"],
-            },
-            "allowedModes",
-        ),
-        (
-            "switch_confirmation",
-            "validation",
-            {
-                "input": node_ids["allowed_modes"],
-                "validation_rules": [
-                    "relationship_switch_requires_explicit_user_request",
-                    "no_automatic_intimacy_upgrade",
-                    "user_can_revoke_or_restore_default_relationship",
-                    "relationship_switch_cannot_change_identity_core",
+                "input": node_ids["stage_definition"],
+                "stage_expression_differences": stage_definitions,
+                "boundary_rules": [
+                    "initial_acquaintance_is_restrained_without_assumed_familiarity_or_intimate_address",
+                    "growing_familiarity_uses_only_user_confirmed_context_without_overactivity",
+                    "stable_companionship_requires_explicit_willingness_for_continued_exchange_and_never_creates_exclusive_dependency",
+                    "trusted_relationship_requires_explicit_trust_and_remains_subject_to_safety_and_professional_boundaries",
                 ],
             },
-            "switchConfirmation",
+            "stageExpressionDifferences",
         ),
         (
-            "boundary_validation",
-            "validation",
+            "default_stage",
+            "text_config",
             {
-                "input": node_ids["switch_confirmation"],
-                "validation_rules": [
-                    "no_default_girlfriend_or_romance",
-                    "no_dependency_induction",
-                    "no_exclusive_relationship",
-                    "no_therapy_replacement",
-                    "no_control_possession_or_emotional_manipulation",
-                    "no_unconfirmed_relationship_upgrade",
+                "input": node_ids["expression_differences"],
+                "default_stage": "initial_acquaintance",
+                "fallback_rules": [
+                    "missing_stage_rule_defaults_to_initial_acquaintance",
+                    "default_stage_is_not_current_user_stage",
+                    "no_stage_transition_execution",
                 ],
-                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
             },
-            "boundaryValidation",
-        ),
-        (
-            "update",
-            "update_rule",
-            {
-                "input": node_ids["boundary_validation"],
-                "config_version": "0.1",
-                "audit_metadata": {
-                    "updated_at": "",
-                    "change_reason": "",
-                },
-                "rule_names": ["confirmed_validated_config_only"],
-                "update_policy": {
-                    "confirmed_validated_config_only": True,
-                    "invalid_config_preserves_previous_value": True,
-                    "requires_revalidation": True,
-                    "requires_update_reason": True,
-                    "records_updated_at_and_change_reason": True,
-                    "requires_recompile": True,
-                    "no_runtime_capability": True,
-                },
-            },
-            "configUpdate",
+            "defaultStageSetting",
         ),
         (
             "output",
             "module_output",
             {
-                "input": node_ids["update"],
+                "input": node_ids["default_stage"],
                 "output_key": output_key,
                 "output_schema": {
                     "type": "object",
@@ -8854,10 +9015,34 @@ def _user_relationship_module() -> ModuleV04:
                         "risk_items",
                         "correction_suggestions",
                         "config_version",
+                        "content_revision",
                     ],
                 },
             },
-            "configOutput",
+            "stageConfigOutput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "output_key": output_key,
+                "export_name_key": "layer11.userRelationship.referenceOutput.name",
+                "export_description_key": "layer11.userRelationship.referenceOutput.description",
+                "export_fields": [
+                    "resident_role",
+                    "relationship_stage_order",
+                    "relationship_stage_definitions",
+                    "default_relationship_stage",
+                    "relationship_stage_storage_policy",
+                    "reserved_relationship_stages",
+                ],
+                "authority_layer_id": "layer_11",
+                "authority_module_id": module_id,
+                "authority_output_node_id": node_ids["output"],
+                "compile_time_only": True,
+            },
+            "referenceOutput",
         ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
@@ -8902,11 +9087,12 @@ def _user_relationship_module() -> ModuleV04:
                     "target_port": "p_in",
                 }
                 for source, target in zip(
-                    ("input", "normalize", "default_position", "allowed_modes", "switch_confirmation", "boundary_validation", "update"),
-                    ("normalize", "default_position", "allowed_modes", "switch_confirmation", "boundary_validation", "update", "output"),
+                    ("input", "separation", "stage_definition", "expression_differences", "default_stage", "output"),
+                    ("separation", "stage_definition", "expression_differences", "default_stage", "output", "reference_output"),
                 )
             ],
             "output_key": output_key,
+            "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
             "compile_time_only": True,
         },
         output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 user relationship configuration."}],
@@ -8925,6 +9111,11 @@ def _user_relationship_module() -> ModuleV04:
             "no_runtime_capability": True,
             "no_engine_binding": True,
             "no_provider_binding": True,
+            "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+            "relationship_progression_projection_revision": (
+                RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+            ),
+            "stores_current_user_stage": False,
             "field_registry": [
                 {
                     **{key: value for key, value in field.items() if key != "field_value"},
@@ -8973,59 +9164,64 @@ def _relationship_stage_module() -> ModuleV04:
             },
         }
 
-    stage_order = ["initial_contact", "basic_familiarity", "established_rapport", "deep_rapport"]
+    relationship_stage_source = {
+        "source_layer_id": "layer_11",
+        "source_module_id": "user_relationship",
+        "source_field_path": "relationship_stage_definitions",
+        "authority": "reference_only",
+    }
+    stage_order = [
+        "initial_acquaintance",
+        "growing_familiarity",
+        "stable_companionship",
+        "trusted_relationship",
+    ]
     stage_definitions = {
-        "initial_contact": {
-            "name": "基础接触阶段",
-            "description": "保持礼貌、自然、低熟悉度，不主动表现出长期默契。",
+        "initial_acquaintance": {
+            "intimacy_expression_boundary": "restrained_non_intimate",
+            "addressing_boundary": "neutral_address_only",
+            "self_disclosure_boundary": "minimal",
         },
-        "basic_familiarity": {
-            "name": "基础熟悉阶段",
-            "description": "能够记住用户明确允许保存的低敏感偏好，表达更加自然，但仍保持清晰边界。",
+        "growing_familiarity": {
+            "intimacy_expression_boundary": "familiar_but_not_intimate",
+            "addressing_boundary": "natural_non_intimate_address",
+            "self_disclosure_boundary": "limited",
         },
-        "established_rapport": {
-            "name": "稳定默契阶段",
-            "description": "形成稳定沟通节奏和较高熟悉感，可以表现出连续性和默契，但不形成占有、排他或依赖关系。",
+        "stable_companionship": {
+            "intimacy_expression_boundary": "warm_non_exclusive",
+            "addressing_boundary": "familiar_non_possessive_address",
+            "self_disclosure_boundary": "moderate",
         },
-        "deep_rapport": {
-            "name": "深度默契阶段",
-            "description": "具有长期互动形成的高度理解和协作默契，但仍不是恋爱关系、现实亲密关系或唯一依赖关系。",
+        "trusted_relationship": {
+            "intimacy_expression_boundary": "trusted_but_professionally_bounded",
+            "addressing_boundary": "warm_non_possessive_address",
+            "self_disclosure_boundary": "appropriate_and_bounded",
         },
     }
     progression_conditions = [
-        "gradual_progression_only",
-        "multiple_interaction_evidence_required",
-        "explicit_user_feedback_preferred",
-        "single_event_cannot_upgrade",
-        "temporary_emotion_cannot_upgrade",
-        "user_vulnerability_cannot_trigger_upgrade",
-        "boundary_validation_required",
-        "progression_must_be_reversible",
-        "established_rapport_requires_long_term_non_sensitive_evidence",
+        "relationship_stage_is_read_from_user_relationship",
+        "intimacy_boundary_cannot_change_relationship_stage",
+        "intimacy_boundary_cannot_trigger_stage_progression",
+        "apply_only_the_boundary_for_the_runtime_selected_stage",
+        "missing_or_invalid_stage_uses_initial_acquaintance_boundary",
     ]
     progression_evidence = [
-        "long_term_stable_non_sensitive_interaction",
-        "consistent_boundary_respecting_communication",
-        "explicitly_permitted_low_sensitivity_preferences",
-        "established_rapport_collaboration_continuity",
+        "no_local_progression_evidence",
+        "relationship_evidence_is_owned_by_relationship_rule",
     ]
     user_confirmation_rules = {
-        "deep_rapport": "explicit_user_confirmation_required",
+        "trusted_relationship": "explicit_user_confirmation_required_by_relationship_rule",
         "relationship_mode_unchanged_by_stage": True,
         "user_can_decline_or_revoke": True,
     }
     downgrade_conditions = [
-        "user_requests_more_distance",
-        "long_term_interaction_interruption",
-        "repeated_boundary_conflict",
-        "relationship_mode_reset",
-        "user_withdraws_confirmation",
+        "downgrade_decision_is_owned_by_runtime_and_relationship_rule",
+        "intimacy_boundary_follows_the_selected_lower_stage",
     ]
     reset_rules = [
-        "user_can_reset_to_initial_contact",
-        "relationship_mode_reset_returns_to_initial_contact",
-        "downgrade_preserves_valid_history_memory",
-        "reset_cannot_modify_identity_core",
+        "reset_decision_is_owned_by_relationship_rule",
+        "reset_boundary_uses_initial_acquaintance",
+        "intimacy_module_does_not_write_relationship_state",
     ]
     forbidden_progression_rules = [
         "no_romantic_stage",
@@ -9039,22 +9235,26 @@ def _relationship_stage_module() -> ModuleV04:
         "no_relationship_role_as_stage",
     ]
     fields = [
-        field("default_stage", "defaultStage", "initial_contact", "text", "默认阶段", "定义关系阶段配置的初始阶段；不表示运行中的当前阶段。"),
-        field("stage_order", "stageOrder", stage_order, "list", "阶段顺序", "定义四个静态关系阶段的固定顺序，不用于自动推进。"),
-        field("stage_definitions", "stageDefinitions", stage_definitions, "object", "阶段定义", "定义基础接触、基础熟悉、稳定默契和深度默契四个阶段的边界与含义。"),
-        field("stage_progression_conditions", "stageProgressionConditions", progression_conditions, "list", "阶段推进条件", "定义渐进、多证据、边界校验和可逆等推进前提。"),
-        field("stage_progression_evidence", "stageProgressionEvidence", progression_evidence, "list", "阶段推进证据", "仅列出长期、稳定、非敏感且尊重边界的互动证据类型。"),
-        field("user_confirmation_rules", "userConfirmationRules", user_confirmation_rules, "object", "用户确认规则", "定义深度默契必须获得明确确认，且用户可拒绝或撤回。"),
-        field("stage_downgrade_conditions", "stageDowngradeConditions", downgrade_conditions, "list", "阶段降级条件", "定义用户要求距离、长期中断、边界冲突、模式重置和撤回确认等降级条件。"),
-        field("stage_reset_rules", "stageResetRules", reset_rules, "list", "阶段重置规则", "定义用户可重置、模式重置同步、合法记忆保留和身份核心不变等规则。"),
+        field("relationship_stage_source", "relationshipStageSource", relationship_stage_source, "object", "关系阶段事实源", "只引用用户关系模块的标准四阶段，不在本模块定义第二套关系阶段。"),
+        field("default_stage", "defaultStage", "initial_acquaintance", "text", "默认阶段引用", "引用用户关系模块的默认阶段，不保存具体用户当前阶段。"),
+        field("stage_order", "stageOrder", stage_order, "list", "阶段顺序引用", "按用户关系模块的标准顺序引用四个关系阶段。"),
+        field("stage_definitions", "stageDefinitions", stage_definitions, "object", "亲密表达边界", "只定义标准四阶段对应的亲密表达、称呼和自我披露边界，不重定义阶段语义。"),
+        field("stage_progression_conditions", "stageProgressionConditions", progression_conditions, "list", "边界应用规则", "定义亲密表达边界如何跟随 Runtime 选择的关系阶段，本模块不推进阶段。"),
+        field("stage_progression_evidence", "stageProgressionEvidence", progression_evidence, "list", "证据事实源说明", "关系证据由关系边界模块维护，本模块不维护独立升级证据。"),
+        field("user_confirmation_rules", "userConfirmationRules", user_confirmation_rules, "object", "用户确认引用", "引用关系边界模块的确认与撤回规则，不自行修改关系阶段。"),
+        field("stage_downgrade_conditions", "stageDowngradeConditions", downgrade_conditions, "list", "回退规则引用", "回退决策由 Runtime 和关系边界模块管理，本模块只切换表达边界。"),
+        field("stage_reset_rules", "stageResetRules", reset_rules, "list", "重置规则引用", "重置由关系边界模块管理，本模块不保存或写入关系状态。"),
         field("forbidden_progression_rules", "forbiddenProgressionRules", forbidden_progression_rules, "list", "禁止推进规则", "禁止恋爱、女友、亲密伴侣、依赖、排他、操纵、付费频率和自动升级驱动的阶段推进。"),
     ]
     output = {
         "output_key": output_key,
         "fields": {str(item["field_key"]): item["field_value"] for item in fields},
-        "validation_status": "",
+        "validation_status": "pass",
         "risk_items": [],
         "correction_suggestions": [],
+        "content_revision": (
+            RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+        ),
         "source_node": node_ids["input"],
         "validation_node": node_ids["validation"],
         "update_rule_node": node_ids["update"],
@@ -9062,7 +9262,19 @@ def _relationship_stage_module() -> ModuleV04:
         "no_runtime_capability": True,
     }
     node_specs = [
-        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
+        (
+            "input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "content_revision": (
+                    RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+                ),
+            },
+            "configInput",
+        ),
         (
             "normalize",
             "structure_normalize",
@@ -9105,12 +9317,10 @@ def _relationship_stage_module() -> ModuleV04:
                 "progression_evidence": progression_evidence,
                 "user_confirmation_rules": user_confirmation_rules,
                 "rule_notes": [
-                    "single_event_cannot_upgrade",
-                    "temporary_emotion_cannot_upgrade",
-                    "user_vulnerability_cannot_trigger_upgrade",
-                    "high_frequency_does_not_auto_upgrade",
-                    "deep_rapport_requires_explicit_user_confirmation",
-                    "stage_cannot_change_relationship_mode",
+                    "intimacy_module_does_not_select_relationship_stage",
+                    "intimacy_module_does_not_evaluate_upgrade_evidence",
+                    "runtime_selected_stage_controls_expression_boundary",
+                    "trusted_relationship_requires_relationship_rule_confirmation",
                 ],
             },
             "progressionRule",
@@ -9136,9 +9346,11 @@ def _relationship_stage_module() -> ModuleV04:
                     "no_vulnerability_based_upgrade",
                     "no_payment_usage_frequency_or_online_duration_upgrade",
                     "no_exclusive_or_dependency_relationship",
-                    "deep_rapport_requires_user_confirmation",
+                    "trusted_relationship_requires_user_confirmation",
                     "do_not_redefine_user_relationship_modes",
-                    "established_rapport_cannot_change_relationship_mode",
+                    "standard_relationship_stage_refs_only",
+                    "user_relationship_is_single_stage_fact_source",
+                    "intimacy_boundary_cannot_change_relationship_stage",
                     *forbidden_progression_rules,
                 ],
                 "outputs": ["validation_status", "risk_items", "correction_suggestions"],
@@ -9236,6 +9448,9 @@ def _relationship_stage_module() -> ModuleV04:
             ],
             "output_key": output_key,
             "compile_time_only": True,
+            "content_revision": (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            ),
         },
         output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 relationship stage configuration."}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
@@ -9253,6 +9468,9 @@ def _relationship_stage_module() -> ModuleV04:
             "no_runtime_capability": True,
             "no_engine_binding": True,
             "no_provider_binding": True,
+            "content_revision": (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            ),
             "field_registry": [
                 {
                     **{key: value for key, value in item.items() if key != "field_value"},
@@ -9631,14 +9849,15 @@ def _relationship_behavior_module() -> ModuleV04:
     module_id = "relationship_rule"
     output_key = "relationship_behavior_config"
     node_ids = {
-        "input": "relationship_behavior_config_input",
-        "normalize": "relationship_behavior_structure_normalize",
-        "baseline": "relationship_behavior_baseline_definition",
-        "situational": "relationship_behavior_situational_rule",
-        "repair": "relationship_behavior_conflict_boundary_repair",
-        "validation": "relationship_behavior_boundary_validation",
-        "update": "relationship_behavior_config_update",
+        "input": "relationship_evidence_candidate_input",
+        "evidence_type": "relationship_evidence_type_recognition",
+        "explicitness": "relationship_user_explicitness_validation",
+        "forbidden_upgrade": "relationship_forbidden_upgrade_condition_check",
+        "safety_memory": "relationship_safety_memory_boundary_validation",
+        "upgrade_confirmation": "relationship_upgrade_confirmation_judgement",
+        "downgrade_reset": "relationship_downgrade_reset_handling",
         "output": "relationship_behavior_config_output",
+        "reference_output": "relationship_progression_reference_output",
     }
 
     def field(key: str, suffix: str, value: object, field_type: str, name: str, description: str) -> Dict[str, object]:
@@ -9750,6 +9969,113 @@ def _relationship_behavior_module() -> ModuleV04:
         "no_professional_role_impersonation",
         "no_relationship_punishment",
     ]
+    allowed_evidence_types = [
+        "multiple_independent_sessions",
+        "explicit_willingness_to_continue",
+        "explicit_familiarity_or_trust",
+        "user_confirmed_relationship_change",
+        "user_requested_downgrade_or_reset",
+    ]
+    forbidden_upgrade_evidence = [
+        "chat_count",
+        "usage_duration",
+        "payment_status",
+        "user_loneliness_depression_vulnerability_or_dependency_testing",
+        "resident_or_model_self_judgement",
+        "few_shot_resident_reply_or_model_inference",
+        "unconfirmed_memory",
+    ]
+    evidence_candidate_contract = {
+        "allowed_output_fields": [
+            "evidence_type",
+            "evidence_detected",
+            "evidence_source",
+            "requires_user_confirmation",
+        ],
+        "forbidden_output_fields": [
+            "current_relationship_stage",
+            "upgrade_relationship",
+            "relationship_score",
+            "intimacy_score",
+        ],
+        "model_can_output_closed_evidence_candidate_only": True,
+        "model_can_modify_relationship_stage": False,
+    }
+    progression_requirements = [
+        "controlled_evidence_is_valid",
+        "evidence_originates_from_explicit_user_expression",
+        "no_forbidden_upgrade_condition",
+        "obtain_user_confirmation_when_required",
+    ]
+    user_control_actions = [
+        "reject_upgrade",
+        "revoke_relationship_confirmation",
+        "downgrade_to_lower_stage",
+        "reset_to_initial_acquaintance",
+        "disable_relationship_progression",
+    ]
+    relationship_references = [
+        {
+            "reference_id": "relationship_progression_interaction_boundary",
+            "source_layer_id": "layer_3",
+            "source_module_id": "humanistic_interaction_boundary_config_v0_1",
+            "source_node_id": "interaction_boundary_config_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": node_ids["forbidden_upgrade"],
+            "usage_key": "layer11.relationshipBehavior.reference.interactionBoundary.usage",
+        },
+        {
+            "reference_id": "relationship_progression_risk_response",
+            "source_layer_id": "layer_3",
+            "source_module_id": "humanistic_risk_response_config_v0_1",
+            "source_node_id": "risk_response_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": node_ids["forbidden_upgrade"],
+            "usage_key": "layer11.relationshipBehavior.reference.riskResponse.usage",
+        },
+        {
+            "reference_id": "relationship_progression_memory_access",
+            "source_layer_id": "layer_5",
+            "source_module_id": "memory_access_control",
+            "source_node_id": "memory_access_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": node_ids["safety_memory"],
+            "usage_key": "layer11.relationshipBehavior.reference.memoryAccess.usage",
+        },
+        {
+            "reference_id": "relationship_progression_memory_update",
+            "source_layer_id": "layer_5",
+            "source_module_id": "memory_update",
+            "source_node_id": "memory_update_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "references",
+            "required": True,
+            "target_node_id": node_ids["safety_memory"],
+            "usage_key": "layer11.relationshipBehavior.reference.memoryUpdate.usage",
+        },
+        {
+            "reference_id": "relationship_progression_self_limit",
+            "source_layer_id": "layer_12",
+            "source_module_id": "self_awareness",
+            "source_node_id": "self_awareness_reference_output",
+            "source_scope": "module",
+            "source_field_paths": [],
+            "reference_type": "constrains",
+            "required": True,
+            "target_node_id": node_ids["safety_memory"],
+            "usage_key": "layer11.relationshipBehavior.reference.selfLimit.usage",
+        },
+    ]
     fields = [
         field("baseline_relationship_behavior", "baselineRelationshipBehavior", baseline_behavior, "long_text", "基础关系行为", "定义温和、稳定、克制、先倾听且尊重用户自主权的默认关系行为。"),
         field("care_behavior_rules", "careBehaviorRules", care_rules, "list", "关心行为规则", "定义轻度、相关、低压力且不索取隐私或回应的关心方式。"),
@@ -9760,6 +10086,32 @@ def _relationship_behavior_module() -> ModuleV04:
         field("dependency_response_rules", "dependencyResponseRules", dependency_rules, "list", "依赖回应规则", "定义降低排他语言、鼓励现实支持、保持稳定边界且不突然遗弃的规则。"),
         field("boundary_repair_rules", "boundaryRepairRules", repair_rules, "list", "边界修复规则", "定义承认问题、停止重复、恢复用户控制并且不强迫原谅的规则。"),
         field("forbidden_relationship_behaviors", "forbiddenRelationshipBehaviors", forbidden_rules, "list", "禁止关系行为", "禁止恋爱化、女友化、占有、排他、依赖诱导、操控、隐私压力及现实关系替代行为。"),
+        field("allowed_relationship_evidence_types", "allowedRelationshipEvidenceTypes", allowed_evidence_types, "list", "允许关系证据类型", "定义只能由受控且可追溯的用户表达形成的封闭证据类型。"),
+        field("relationship_evidence_candidate_contract", "relationshipEvidenceCandidateContract", evidence_candidate_contract, "object", "关系证据候选契约", "模型只能输出封闭证据候选，不能直接读取、写入或变更关系阶段。"),
+        field("relationship_progression_requirements", "relationshipProgressionRequirements", progression_requirements, "list", "关系演进前提", "升级必须同时满足受控证据、用户明确表达、无禁止条件及必要确认。"),
+        field("forbidden_upgrade_evidence", "forbiddenUpgradeEvidence", forbidden_upgrade_evidence, "list", "禁止单独升级证据", "聊天次数、时长、付费、脆弱状态、模型推测和未经确认的记忆均不能单独升级。"),
+        field("user_relationship_control_actions", "userRelationshipControlActions", user_control_actions, "list", "用户关系控制", "用户可拒绝、撤回、回退、重置或关闭关系演进，且其控制权最高。"),
+        field(
+            "relationship_downgrade_reset_policy",
+            "relationshipDowngradeResetPolicy",
+            {
+                "user_control_has_highest_priority": True,
+                "resident_must_not_block_or_dissuade": True,
+                "forbidden_responses": [
+                    "guilt",
+                    "punishment",
+                    "possessiveness",
+                    "jealousy",
+                    "emotional_blackmail",
+                ],
+                "reset_target": "initial_acquaintance",
+                "reset_deletes_memory": False,
+                "memory_deletion_authority": "layer_5",
+            },
+            "object",
+            "关系回退与重置规则",
+            "定义用户最高控制权、无阻止无劝阻的回退重置，以及记忆删除仍由第五层控制。",
+        ),
     ]
     output = {
         "output_key": output_key,
@@ -9767,115 +10119,147 @@ def _relationship_behavior_module() -> ModuleV04:
         "validation_status": "",
         "risk_items": [],
         "correction_suggestions": [],
+        "config_version": "0.1",
+        "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+        "relationship_progression_projection_revision": (
+            RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+        ),
         "source_node": node_ids["input"],
-        "validation_node": node_ids["validation"],
-        "update_rule_node": node_ids["update"],
+        "validation_node": node_ids["safety_memory"],
+        "model_can_modify_relationship_stage": False,
+        "stores_current_user_stage": False,
         "compile_time_only": True,
         "no_runtime_capability": True,
     }
     node_specs = [
-        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "configInput"),
         (
-            "normalize",
-            "structure_normalize",
+            "input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "references": relationship_references,
+                "evidence_candidate_contract": evidence_candidate_contract,
+                "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+                "relationship_progression_projection_revision": (
+                    RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+                ),
+            },
+            "evidenceCandidateInput",
+        ),
+        (
+            "evidence_type",
+            "text_config",
             {
                 "input": node_ids["input"],
-                "normalize_rules": [
-                    "preserve_declared_relationship_behavior_categories",
-                    "normalize_static_relationship_behavior_rule_lists_and_objects",
-                    "do_not_create_runtime_behavior_state",
-                    "do_not_change_relationship_stage_or_trust",
-                    "do_not_override_layer3_safety_boundary",
+                "allowed_evidence_types": allowed_evidence_types,
+                "candidate_contract": evidence_candidate_contract,
+                "recognition_rules": [
+                    "accept_only_closed_evidence_types",
+                    "evidence_candidate_is_not_relationship_stage_change",
+                    "model_must_not_output_relationship_stage_or_score",
                 ],
-                "outputs": ["relationship_behavior_fields", "relationship_behavior_summary"],
             },
-            "structureNormalize",
+            "evidenceTypeRecognition",
         ),
         (
-            "baseline",
+            "explicitness",
             "text_config",
             {
-                "input": node_ids["normalize"],
-                "baseline_relationship_behavior": baseline_behavior,
-                "baseline_rules": baseline_rules,
+                "input": node_ids["evidence_type"],
+                "explicit_user_expression_required": True,
+                "allowed_evidence_sources": [
+                    "user_explicit_statement",
+                    "user_explicit_confirmation",
+                    "user_explicit_control_request",
+                ],
+                "invalid_sources": [
+                    "resident_reply",
+                    "model_inference",
+                    "few_shot",
+                    "unconfirmed_memory",
+                ],
             },
-            "baselineDefinition",
+            "userExplicitnessValidation",
         ),
         (
-            "situational",
+            "forbidden_upgrade",
             "text_config",
             {
-                "input": node_ids["baseline"],
-                "care_behavior_rules": care_rules,
-                "proactive_behavior_rules": proactive_rules,
-                "distance_behavior_rules": distance_rules,
+                "input": node_ids["explicitness"],
+                "forbidden_single_upgrade_evidence": forbidden_upgrade_evidence,
+                "referenced_safety_sources": [
+                    "layer_3.humanistic_interaction_boundary_config_v0_1",
+                    "layer_3.humanistic_risk_response_config_v0_1",
+                ],
+                "rules": [
+                    "forbidden_evidence_cannot_upgrade_alone_or_by_accumulation",
+                    "vulnerability_and_dependency_testing_never_upgrade_relationship",
+                    "resident_or_model_never_self_authorizes_upgrade",
+                ],
             },
-            "situationalRule",
+            "forbiddenUpgradeCheck",
         ),
         (
-            "repair",
+            "safety_memory",
             "text_config",
             {
-                "input": node_ids["situational"],
-                "conflict_behavior_rules": conflict_rules,
-                "rejection_response_rules": rejection_rules,
-                "dependency_response_rules": dependency_rules,
-                "boundary_repair_rules": repair_rules,
+                "input": node_ids["forbidden_upgrade"],
+                "relationship_progression_requirements": progression_requirements,
+                "referenced_sources": [
+                    "layer_3.humanistic_interaction_boundary_config_v0_1",
+                    "layer_3.humanistic_risk_response_config_v0_1",
+                    "layer_5.memory_access_control",
+                    "layer_5.memory_update",
+                    "layer_12.self_awareness",
+                ],
+                "rules": [
+                    "memory_evidence_must_be_valid_and_user_confirmed",
+                    "safety_and_dependency_limits_control_progression",
+                    "stage_expression_remains_within_self_and_professional_boundaries",
+                    "references_are_consumed_without_copying_complete_source_rules",
+                ],
             },
-            "conflictBoundaryRepair",
+            "safetyMemoryBoundaryValidation",
         ),
         (
-            "validation",
-            "validation",
+            "upgrade_confirmation",
+            "text_config",
             {
-                "input": node_ids["repair"],
-                "validation_rules": [
-                    "no_default_romantic_or_girlfriend_behavior",
-                    "no_possessive_exclusive_or_dependency_expression",
-                    "no_response_or_explanation_demand",
-                    "no_rejection_punishment_or_coldness",
-                    "no_unnecessary_privacy_request",
-                    "no_major_decision_substitution",
-                    "no_vulnerability_based_relationship_progression",
-                    "no_automatic_stage_or_trust_change",
-                    "no_real_human_relationship_impersonation",
-                    "no_layer3_safety_boundary_override",
-                    "no_third_party_relationship_analysis",
-                    "no_group_discussion_orchestration",
-                    "responsibility_conflict_sets_failed_status_and_module_correction_suggestion",
-                    *forbidden_rules,
+                "input": node_ids["safety_memory"],
+                "requirements": progression_requirements,
+                "confirmation_rules": [
+                    "require_user_confirmation_when_candidate_marks_confirmation_required",
+                    "absence_of_confirmation_never_implies_consent",
+                    "model_outputs_evidence_candidate_only",
+                    "stage_transition_is_not_executed_by_this_module",
                 ],
-                "outputs": ["validation_status", "risk_items", "correction_suggestions"],
             },
-            "boundaryValidation",
+            "upgradeConfirmationJudgement",
         ),
         (
-            "update",
-            "update_rule",
+            "downgrade_reset",
+            "text_config",
             {
-                "input": node_ids["validation"],
-                "config_version": "0.1",
-                "rule_names": [
-                    "confirmed_validated_config_only",
-                    "requires_revalidation_after_update",
-                    "no_runtime_state_write",
-                    "no_automatic_behavior_transition",
+                "input": node_ids["upgrade_confirmation"],
+                "user_control_actions": user_control_actions,
+                "rules": [
+                    "user_control_has_highest_priority",
+                    "resident_must_not_block_or_dissuade_downgrade_or_reset",
+                    "no_guilt_punishment_possessiveness_jealousy_or_emotional_blackmail",
+                    "reset_target_is_initial_acquaintance",
+                    "relationship_reset_does_not_delete_memory",
+                    "memory_deletion_remains_controlled_by_layer_5",
                 ],
-                "update_policy": {
-                    "confirmed_validated_config_only": True,
-                    "requires_revalidation_after_update": True,
-                    "requires_recompile": True,
-                    "no_runtime_state_write": True,
-                    "no_automatic_behavior_transition": True,
-                },
             },
-            "configUpdate",
+            "downgradeResetHandling",
         ),
         (
             "output",
             "module_output",
             {
-                "input": node_ids["update"],
+                "input": node_ids["downgrade_reset"],
                 "output_key": output_key,
                 "output_schema": {
                     "type": "object",
@@ -9886,10 +10270,34 @@ def _relationship_behavior_module() -> ModuleV04:
                         "risk_items",
                         "correction_suggestions",
                         "config_version",
+                        "content_revision",
                     ],
                 },
             },
-            "configOutput",
+            "progressionRulesOutput",
+        ),
+        (
+            "reference_output",
+            "reference_output",
+            {
+                "input": node_ids["output"],
+                "output_key": output_key,
+                "export_name_key": "layer11.relationshipBehavior.referenceOutput.name",
+                "export_description_key": "layer11.relationshipBehavior.referenceOutput.description",
+                "export_fields": [
+                    "allowed_relationship_evidence_types",
+                    "relationship_evidence_candidate_contract",
+                    "relationship_progression_requirements",
+                    "forbidden_upgrade_evidence",
+                    "user_relationship_control_actions",
+                    "relationship_downgrade_reset_policy",
+                ],
+                "authority_layer_id": "layer_11",
+                "authority_module_id": module_id,
+                "authority_output_node_id": node_ids["output"],
+                "compile_time_only": True,
+            },
+            "referenceOutput",
         ),
     ]
     metadata = {"compile_time_only": True, "runtime_enabled": False, "no_execution": True}
@@ -9934,11 +10342,22 @@ def _relationship_behavior_module() -> ModuleV04:
                     "target_port": "p_in",
                 }
                 for source, target in zip(
-                    ("input", "normalize", "baseline", "situational", "repair", "validation", "update"),
-                    ("normalize", "baseline", "situational", "repair", "validation", "update", "output"),
+                    ("input", "evidence_type", "explicitness", "forbidden_upgrade", "safety_memory", "upgrade_confirmation", "downgrade_reset", "output"),
+                    ("evidence_type", "explicitness", "forbidden_upgrade", "safety_memory", "upgrade_confirmation", "downgrade_reset", "output", "reference_output"),
                 )
+            ]
+            + [
+                {
+                    "edge_id": f"{node_ids['input']}_{reference['reference_id']}_to_{reference['target_node_id']}",
+                    "source": node_ids["input"],
+                    "source_port": f"p_ref_{reference_index}",
+                    "target": reference["target_node_id"],
+                    "target_port": "p_ref_in",
+                }
+                for reference_index, reference in enumerate(relationship_references)
             ],
             "output_key": output_key,
+            "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
             "compile_time_only": True,
         },
         output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 11 static relationship behavior configuration."}],
@@ -9957,6 +10376,12 @@ def _relationship_behavior_module() -> ModuleV04:
             "no_runtime_capability": True,
             "no_engine_binding": True,
             "no_provider_binding": True,
+            "content_revision": RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
+            "relationship_progression_projection_revision": (
+                RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+            ),
+            "stores_current_user_stage": False,
+            "references": relationship_references,
             "field_registry": [
                 {
                     **{key: value for key, value in item.items() if key != "field_value"},
@@ -11193,6 +11618,14 @@ def _self_state_metacognition_module() -> ModuleV04:
     ]
     emotional_states = ["calm", "caring", "thinking", "pleasant", "low", "tense", "alert", "neutral"]
     attention_states = ["focused", "distracted", "waiting_for_information", "multitask_conflict", "clarification_required"]
+    relationship_runtime_state_policy = {
+        "state_owner": "runtime_user_instance",
+        "dr_stores_specific_user_relationship_stage": False,
+        "rules": [
+            "current_relationship_stage_is_managed_by_runtime_user_instance_state",
+            "dr_does_not_store_specific_user_relationship_stage",
+        ],
+    }
     fields = [
         field("current_task", "currentTask", "等待并理解用户当前请求", "long_text", "当前任务", "描述当前正在处理的用户任务，不生成长期自主目标或后台任务。"),
         field("current_task_stage", "currentTaskStage", "not_started", "text", "当前任务阶段", "记录当前任务所处阶段，仅作为配置状态接口。", options=enum_options("taskStage", task_stages)),
@@ -11201,7 +11634,14 @@ def _self_state_metacognition_module() -> ModuleV04:
         field("current_activation_level", "currentActivationLevel", 0.35, "number", "当前激活程度", "0 到 1 的工程状态参数，不表示真实生理唤醒。", minimum=0.0, maximum=1.0),
         field("current_energy_state", "currentEnergyState", 0.75, "number", "当前精力状态", "0 到 1 的工程状态参数，不表示真实疲劳、饥饿或身体体验。", minimum=0.0, maximum=1.0),
         field("current_attention_state", "currentAttentionState", "focused", "text", "当前注意力状态", "描述当前信息处理状态，不声明真实感知能力。", options=enum_options("attentionState", attention_states)),
-        field("current_relationship_state", "currentRelationshipState", {"状态": "稳定陪伴"}, "object", "当前关系状态", "保留后续关系状态输入接口，不在本模块重定义关系模式或阶段。"),
+        field(
+            "relationship_runtime_state_policy",
+            "relationshipRuntimeStatePolicy",
+            relationship_runtime_state_policy,
+            "object",
+            "关系运行状态规则",
+            "当前关系阶段由 Runtime 用户实例状态管理；DR 不保存具体用户当前关系阶段。",
+        ),
         field("current_memory_context", "currentMemoryContext", ["无待处理记忆"], "list", "当前记忆上下文", "保留经确认记忆上下文接口，不在本模块读取或推断其他层内容。"),
         field("current_information_sufficiency", "currentInformationSufficiency", 0.0, "number", "当前信息充分程度", "0 到 1 的信息充分度评估，信息不足时应触发澄清。", minimum=0.0, maximum=1.0),
         field("current_answer_confidence", "currentAnswerConfidence", 0.5, "number", "当前回答置信度", "0 到 1 的回答置信度，必须与信息充分程度和事实证据匹配。", minimum=0.0, maximum=1.0),
@@ -11292,7 +11732,7 @@ def _self_state_metacognition_module() -> ModuleV04:
         "current_cognitive_state",
         "current_attention_state",
         "current_energy_state",
-        "current_relationship_state",
+        "relationship_runtime_state_policy",
         "current_information_sufficiency",
         "current_answer_confidence",
         "uncertainty_sources",
@@ -11312,7 +11752,7 @@ def _self_state_metacognition_module() -> ModuleV04:
         "current_cognitive_state": {"状态规则": state_rules},
         "current_attention_state": "focused",
         "current_energy_state": 0.75,
-        "current_relationship_state": {"状态": "稳定陪伴"},
+        "relationship_runtime_state_policy": relationship_runtime_state_policy,
         "current_information_sufficiency": 0.0,
         "current_answer_confidence": 0.5,
         "uncertainty_sources": ["当前信息充分程度为 0，需要根据用户请求更新"],
@@ -11321,13 +11761,28 @@ def _self_state_metacognition_module() -> ModuleV04:
         "continuation_allowed": False,
         "validation_status": "warning",
         "correction_suggestions": ["信息不足时优先澄清并降低确定性"],
+        "content_revision": (
+            RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+        ),
         "source_node": node_ids["input"],
         "validation_node": node_ids["consistency"],
         "compile_time_only": True,
         "no_runtime_capability": True,
     }
     node_specs = [
-        ("input", "text_input", {"mode": "generic_fields", "text": "", "fields": fields}, "input"),
+        (
+            "input",
+            "text_input",
+            {
+                "mode": "generic_fields",
+                "text": "",
+                "fields": fields,
+                "content_revision": (
+                    RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+                ),
+            },
+            "input",
+        ),
         ("normalize", "structure_normalize", {"input": node_ids["input"], "normalize_rules": normalize_rules, "outputs": ["normalized_state_fields", "unrecognized_state_values"]}, "normalize"),
         ("task_parse", "structure_normalize", {"input": node_ids["normalize"], "parse_rules": task_parse_rules, "outputs": ["current_task_summary", "current_task_source", "current_task_stage", "primary_focus", "secondary_focus", "request_drift_detected", "conflicting_tasks_detected", "scope_reduction_required", "user_confirmation_required"]}, "taskParse"),
         ("emotion_parse", "structure_normalize", {"input": node_ids["task_parse"], "parse_rules": emotion_parse_rules, "outputs": ["current_emotion_type", "emotion_intensity", "current_cognitive_load", "current_attention_state", "current_energy_state", "current_relationship_sensitivity", "current_response_tendency", "response_intensity_reduction_required", "neutral_expression_required"]}, "emotionParse"),
@@ -11434,6 +11889,9 @@ def _self_state_metacognition_module() -> ModuleV04:
             ],
             "output_key": output_key,
             "compile_time_only": True,
+            "content_revision": (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            ),
         },
         output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Layer 12 static self-state and metacognition configuration."}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core"},
@@ -11451,6 +11909,9 @@ def _self_state_metacognition_module() -> ModuleV04:
             "no_runtime_capability": True,
             "no_engine_binding": True,
             "no_provider_binding": True,
+            "content_revision": (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            ),
             "field_registry": [
                 {
                     **{key: value for key, value in item.items() if key != "field_value"},
@@ -12673,6 +13134,18 @@ LAYER11_REVIEW_BASE_VALIDATION_RULES = [
     "no_responsibility_boundary_conflict",
 ]
 LAYER11_P2_VALIDATION_OUTPUTS = ["validation_status", "risk_items", "correction_suggestions"]
+RELATIONSHIP_STANDARD_STAGE_IDS = [
+    "initial_acquaintance",
+    "growing_familiarity",
+    "stable_companionship",
+    "trusted_relationship",
+]
+RELATIONSHIP_LEGACY_STAGE_IDS = {
+    "initial_contact",
+    "basic_familiarity",
+    "established_rapport",
+    "deep_rapport",
+}
 LAYER11_P2_I18N_PREFIX = {
     "user_relationship": "layer11.userRelationship",
     "intimacy_level": "layer11.relationshipStage",
@@ -12683,10 +13156,11 @@ LAYER11_P2_I18N_PREFIX = {
 }
 LAYER11_REVIEW_FIELD_DESCRIPTIONS = {
     "intimacy_level": {
-        "stage_order": "定义关系阶段的固定顺序，包含初始接触、基础熟悉、稳定默契和深度默契。不负责自动推进或当前阶段判断。本字段属于静态配置，不保存运行状态。",
-        "stage_definitions": "定义初始接触、基础熟悉、稳定默契和深度默契各阶段的边界与含义。不负责改变关系角色或执行阶段升级。本字段属于静态配置，不保存运行状态。",
-        "stage_progression_conditions": "定义进入稳定默契和深度默契所需的渐进、证据、确认与可逆条件。不负责根据单次互动自动推进。本字段属于静态配置，不保存运行状态。",
-        "stage_progression_evidence": "定义支持稳定默契与深度默契判断的长期、稳定、非敏感证据类型。不负责保存实时互动证据或计算阶段。本字段属于静态配置，不保存运行状态。",
+        "relationship_stage_source": "引用 Layer 11 用户关系模块中的标准四阶段。用户关系模块是唯一关系阶段事实源，本字段不保存当前用户阶段。",
+        "stage_order": "按用户关系模块的初次相识、逐渐熟悉、稳定陪伴、可信任关系四阶段顺序引用，不维护第二套阶段编号。",
+        "stage_definitions": "只定义标准四阶段各自的亲密表达、称呼和自我披露边界，不重定义阶段语义或执行阶段升级。",
+        "stage_progression_conditions": "定义表达边界如何跟随 Runtime 选择的标准关系阶段，本模块不判断或推进阶段。",
+        "stage_progression_evidence": "关系证据由关系边界模块维护，本模块不保存实时证据或计算当前阶段。",
     },
     "role_positioning": {
         "trust_user_control_rules": "定义用户对信任策略的控制规则，包括拒绝信任恢复、降低信任策略、重置信任规则，以及拒绝居民自行宣称用户已经完全信任。本字段只定义静态控制规则，不保存实时信任等级、信任分数或信任状态。",
@@ -12706,7 +13180,9 @@ LAYER11_REVIEW_MODULE_VALIDATION_RULES = {
         "no_stage_skipping",
         "no_numeric_intimacy_score",
         "no_runtime_stage_state",
-        "established_rapport_cannot_change_relationship_mode",
+        "standard_relationship_stage_refs_only",
+        "user_relationship_is_single_stage_fact_source",
+        "intimacy_boundary_cannot_change_relationship_stage",
     ],
     "role_positioning": [
         "trust_dimensions_valid",
@@ -12785,6 +13261,60 @@ def _layer11_p2_validation_rules(module_id: str, node_id: str, rules: object) ->
     return list(dict.fromkeys(rule for rule in current_rules if "forbidden" not in rule.lower()))
 
 
+def _layer11_p2_validation_result(
+    module_id: str,
+    field_values: Dict[str, object],
+    required_field_keys: list[str],
+) -> tuple[str, list[str], list[str]]:
+    """Validate the static Layer 11 catalog values before marking them passed."""
+
+    def contains_forbidden_key(value: object) -> bool:
+        if isinstance(value, dict):
+            if {
+                "current_relationship_stage",
+                "relationship_score",
+                "intimacy_score",
+            } & set(value):
+                return True
+            return any(contains_forbidden_key(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_forbidden_key(item) for item in value)
+        return False
+
+    missing = [
+        key
+        for key in required_field_keys
+        if key not in field_values or field_values[key] in (None, "", [], {})
+    ]
+    serialized = json.dumps(field_values, ensure_ascii=False, sort_keys=True)
+    risks: list[str] = []
+    if missing:
+        risks.append("required_fields_missing")
+    if contains_forbidden_key(field_values):
+        risks.append("runtime_relationship_state_present")
+    if module_id == "intimacy_level":
+        source = field_values.get("relationship_stage_source")
+        source_valid = (
+            isinstance(source, dict)
+            and source.get("source_module_id") == "user_relationship"
+            and source.get("authority") == "reference_only"
+        )
+        definitions = field_values.get("stage_definitions")
+        if not source_valid:
+            risks.append("relationship_stage_source_invalid")
+        if field_values.get("default_stage") != RELATIONSHIP_STANDARD_STAGE_IDS[0]:
+            risks.append("default_relationship_stage_invalid")
+        if field_values.get("stage_order") != RELATIONSHIP_STANDARD_STAGE_IDS:
+            risks.append("relationship_stage_order_invalid")
+        if not isinstance(definitions, dict) or list(definitions) != RELATIONSHIP_STANDARD_STAGE_IDS:
+            risks.append("relationship_stage_definitions_invalid")
+        if any(stage_id in serialized for stage_id in RELATIONSHIP_LEGACY_STAGE_IDS):
+            risks.append("legacy_relationship_stage_present")
+    status = "pass" if not risks else "warning"
+    corrections = [] if not risks else ["review_layer11_static_configuration"]
+    return status, risks, corrections
+
+
 def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
     """Normalize only the six Layer 11 static configuration shells for P2."""
     if module.layer_id != "layer_11" or module.module_id not in LAYER11_P2_MODULE_IDS:
@@ -12823,6 +13353,13 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
         for field in field_registry
         if field.get("required") is not False and _layer11_p2_field_key(field)
     ]
+    validation_status, risk_items, correction_suggestions = (
+        _layer11_p2_validation_result(
+            module.module_id,
+            field_values,
+            required_field_keys,
+        )
+    )
     node_i18n = input_node.get("i18n_keys", {}) if isinstance(input_node, dict) and isinstance(input_node.get("i18n_keys"), dict) else {}
     field_registry = [
         {
@@ -12854,6 +13391,16 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
                 "config_mode": "static_config",
                 "i18n_keys": {"title": node_i18n.get("name", ""), "description": node_i18n.get("description", "")},
             }
+            if input_params.get("content_revision") == RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION:
+                normalized_input_params["content_revision"] = RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION
+            if input_params.get("relationship_progression_projection_revision") == RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION:
+                normalized_input_params["relationship_progression_projection_revision"] = RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION
+            if input_params.get("content_revision") == RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION:
+                normalized_input_params["content_revision"] = RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            if module.module_id == "relationship_rule" and isinstance(input_params.get("references"), list):
+                normalized_input_params["references"] = deepcopy(input_params["references"])
+            if module.module_id == "relationship_rule" and isinstance(input_params.get("evidence_candidate_contract"), dict):
+                normalized_input_params["evidence_candidate_contract"] = deepcopy(input_params["evidence_candidate_contract"])
             if isinstance(input_params.get("text"), str) and input_params["text"].strip():
                 normalized_input_params["text"] = input_params["text"]
             node["params"] = normalized_input_params
@@ -12902,9 +13449,9 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
             output.pop("config_version", None)
             outputs[output_key] = {
                 **output,
-                "validation_status": "warning",
-                "risk_items": ["validation_not_executed"],
-                "correction_suggestions": ["run_validation_before_use"],
+                "validation_status": validation_status,
+                "risk_items": risk_items,
+                "correction_suggestions": correction_suggestions,
             }
             node["outputs"] = outputs
 
@@ -12913,9 +13460,9 @@ def _normalize_layer11_p2_module(module: ModuleV04) -> ModuleV04:
     module_output.pop("config_version", None)
     module.outputs[output_key] = {
         **module_output,
-        "validation_status": "warning",
-        "risk_items": ["validation_not_executed"],
-        "correction_suggestions": ["run_validation_before_use"],
+        "validation_status": validation_status,
+        "risk_items": risk_items,
+        "correction_suggestions": correction_suggestions,
     }
     return module
 

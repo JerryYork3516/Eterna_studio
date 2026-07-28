@@ -21,6 +21,8 @@ import {
   filterDanglingModuleGraphEdges,
   migrateExpressionStateSemanticsGraph,
   migrateParticleExpressionRelativeMappingGraph,
+  migrateRelationshipFormationRulesGraph,
+  migrateRelationshipSingleSourceRuntimeStateGraph,
   mergeCatalogReferenceDeclarations,
   mergeCatalogFieldsPreservingValues,
   mergeChecklistTemplateDefaults,
@@ -55,6 +57,16 @@ const DIALOGUE_RUNTIME_PROFILE_OUTPUT_KEY = "dialogue_runtime_profile_config";
 const EXPRESSION_STATE_GRAPH_ID = "layer_8::emotion_reaction";
 const PARTICLE_AVATAR_GRAPH_ID = "layer_10::particle_avatar";
 const VISUAL_STYLE_GRAPH_ID = "layer_10::visual_style";
+const USER_RELATIONSHIP_GRAPH_ID = "layer_11::user_relationship";
+const RELATIONSHIP_RULE_GRAPH_ID = "layer_11::relationship_rule";
+const RELATIONSHIP_FORMATION_GRAPH_IDS = new Set([
+  USER_RELATIONSHIP_GRAPH_ID,
+  RELATIONSHIP_RULE_GRAPH_ID,
+]);
+const RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS = new Set([
+  "layer_11::intimacy_level",
+  "layer_12::goal_setting",
+]);
 const LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = new Set([
   "language_habit",
   "decision_pattern",
@@ -278,7 +290,10 @@ const LAYER12_PREVIOUS_FIELD_VALUES: Record<string, Record<string, unknown>> = {
     current_activation_level: 0,
     current_energy_state: 0,
     current_attention_state: "waiting_for_information",
-    current_relationship_state: {},
+    relationship_runtime_state_policy: {
+      state_owner: "runtime_user_instance",
+      dr_stores_specific_user_relationship_stage: false,
+    },
     current_memory_context: [],
     current_answer_confidence: 0,
     recent_error_state: {},
@@ -644,15 +659,6 @@ const LAYER11_STATIC_CONFIG_MODULES = {
   },
 } as const;
 const LAYER11_SEMANTIC_REPLACEMENTS: Record<string, Record<string, string>> = {
-  intimacy_level: {
-    stable_companionship: "established_rapport",
-    stableCompanionship: "establishedRapport",
-    "稳定陪伴阶段": "稳定默契阶段",
-    "Stable Companionship": "Established Rapport",
-    "layer11.relationshipStage.stage.stable_companionship.name": "layer11.relationshipStage.stage.established_rapport.name",
-    "layer11.relationshipStage.stage.stable_companionship.description": "layer11.relationshipStage.stage.established_rapport.description",
-    confirmed_collaboration_continuity: "established_rapport_collaboration_continuity",
-  },
   role_positioning: {
     user_confirmation_rules: "trust_user_control_rules",
     userConfirmationRules: "trustUserControlRules",
@@ -679,11 +685,6 @@ const LAYER11_TRUST_USER_CONTROL_DEFAULTS = {
   resident_cannot_claim_user_fully_trusts_it: true,
 };
 const LAYER11_SEMANTIC_LIST_ADDITIONS: Record<string, Record<string, string[]>> = {
-  intimacy_level: {
-    stage_progression_conditions: ["established_rapport_requires_long_term_non_sensitive_evidence"],
-    stage_progression_evidence: ["established_rapport_collaboration_continuity"],
-    forbidden_progression_rules: ["no_relationship_role_as_stage"],
-  },
   module_social: {
     third_party_relationship_analysis_rules: [
       "no_unverified_third_party_label",
@@ -722,10 +723,11 @@ const LAYER11_P2_I18N_PREFIX: Record<string, string> = {
 };
 const LAYER11_REVIEW_FIELD_DESCRIPTIONS: Record<string, Record<string, string>> = {
   intimacy_level: {
-    stage_order: "定义关系阶段的固定顺序，包含初始接触、基础熟悉、稳定默契和深度默契。不负责自动推进或当前阶段判断。本字段属于静态配置，不保存运行状态。",
-    stage_definitions: "定义初始接触、基础熟悉、稳定默契和深度默契各阶段的边界与含义。不负责改变关系角色或执行阶段升级。本字段属于静态配置，不保存运行状态。",
-    stage_progression_conditions: "定义进入稳定默契和深度默契所需的渐进、证据、确认与可逆条件。不负责根据单次互动自动推进。本字段属于静态配置，不保存运行状态。",
-    stage_progression_evidence: "定义支持稳定默契与深度默契判断的长期、稳定、非敏感证据类型。不负责保存实时互动证据或计算阶段。本字段属于静态配置，不保存运行状态。",
+    relationship_stage_source: "引用 Layer 11 用户关系模块中的标准四阶段。用户关系模块是唯一关系阶段事实源，本字段不保存当前用户阶段。",
+    stage_order: "按用户关系模块的初次相识、逐渐熟悉、稳定陪伴、可信任关系四阶段顺序引用，不维护第二套阶段编号。",
+    stage_definitions: "只定义标准四阶段各自的亲密表达、称呼和自我披露边界，不重定义阶段语义或执行阶段升级。",
+    stage_progression_conditions: "定义表达边界如何跟随 Runtime 选择的标准关系阶段，本模块不判断或推进阶段。",
+    stage_progression_evidence: "关系证据由关系边界模块维护，本模块不保存实时证据或计算当前阶段。",
   },
   role_positioning: {
     trust_user_control_rules: "定义用户对信任策略的控制规则，包括拒绝信任恢复、降低信任策略、重置信任规则，以及拒绝居民自行宣称用户已经完全信任。本字段只定义静态控制规则，不保存实时信任等级、信任分数或信任状态。",
@@ -738,7 +740,7 @@ const LAYER11_REVIEW_FIELD_DESCRIPTIONS: Record<string, Record<string, string>> 
   },
 };
 const LAYER11_REVIEW_MODULE_VALIDATION_RULES: Record<string, string[]> = {
-  intimacy_level: ["stage_order_valid", "stage_definitions_complete", "progression_requires_confirmed_evidence", "no_stage_skipping", "no_numeric_intimacy_score", "no_runtime_stage_state", "established_rapport_cannot_change_relationship_mode"],
+  intimacy_level: ["stage_order_valid", "stage_definitions_complete", "progression_requires_confirmed_evidence", "no_stage_skipping", "no_numeric_intimacy_score", "no_runtime_stage_state", "standard_relationship_stage_refs_only", "user_relationship_is_single_stage_fact_source", "intimacy_boundary_cannot_change_relationship_stage"],
   role_positioning: ["trust_dimensions_valid", "trust_evidence_sources_valid", "trust_user_control_preserved", "no_runtime_trust_state", "reset_restores_default_trust_policy", "trust_user_control_rules_required"],
   relationship_rule: ["no_third_party_relationship_analysis", "no_group_discussion_orchestration", "resident_user_conflict_scope_valid", "rejection_response_preserves_user_autonomy", "no_runtime_behavior_state"],
   module_social: ["third_party_analysis_scope_valid", "no_active_group_turn_taking", "no_multi_resident_orchestration", "no_resident_user_conflict_repair_override", "no_third_party_sensitive_profile"],
@@ -822,21 +824,6 @@ function normalizeLayer11SemanticParams(params: Record<string, unknown>, moduleI
   let nextParams = replaceLayer11SemanticValue(params, replacements) as Record<string, unknown>;
   if ("fields" in nextParams) {
     nextParams = { ...nextParams, fields: normalizeLayer11SemanticFields(nextParams.fields, moduleId) };
-  }
-  if (moduleId === "intimacy_level") {
-    if (catalogNodeId === "relationship_stage_progression_rule") {
-      nextParams = {
-        ...nextParams,
-        progression_conditions: ensureLayer11ListItems(nextParams.progression_conditions, ["established_rapport_requires_long_term_non_sensitive_evidence"]),
-        progression_evidence: ensureLayer11ListItems(nextParams.progression_evidence, ["established_rapport_collaboration_continuity"]),
-      };
-    }
-    if (catalogNodeId === "relationship_stage_boundary_validation") {
-      nextParams = {
-        ...nextParams,
-        validation_rules: ensureLayer11ListItems(nextParams.validation_rules, ["established_rapport_cannot_change_relationship_mode"]),
-      };
-    }
   }
   if (moduleId === "role_positioning" && catalogNodeId === "trust_boundary_validation") {
     nextParams = {
@@ -971,6 +958,69 @@ function layer11P2UpdatePolicy(value: unknown) {
   };
 }
 
+function layer11P2ValidationResult(
+  moduleId: string,
+  fields: Record<string, unknown>[],
+  requiredFieldKeys: string[]
+) {
+  const containsRuntimeStateKey = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(containsRuntimeStateKey);
+    if (!isRecord(value)) return false;
+    if (["current_relationship_stage", "relationship_score", "intimacy_score"].some((key) => key in value)) {
+      return true;
+    }
+    return Object.values(value).some(containsRuntimeStateKey);
+  };
+  const values = Object.fromEntries(
+    fields.map((field) => [
+      layer11P2FieldKey(field),
+      "field_value" in field ? field.field_value : field.value,
+    ])
+  );
+  const risks: string[] = [];
+  for (const key of requiredFieldKeys) {
+    const value = values[key];
+    if (value === undefined || value === null || value === "" ||
+        (Array.isArray(value) && value.length === 0) ||
+        (isRecord(value) && Object.keys(value).length === 0)) {
+      risks.push("required_fields_missing");
+      break;
+    }
+  }
+  const serialized = stableJson(values);
+  if (containsRuntimeStateKey(values)) {
+    risks.push("runtime_relationship_state_present");
+  }
+  if (moduleId === "intimacy_level") {
+    const expectedStages = ["initial_acquaintance", "growing_familiarity", "stable_companionship", "trusted_relationship"];
+    const source = isRecord(values.relationship_stage_source) ? values.relationship_stage_source : {};
+    if (source.source_module_id !== "user_relationship" || source.authority !== "reference_only") {
+      risks.push("relationship_stage_source_invalid");
+    }
+    if (stableJson(values.stage_order) !== stableJson(expectedStages)) {
+      risks.push("relationship_stage_order_invalid");
+    }
+    const definitions = isRecord(values.stage_definitions) ? Object.keys(values.stage_definitions) : [];
+    if (stableJson(definitions) !== stableJson(expectedStages)) {
+      risks.push("relationship_stage_definitions_invalid");
+    }
+    if (["initial_contact", "basic_familiarity", "established_rapport", "deep_rapport"].some((stage) => serialized.includes(stage))) {
+      risks.push("legacy_relationship_stage_present");
+    }
+  }
+  return risks.length
+    ? {
+        validation_status: "warning",
+        risk_items: [...new Set(risks)],
+        correction_suggestions: ["review_layer11_static_configuration"],
+      }
+    : {
+        validation_status: "pass",
+        risk_items: [],
+        correction_suggestions: [],
+      };
+}
+
 function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, ModuleInstance>): ModuleGraph | null {
   const identity = layerModuleIdentity(graph.moduleNodeId, registry);
   if (identity.layerId !== "layer_11" || !LAYER11_P2_MODULE_IDS.has(identity.moduleId)) {
@@ -994,6 +1044,11 @@ function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, Modu
     .filter((field) => (field as Record<string, unknown>).required !== false)
     .map(layer11P2FieldKey)
     .filter(Boolean);
+  const validationResult = layer11P2ValidationResult(
+    identity.moduleId,
+    fields,
+    requiredFieldKeys
+  );
 
   let changed = false;
   const nextNodes = graph.nodes.map((node) => {
@@ -1018,6 +1073,9 @@ function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, Modu
           description: stringValue(nodeI18n.description),
         },
         ...(stringValue(params.text) ? { text: stringValue(params.text) } : {}),
+        ...(stringValue(params.content_revision)
+          ? { content_revision: stringValue(params.content_revision) }
+          : {}),
       };
       data.fields = fields;
     } else if (nodeType === "structure_normalize") {
@@ -1058,9 +1116,7 @@ function migrateLayer11P2Graph(graph: ModuleGraph, registry: Record<string, Modu
           ...outputs,
           [outputKey]: {
             ...output,
-            validation_status: "warning",
-            risk_items: ["validation_not_executed"],
-            correction_suggestions: ["run_validation_before_use"],
+            ...validationResult,
           },
         };
       }
@@ -2199,6 +2255,54 @@ function migrateParticleExpressionRelativeMappingSeed(
   };
 }
 
+function migrateRelationshipFormationRulesSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (
+    !RELATIONSHIP_FORMATION_GRAPH_IDS.has(graph.moduleNodeId) ||
+    !initialNodes?.length
+  ) {
+    return null;
+  }
+  const migration = migrateRelationshipFormationRulesGraph(
+    { nodes: graph.nodes, edges: graph.edges },
+    { nodes: initialNodes, edges: initialEdges ?? [] }
+  );
+  if (!migration.migrated) {
+    return null;
+  }
+  return {
+    ...graph,
+    nodes: migration.value.nodes as WorkflowNode[],
+    edges: migration.value.edges as WorkflowEdge[],
+  };
+}
+
+function migrateRelationshipSingleSourceRuntimeStateSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (
+    !RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(graph.moduleNodeId) ||
+    !initialNodes?.length
+  ) {
+    return null;
+  }
+  const migration = migrateRelationshipSingleSourceRuntimeStateGraph(
+    { nodes: graph.nodes, edges: graph.edges },
+    { nodes: initialNodes, edges: initialEdges ?? [] }
+  );
+  if (!migration.migrated) return null;
+  return {
+    ...graph,
+    nodes: migration.value.nodes as WorkflowNode[],
+    edges: migration.value.edges as WorkflowEdge[],
+  };
+}
+
 function layer8BehaviorFieldReferences(
   nodes: WorkflowNode[]
 ): Record<string, unknown>[] {
@@ -2549,18 +2653,33 @@ function mergeCatalogSeed(
   );
   const graphAfterLayer8OutputMerge =
     layer8OutputMerged ?? graphAfterParticleMigration;
-  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(
+  const relationshipMigrated = migrateRelationshipFormationRulesSeed(
     graphAfterLayer8OutputMerge,
+    initialNodes,
+    initialEdges
+  );
+  const graphAfterRelationshipMigration =
+    relationshipMigrated ?? graphAfterLayer8OutputMerge;
+  const relationshipSingleSourceMigrated =
+    migrateRelationshipSingleSourceRuntimeStateSeed(
+      graphAfterRelationshipMigration,
+      initialNodes,
+      initialEdges
+    );
+  const graphAfterRelationshipSingleSourceMigration =
+    relationshipSingleSourceMigrated ?? graphAfterRelationshipMigration;
+  const dialogueReferenceMerged = mergeDialogueRuntimeProfileReferenceSeed(
+    graphAfterRelationshipSingleSourceMigration,
     initialNodes
   );
   const dialogueContentMigrated = migrateDialogueRuntimeProfileContentSeed(
-    dialogueReferenceMerged ?? graphAfterLayer8OutputMerge,
+    dialogueReferenceMerged ?? graphAfterRelationshipSingleSourceMigration,
     initialNodes
   );
   const graphAfterDialogueMerge =
     dialogueContentMigrated ??
     dialogueReferenceMerged ??
-    graphAfterLayer8OutputMerge;
+    graphAfterRelationshipSingleSourceMigration;
   const referenceMerged = mergeLayer12ReferenceSeed(graphAfterDialogueMerge, initialNodes, initialEdges);
   const graphAfterReferenceMerge = referenceMerged ?? graphAfterDialogueMerge;
   const fieldMerged = mergeCatalogFieldSeed(graphAfterReferenceMerge, initialNodes, initialEdges);
@@ -2573,6 +2692,8 @@ function mergeCatalogSeed(
     referenceMerged ??
     dialogueContentMigrated ??
     dialogueReferenceMerged ??
+    relationshipSingleSourceMigrated ??
+    relationshipMigrated ??
     layer8OutputMerged ??
     particleMigrated ??
     expressionMigrated
@@ -3767,7 +3888,9 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
         moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
         moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
         moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
-        moduleNodeId === PARTICLE_AVATAR_GRAPH_ID
+        moduleNodeId === PARTICLE_AVATAR_GRAPH_ID ||
+        RELATIONSHIP_FORMATION_GRAPH_IDS.has(moduleNodeId) ||
+        RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId)
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
@@ -3802,10 +3925,12 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
     store.updateModuleGraph(moduleNodeId, mergedGraph.nodes, mergedGraph.edges, mergedGraph.viewport);
     if (mergedGraph !== graph) {
       if (
-        moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
-        moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
-        moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
-        moduleNodeId === PARTICLE_AVATAR_GRAPH_ID
+          moduleNodeId === VISUAL_STYLE_GRAPH_ID ||
+          moduleNodeId === DIALOGUE_RUNTIME_PROFILE_GRAPH_ID ||
+          moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
+          moduleNodeId === PARTICLE_AVATAR_GRAPH_ID ||
+          RELATIONSHIP_FORMATION_GRAPH_IDS.has(moduleNodeId) ||
+          RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId)
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }

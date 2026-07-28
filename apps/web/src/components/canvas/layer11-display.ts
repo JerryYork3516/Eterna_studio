@@ -75,6 +75,15 @@ export function resolveLayer11DisplayText({
     outputPrefix ? `layer11.${outputPrefix}.output` : "",
     prefix ? `layer11.${prefix}.field.${fieldKey}.label` : "",
     prefix ? `layer11.${prefix}.validation.${fieldKey}` : "",
+    prefix === "userRelationship" || prefix === "relationshipBehavior"
+      ? `layer11.relationshipFormation.stage.${value}.label`
+      : "",
+    prefix === "userRelationship" || prefix === "relationshipBehavior"
+      ? `layer11.relationshipFormation.dimension.${fieldKey}`
+      : "",
+    prefix === "userRelationship" || prefix === "relationshipBehavior"
+      ? `layer11.relationshipFormation.value.${value}`
+      : "",
     prefix === "relationshipStage" ? `layer11.relationshipStage.stage.${value}.name` : "",
     prefix === "trustMechanism" ? `layer11.trustMechanism.dimension.${value}.name` : "",
     prefix === "socialNetwork" ? `layer11.socialNetwork.role.${value}.name` : "",

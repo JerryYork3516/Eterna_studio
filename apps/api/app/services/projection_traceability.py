@@ -416,6 +416,54 @@ PROJECTION_FIELD_MAPPINGS: tuple[Dict[str, Any], ...] = (
         "projection_type": "derived_read_only",
     },
     {
+        "mapping_id": "relationship_progression_projection",
+        "source_layer": (
+            "layer_3",
+            "layer_5",
+            "layer_11",
+            "layer_12",
+        ),
+        "source_module": (
+            "humanistic_interaction_boundary_config_v0_1",
+            "humanistic_risk_response_config_v0_1",
+            "memory_access_control",
+            "memory_update",
+            "user_relationship",
+            "relationship_rule",
+            "self_awareness",
+        ),
+        "source_output": (
+            "interaction_safety_policy",
+            "risk_policy",
+            "memory_access_policy_result",
+            "memory_update_policy",
+            "user_relationship_config",
+            "relationship_behavior_config",
+            "self_awareness_config",
+        ),
+        "source_field": (
+            "relationship stages; reserved stage gate; evidence rules; "
+            "forbidden transition evidence; user controls; policy references"
+        ),
+        "source_path": (
+            "payload.modules.user_relationship.module_graph.nodes."
+            "user_relationship_config_input.params.fields; "
+            "payload.modules.relationship_rule.module_graph.nodes."
+            "relationship_evidence_candidate_input.params.fields"
+        ),
+        "target_path": (
+            "payload.relationship_progression_projection"
+        ),
+        "transform": "build_relationship_progression_projection",
+        "alias_rule": (
+            "Layer 11 remains authoritative; Layer 3, 5, and 12 are "
+            "reference identifiers only"
+        ),
+        "missing_fallback": "omit optional projection for legacy compatibility",
+        "consumer": "RuntimeCore relationship-stage policy",
+        "projection_type": "derived_read_only",
+    },
+    {
         "mapping_id": "runtime_self_and_capability_boundaries",
         "source_layer": "layer_12",
         "source_module": ("self_awareness", "growth_plan"),
@@ -553,8 +601,8 @@ def projection_field_mapping_errors() -> list[str]:
                     )
                 else:
                     source_ids.add(source_id)
-    if len(PROJECTION_FIELD_MAPPINGS) != 14:
+    if len(PROJECTION_FIELD_MAPPINGS) != 15:
         errors.append(
-            "projection registry must contain exactly 14 mappings"
+            "projection registry must contain exactly 15 mappings"
         )
     return errors

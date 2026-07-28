@@ -461,7 +461,7 @@ def test_missing_deep_source_uses_safe_shape_and_localized_fallback_diagnostics(
             assert "\ufffd" not in en[key] + zh[key]
 
 
-def test_compile_audit_contains_exact_stable_fourteen_mapping_registry():
+def test_compile_audit_contains_exact_stable_fifteen_mapping_registry():
     result = _compile_result(_modules())
     traceability = result["compile_audit"][
         "projection_traceability"
@@ -482,13 +482,13 @@ def test_compile_audit_contains_exact_stable_fourteen_mapping_registry():
         ],
         "mappings": list(PROJECTION_FIELD_MAPPINGS),
     }
-    assert len(traceability["mappings"]) == 14
+    assert len(traceability["mappings"]) == 15
     assert len(
         {
             mapping["mapping_id"]
             for mapping in traceability["mappings"]
         }
-    ) == 14
+    ) == 15
     for mapping in traceability["mappings"]:
         assert mapping["source_layer"]
         assert mapping["source_module"]

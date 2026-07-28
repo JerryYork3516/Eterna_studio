@@ -547,6 +547,213 @@ class RelationshipProjectionV03(V03BaseModel):
     initial_relationship: Dict[str, Any]
 
 
+class RelationshipPolicyReferenceV03(V03BaseModel):
+    reference_id: str
+    source_layer_id: Literal["layer_3", "layer_5", "layer_12"]
+    source_module_id: str
+    source_node_id: str
+    source_path: str
+
+
+class RelationshipTransitionEvidenceRulesV03(V03BaseModel):
+    allowed_evidence_types: List[str]
+    progression_requirements: List[str]
+    candidate_fields: List[str]
+    requires_explicit_user_expression: Literal[True]
+
+
+class RelationshipForbiddenTransitionRulesV03(V03BaseModel):
+    forbidden_evidence: List[str]
+    automatic_transition: Literal[False]
+    vulnerability_cannot_trigger: Literal[True]
+    model_or_resident_inference_cannot_trigger: Literal[True]
+
+
+class RelationshipResetRollbackPolicyV03(V03BaseModel):
+    available_user_actions: List[str]
+    user_control_has_highest_priority: Literal[True]
+    resident_must_not_block_or_dissuade: Literal[True]
+    reset_target: Literal["initial_acquaintance"]
+    reset_deletes_memory: Literal[False]
+    memory_deletion_authority: Literal["layer_5"]
+    forbidden_responses: List[str]
+
+
+class RelationshipUserConsentPolicyV03(V03BaseModel):
+    requires_explicit_user_consent: Literal[True]
+    user_control_priority: Literal["highest"]
+    confirmation_required_when_requested: Literal[True]
+    single_utterance_unlocks_reserved_stage: Literal[False]
+    consent_cannot_bypass_feature_gate: Literal[True]
+    user_can_disable_progression: Literal[True]
+
+
+class RomanticRelationshipFeatureGateV03(V03BaseModel):
+    stage_id: Literal["romantic_relationship_reserved"]
+    status: Literal["reserved"]
+    runtime_enabled: Literal[False]
+    automatic_transition: Literal[False]
+    requires_explicit_user_consent: Literal[True]
+    requires_runtime_feature_gate: Literal[True]
+    current_version_unlock_allowed: Literal[False]
+    single_utterance_unlock_allowed: Literal[False]
+    activation_requirements: List[str]
+    forbidden_trigger_evidence: List[str]
+    excluded_from: List[str]
+
+    @model_validator(mode="after")
+    def _reserved_gate_remains_closed(
+        self,
+    ) -> "RomanticRelationshipFeatureGateV03":
+        if self.activation_requirements != [
+            "future_version_runtime_feature_gate_enabled",
+            "explicit_user_consent_confirmed",
+        ]:
+            raise ValueError(
+                "romantic reserved stage requires both the future runtime "
+                "feature gate and explicit user consent"
+            )
+        if self.forbidden_trigger_evidence != [
+            "user_loneliness",
+            "user_low_mood",
+            "user_vulnerability",
+            "dependency_testing",
+            "chat_count",
+            "usage_duration",
+            "payment_status",
+            "model_or_resident_inference",
+        ]:
+            raise ValueError(
+                "romantic reserved stage forbidden triggers must remain "
+                "complete and stable"
+            )
+        if self.excluded_from != [
+            "enabled_stages",
+            "model_context",
+            "few_shot",
+            "automatic_transition_path",
+        ]:
+            raise ValueError(
+                "romantic reserved stage must stay outside enabled stages, "
+                "model context, Few-shot, and automatic transition"
+            )
+        return self
+
+
+class RelationshipProgressionProjectionV03(V03BaseModel):
+    schema_version: Literal["0.1"]
+    content_revision: Literal[
+        "stage7_4_13_relationship_progression_projection_v0_1"
+    ]
+    derived: Literal[True]
+    read_only: Literal[True]
+    source_paths: List[str]
+    default_stage: Literal["initial_acquaintance"]
+    enabled_stages: List[str]
+    reserved_stages: List[str]
+    stage_definitions: Dict[str, Dict[str, str]]
+    transition_evidence_rules: RelationshipTransitionEvidenceRulesV03
+    forbidden_transition_rules: RelationshipForbiddenTransitionRulesV03
+    reset_and_rollback_policy: RelationshipResetRollbackPolicyV03
+    user_consent_policy: RelationshipUserConsentPolicyV03
+    safety_boundary_refs: List[RelationshipPolicyReferenceV03]
+    memory_policy_refs: List[RelationshipPolicyReferenceV03]
+    romantic_feature_gate: RomanticRelationshipFeatureGateV03
+    stage_decision_owner: Literal["runtime"]
+    model_can_propose_evidence_only: Literal[True]
+    model_can_change_stage: Literal[False]
+    user_control_priority: Literal["highest"]
+
+    @model_validator(mode="after")
+    def _relationship_projection_is_static_and_safe(
+        self,
+    ) -> "RelationshipProgressionProjectionV03":
+        enabled_stages = [
+            "initial_acquaintance",
+            "growing_familiarity",
+            "stable_companionship",
+            "trusted_relationship",
+        ]
+        if self.enabled_stages != enabled_stages:
+            raise ValueError(
+                "enabled_stages must contain exactly the four current "
+                "relationship stages in stable order"
+            )
+        if self.reserved_stages != [
+            "romantic_relationship_reserved"
+        ]:
+            raise ValueError(
+                "reserved_stages must contain only "
+                "romantic_relationship_reserved"
+            )
+        if list(self.stage_definitions) != enabled_stages:
+            raise ValueError(
+                "stage_definitions must contain exactly the four enabled "
+                "stages in stable order"
+            )
+        if (
+            "romantic_relationship_reserved"
+            in self.stage_definitions
+        ):
+            raise ValueError(
+                "romantic reserved stage must not enter stage_definitions"
+            )
+        if (
+            self.transition_evidence_rules.candidate_fields
+            != [
+                "evidence_type",
+                "evidence_detected",
+                "evidence_source",
+                "requires_user_confirmation",
+            ]
+        ):
+            raise ValueError(
+                "model evidence candidates must use the closed four-field "
+                "contract"
+            )
+        if self.forbidden_transition_rules.forbidden_evidence != [
+            "chat_count",
+            "usage_duration",
+            "payment_status",
+            "user_loneliness_depression_vulnerability_or_dependency_testing",
+            "resident_or_model_self_judgement",
+            "few_shot_resident_reply_or_model_inference",
+            "unconfirmed_memory",
+        ]:
+            raise ValueError(
+                "forbidden transition evidence must remain complete"
+            )
+        if (
+            self.reset_and_rollback_policy.available_user_actions
+            != [
+                "reject_upgrade",
+                "revoke_relationship_confirmation",
+                "downgrade_to_lower_stage",
+                "reset_to_initial_acquaintance",
+                "disable_relationship_progression",
+            ]
+        ):
+            raise ValueError(
+                "user reject, revoke, downgrade, reset, and disable controls "
+                "must all remain available"
+            )
+        if {
+            reference.source_layer_id
+            for reference in self.safety_boundary_refs
+        } != {"layer_3", "layer_12"}:
+            raise ValueError(
+                "safety_boundary_refs must reference Layer 3 and Layer 12"
+            )
+        if {
+            reference.source_layer_id
+            for reference in self.memory_policy_refs
+        } != {"layer_5"}:
+            raise ValueError(
+                "memory_policy_refs must reference Layer 5 only"
+            )
+        return self
+
+
 class RuntimeDialogueProjectionV03(V03BaseModel):
     schema_version: str
     projection_type: str
@@ -667,6 +874,9 @@ class DRPayloadV03(V03BaseModel):
     expression: Optional[ExpressionProjectionV03] = None
     relationship: Optional[RelationshipProjectionV03] = None
     runtime_dialogue_projection: Optional[RuntimeDialogueProjectionV03] = None
+    relationship_progression_projection: Optional[
+        RelationshipProgressionProjectionV03
+    ] = None
 
 
 class DRDocumentV03(V03BaseModel):

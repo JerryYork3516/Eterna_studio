@@ -56,6 +56,7 @@ from ..dr.v3.dr_v0_3_schema import (
     MemoryPolicyV03,
     ResidentBlueprintV03,
     ResidentIdentityV03,
+    RelationshipProgressionProjectionV03,
     RuntimePlanStepV03,
     RuntimePlanV03,
     RuntimeRequirementsV03,
@@ -107,6 +108,7 @@ from ..registry.module_catalog import (
     INTERACTION_BEHAVIOR_MODULE_ID,
     INTERACTION_BEHAVIOR_OUTPUT_KEY,
     INTERACTION_BEHAVIOR_PRESET_ID,
+    RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION,
     TASK_BEHAVIOR_MODULE_ID,
     TASK_BEHAVIOR_OUTPUT_KEY,
     TASK_BEHAVIOR_PRESET_ID,
@@ -170,6 +172,9 @@ from .visual_expression_projection import (
     particle_relative_mapping_source_value,
     particle_transition_rule_source_value,
     valid_visual_base_color,
+)
+from .relationship_progression_projection import (
+    build_relationship_progression_projection,
 )
 from .capability_status_governance import (
     STAGE7_4_12_A4_CONTENT_REVISION,
@@ -378,6 +383,10 @@ _LAYER8_MATERIALIZED_OUTPUTS = (
 )
 _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = frozenset(
     item[0] for item in _LAYER8_MATERIALIZED_OUTPUTS
+)
+_LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = (
+    _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
+    | frozenset({"user_relationship", "intimacy_level"})
 )
 _LAYER8_OPTIONAL_DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_runtime_profile"
 _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
@@ -848,20 +857,42 @@ def _canonical_reference_source_node_id(
         return ""
     source_module_id = _nonempty_str(source_module.get("module_id"))
     if (
-        source_module_id in _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
+        source_module_id in _LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS
         and (_nonempty_str(reference.get("source_scope")) or "module")
         == "module"
         and not reference.get("source_field_path")
         and not reference.get("source_field_paths")
     ):
+        source_layer_id = _nonempty_str(reference.get("source_layer_id"))
+        legacy_prefix = (
+            f"{source_layer_id}::{source_module_id}_reference_output_"
+        )
+        legacy_suffix = source_node_id[len(legacy_prefix) :].split("_")
+        is_legacy_materialized_id = (
+            source_node_id.startswith(legacy_prefix)
+            and len(legacy_suffix) == 2
+            and all(part.isdigit() for part in legacy_suffix)
+        )
         reference_outputs = [
             _module_graph_node_id(node)
             for node in _module_graph_nodes(source_module)
             if node.get("node_type") == "reference_output"
             and _module_graph_node_id(node)
         ]
-        if len(reference_outputs) == 1:
+        if is_legacy_materialized_id and len(reference_outputs) == 1:
             return reference_outputs[0]
+        module_outputs = [
+            _module_graph_node_id(node)
+            for node in _module_graph_nodes(source_module)
+            if node.get("node_type") == "module_output"
+            and _module_graph_node_id(node)
+        ]
+        if (
+            is_legacy_materialized_id
+            and not reference_outputs
+            and len(module_outputs) == 1
+        ):
+            return module_outputs[0]
     node_ids = {_module_graph_node_id(node) for node in _module_graph_nodes(source_module)}
     node_ids.discard("")
     if source_node_id in node_ids:
@@ -2625,6 +2656,223 @@ def _catalog_module_output(module_id: str, output_key: str) -> Dict[str, Any]:
     return _compiled_module_output(catalog_module, output_key)
 
 
+def _catalog_module(module_id: str) -> Dict[str, Any]:
+    return next(
+        (
+            candidate.model_dump(mode="json")
+            for candidate in get_module_catalog()
+            if candidate.module_id == module_id
+        ),
+        {},
+    )
+
+
+def _replace_compiler_owned_field_set(
+    module: Dict[str, Any],
+    seed_module: Dict[str, Any],
+    *,
+    legacy_field_keys: set[str],
+) -> List[Dict[str, Any]]:
+    seed_fields = _module_fields_from_field_input(seed_module)
+    seed_key_order = [
+        _field_identifier(field, index)
+        for index, field in enumerate(seed_fields)
+    ]
+    seed_keys = set(seed_key_order)
+    replaced_keys = seed_keys | legacy_field_keys
+    current_fields = _module_fields_from_field_input(module)
+    custom_fields = [
+        deepcopy(field)
+        for index, field in enumerate(current_fields)
+        if _field_identifier(field, index) not in replaced_keys
+    ]
+    normalized_fields = [deepcopy(field) for field in seed_fields] + custom_fields
+    for node in _module_graph_nodes(module):
+        params = node.get("params") if isinstance(node.get("params"), dict) else {}
+        if node.get("node_type") in {"text_input", "field_input"} and any(
+            key in params for key in ("fields", "legacy_fields", "legacy_data_fields")
+        ):
+            params["fields"] = deepcopy(normalized_fields)
+            params["legacy_fields"] = deepcopy(normalized_fields)
+            params["legacy_data_fields"] = deepcopy(normalized_fields)
+            params["content_revision"] = (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            )
+            node["params"] = params
+        if node.get("node_type") == "module_output":
+            output_schema = params.get("output_schema")
+            if isinstance(output_schema, dict) and isinstance(
+                output_schema.get("fields"), list
+            ):
+                output_schema["fields"] = [
+                    key
+                    for key in output_schema["fields"]
+                    if key not in legacy_field_keys
+                ]
+                for key in seed_key_order:
+                    if key not in output_schema["fields"]:
+                        output_schema["fields"].append(key)
+                params["output_schema"] = output_schema
+                node["params"] = params
+    config = module.get("config") if isinstance(module.get("config"), dict) else {}
+    seed_config = (
+        seed_module.get("config")
+        if isinstance(seed_module.get("config"), dict)
+        else {}
+    )
+    seed_registry = (
+        seed_config.get("field_registry")
+        if isinstance(seed_config.get("field_registry"), list)
+        else []
+    )
+    existing_registry = (
+        config.get("field_registry")
+        if isinstance(config.get("field_registry"), list)
+        else []
+    )
+    custom_registry = [
+        deepcopy(field)
+        for index, field in enumerate(existing_registry)
+        if isinstance(field, dict)
+        and _field_identifier(field, index) not in replaced_keys
+    ]
+    config["field_registry"] = deepcopy(seed_registry) + custom_registry
+    config["content_revision"] = (
+        RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+    )
+    module["config"] = config
+    graph = (
+        module.get("module_graph")
+        if isinstance(module.get("module_graph"), dict)
+        else {}
+    )
+    graph["content_revision"] = (
+        RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+    )
+    module["module_graph"] = graph
+    return normalized_fields
+
+
+def _synchronize_relationship_single_source_runtime_state(
+    collection: Dict[str, Any],
+    findings: List[Dict[str, str]],
+) -> None:
+    """Migrate compiler-owned copies without mutating the saved Canvas."""
+
+    modules = {
+        str(module.get("module_id")): module
+        for module in collection.get("modules", [])
+        if isinstance(module, dict) and module.get("module_id")
+    }
+    migrations = (
+        (
+            "intimacy_level",
+            "relationship_stage_config",
+            set(),
+        ),
+        (
+            "goal_setting",
+            "self_state_metacognition_config",
+            {"current_relationship_state"},
+        ),
+    )
+    migrated: list[str] = []
+    for module_id, output_key, legacy_field_keys in migrations:
+        module = modules.get(module_id)
+        seed_module = _catalog_module(module_id)
+        if not isinstance(module, dict) or not seed_module:
+            continue
+        seed_input = _module_fields_from_field_input(seed_module)
+        current_input = _module_fields_from_field_input(module)
+        current_values = _module_field_values_from_fields(current_input)
+        seed_values = _module_field_values_from_fields(seed_input)
+        current_output_snapshot = _compiled_module_output(module, output_key)
+        serialized_current_output = json.dumps(
+            current_output_snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        needs_migration = (
+            any(key in current_values for key in legacy_field_keys)
+            or any(key in current_output_snapshot for key in legacy_field_keys)
+            or any(
+                legacy_stage in json.dumps(current_values, ensure_ascii=False)
+                or legacy_stage in serialized_current_output
+                for legacy_stage in (
+                    "initial_contact",
+                    "basic_familiarity",
+                    "established_rapport",
+                    "deep_rapport",
+                )
+            )
+            or current_values.get("relationship_stage_source")
+            != seed_values.get("relationship_stage_source")
+        )
+        if module_id == "goal_setting":
+            needs_migration = needs_migration or (
+                "relationship_runtime_state_policy" not in current_values
+                or "current_relationship_state"
+                in _as_dict(current_output_snapshot.get("fields"))
+            )
+        if not needs_migration:
+            continue
+        normalized_fields = _replace_compiler_owned_field_set(
+            module,
+            seed_module,
+            legacy_field_keys=legacy_field_keys,
+        )
+        current_output = _compiled_module_output(module, output_key)
+        seed_output = _compiled_module_output(seed_module, output_key)
+        normalized_output = {
+            **seed_output,
+            **{
+                key: deepcopy(value)
+                for key, value in current_output.items()
+                if key
+                not in {
+                    *legacy_field_keys,
+                    "fields",
+                    "validation_status",
+                    "risk_items",
+                    "correction_suggestions",
+                    "content_revision",
+                }
+            },
+            "fields": _module_field_values_from_fields(normalized_fields),
+            "content_revision": (
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+            ),
+        }
+        if module_id == "intimacy_level":
+            normalized_output.update(
+                {
+                    "validation_status": "pass",
+                    "risk_items": [],
+                    "correction_suggestions": [],
+                }
+            )
+        if module_id == "goal_setting":
+            normalized_output["relationship_runtime_state_policy"] = deepcopy(
+                seed_values["relationship_runtime_state_policy"]
+            )
+        _set_compiled_module_output(module, output_key, normalized_output)
+        migrated.append(module_id)
+    if migrated:
+        findings.append(
+            _finding(
+                "WARNING",
+                "DR_RELATIONSHIP_SINGLE_SOURCE_COMPATIBILITY_MIGRATED",
+                (
+                    "Legacy relationship-stage copies were normalized to the "
+                    "Layer 11 user_relationship fact source in the compiler-owned "
+                    "copy: "
+                    + ", ".join(migrated)
+                ),
+                "payload.modules",
+            )
+        )
+
+
 def _synchronize_runtime_projection_source_outputs(
     collection: Dict[str, Any],
     findings: List[Dict[str, str]],
@@ -2834,7 +3082,11 @@ def _assemble_runtime_dialogue_policy_values(
                 for key, value in fields.items()
                 if not (
                     derived_key == "user_relationship"
-                    and key == "initial_relationship"
+                    and key
+                    in {
+                        "initial_relationship",
+                        "reserved_relationship_stages",
+                    }
                 )
             }
         else:
@@ -7809,6 +8061,11 @@ def _v03_frozen_root_field_findings(dr: Dict[str, Any]) -> List[Dict[str, str]]:
 def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) -> Dict[str, Any]:
     collection = collect_canvas(canvas)
     _normalize_visual_style_reference_sources(collection)
+    relationship_compatibility_findings: List[Dict[str, str]] = []
+    _synchronize_relationship_single_source_runtime_state(
+        collection,
+        relationship_compatibility_findings,
+    )
     raw_findings = validate_collection(collection)
     # Stage 6.11 is protocol-only: ignore provider-boundary findings that belong
     # to execution-layer wiring. The envelope must stay mock-only and declarative.
@@ -7824,6 +8081,7 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
             )
         )
     ]
+    findings.extend(relationship_compatibility_findings)
     mapping_errors = projection_field_mapping_errors()
     if mapping_errors:
         findings.append(
@@ -7861,6 +8119,28 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         collection, findings
     )
     _synchronize_self_awareness_fact_sources(collection)
+    (
+        relationship_progression_projection_raw,
+        relationship_progression_diagnostics,
+    ) = build_relationship_progression_projection(
+        collection.get("modules", [])
+    )
+    relationship_progression_projection = (
+        RelationshipProgressionProjectionV03.model_validate(
+            relationship_progression_projection_raw
+        ).model_dump(mode="json")
+        if relationship_progression_projection_raw is not None
+        else None
+    )
+    for diagnostic in relationship_progression_diagnostics:
+        findings.append(
+            _finding(
+                diagnostic["status"],
+                diagnostic["code"],
+                diagnostic["message"],
+                diagnostic["path"],
+            )
+        )
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
@@ -8035,6 +8315,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     )
     if runtime_dialogue_projection is not None:
         payload["runtime_dialogue_projection"] = runtime_dialogue_projection
+    if relationship_progression_projection is not None:
+        payload["relationship_progression_projection"] = (
+            relationship_progression_projection
+        )
     payload["audit_policy"][
         "runtime_dialogue_projection_expected"
     ] = runtime_dialogue_projection is not None

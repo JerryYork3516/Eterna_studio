@@ -40,6 +40,10 @@ export const STAGE7_4_12_A2_SOURCE_OUTPUT_IDENTITY_CLEANUP_REVISION =
   "stage7_4_12_a2_source_output_identity_cleanup_v1";
 export const STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION =
   "stage7_4_12_a4_compatibility_authority_status_governance_v1";
+export const RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION =
+  "stage7_4_13_relationship_formation_rules_v0_1";
+export const RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION =
+  "stage7_4_13_relationship_single_source_runtime_state_fix_v1";
 
 export type Layer8BehaviorTextConfig = {
   nodeId: string;
@@ -1329,6 +1333,293 @@ export function migrateExpressionStateSemanticsGraph(
   };
 }
 
+export type RelationshipFormationRulesGraph = {
+  nodes: unknown[];
+  edges: unknown[];
+};
+
+const RELATIONSHIP_FORMATION_INPUT_NODE_IDS = new Set([
+  "user_relationship_config_input",
+  "user_relationship_rule_input",
+  "relationship_evidence_candidate_input",
+]);
+const RELATIONSHIP_FORMATION_OUTPUT_NODE_IDS = new Set([
+  "user_relationship_config_output",
+  "relationship_behavior_config_output",
+]);
+
+function synchronizeRelationshipFormationOutputFields(
+  node: Record<string, unknown>,
+  fields: Record<string, unknown>[]
+) {
+  if (
+    !RELATIONSHIP_FORMATION_OUTPUT_NODE_IDS.has(
+      expressionGraphCatalogNodeId(node)
+    )
+  ) {
+    return;
+  }
+  const fieldValues = Object.fromEntries(
+    fields
+      .map((field) => [
+        expressionFieldKey(field),
+        cloneJsonValue(expressionFieldValue(field)),
+      ] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+  const synchronizeOutputs = (outputs: unknown) => {
+    if (!isRecord(outputs)) return outputs;
+    return Object.fromEntries(
+      Object.entries(outputs).map(([key, value]) => [
+        key,
+        isRecord(value) && isRecord(value.fields)
+          ? { ...value, fields: { ...value.fields, ...fieldValues } }
+          : value,
+      ])
+    );
+  };
+  if (isRecord(node.outputs)) {
+    node.outputs = synchronizeOutputs(node.outputs);
+  }
+  const schemaNode = expressionGraphSchemaNode(node);
+  if (!schemaNode) return;
+  if (isRecord(schemaNode.outputs)) {
+    schemaNode.outputs = synchronizeOutputs(schemaNode.outputs);
+  }
+  const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+  if (isRecord(data.outputs)) {
+    data.outputs = synchronizeOutputs(data.outputs);
+    schemaNode.data = data;
+  }
+}
+
+/**
+ * Rebuild the two catalog-owned Layer 11 graphs once while preserving all
+ * resident-authored field values and compatibility mirrors. Relationship
+ * stage state is deliberately absent: only rule configuration is migrated.
+ */
+export function migrateRelationshipFormationRulesGraph(
+  stored: RelationshipFormationRulesGraph,
+  seed: RelationshipFormationRulesGraph
+): { value: RelationshipFormationRulesGraph; migrated: boolean } {
+  const seedInput = seed.nodes.find((node) =>
+    RELATIONSHIP_FORMATION_INPUT_NODE_IDS.has(
+      expressionGraphCatalogNodeId(node)
+    )
+  );
+  const seedRevision = expressionGraphNodeParams(seedInput).content_revision;
+  if (seedRevision !== RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+
+  const allStoredFields = stored.nodes.flatMap(expressionGraphNodeFields);
+  const storedFieldByKey = new Map(
+    allStoredFields
+      .map((field) => [expressionFieldKey(field), field] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+  const storedByCatalogId = new Map(
+    stored.nodes
+      .map((node) => [expressionGraphCatalogNodeId(node), node] as const)
+      .filter(([nodeId]) => Boolean(nodeId))
+  );
+  const seedFieldKeys = new Set(
+    seed.nodes
+      .flatMap(expressionGraphNodeFields)
+      .map(expressionFieldKey)
+      .filter(Boolean)
+  );
+  const customFields = allStoredFields.filter((field, index) => {
+    const fieldKey = expressionFieldKey(field);
+    return (
+      Boolean(fieldKey) &&
+      !seedFieldKeys.has(fieldKey) &&
+      allStoredFields.findIndex(
+        (candidate) => expressionFieldKey(candidate) === fieldKey
+      ) === index
+    );
+  });
+  let authoritativeFields: Record<string, unknown>[] = [];
+  const nodes = seed.nodes.map((seedNode) => {
+    const nextNode = cloneJsonValue(seedNode) as Record<string, unknown>;
+    const catalogNodeId = expressionGraphCatalogNodeId(seedNode);
+    const currentNode = storedByCatalogId.get(catalogNodeId);
+    const currentPosition = expressionGraphNodePosition(currentNode);
+    if (currentPosition) {
+      setExpressionGraphNodePosition(nextNode, currentPosition);
+    }
+    const uiName = expressionGraphNodeUiName(currentNode);
+    if (uiName) {
+      setExpressionGraphNodeUiName(nextNode, uiName);
+    }
+
+    const seedFields = expressionGraphNodeFields(seedNode);
+    if (seedFields.length) {
+      const currentFields = seedFields
+        .map((field) => storedFieldByKey.get(expressionFieldKey(field)))
+        .filter((field): field is Record<string, unknown> => Boolean(field));
+      let mergedFields = mergeCatalogFieldsPreservingValues(
+        seedFields,
+        currentFields
+      );
+      if (RELATIONSHIP_FORMATION_INPUT_NODE_IDS.has(catalogNodeId)) {
+        mergedFields = [
+          ...mergedFields,
+          ...customFields.map((field) => cloneJsonValue(field)),
+        ];
+        authoritativeFields = mergedFields;
+      }
+      setExpressionGraphNodeFields(nextNode, mergedFields);
+    }
+    return nextNode;
+  });
+  if (authoritativeFields.length) {
+    for (const node of nodes) {
+      synchronizeRelationshipFormationOutputFields(node, authoritativeFields);
+    }
+  }
+  const rebuilt = {
+    nodes,
+    edges: cloneJsonValue(seed.edges),
+  };
+  const synchronized = migrateAuthoritativeFieldCompatibilityMirrors(rebuilt);
+  return {
+    value: synchronized.value,
+    migrated:
+      stableComparableValue(synchronized.value) !== stableComparableValue(stored),
+  };
+}
+
+const RELATIONSHIP_SINGLE_SOURCE_INPUT_NODE_IDS = new Set([
+  "relationship_stage_config_input",
+  "self_state_input",
+]);
+const RELATIONSHIP_SINGLE_SOURCE_OUTPUT_NODE_IDS = new Set([
+  "relationship_stage_config_output",
+  "self_state_output",
+]);
+
+export function migrateRelationshipSingleSourceRuntimeStateGraph(
+  stored: RelationshipFormationRulesGraph,
+  seed: RelationshipFormationRulesGraph
+): { value: RelationshipFormationRulesGraph; migrated: boolean } {
+  const seedInput = seed.nodes.find((node) =>
+    RELATIONSHIP_SINGLE_SOURCE_INPUT_NODE_IDS.has(
+      expressionGraphCatalogNodeId(node)
+    )
+  );
+  if (
+    expressionGraphNodeParams(seedInput).content_revision !==
+    RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION
+  ) {
+    return { value: stored, migrated: false };
+  }
+
+  const inputNodeId = expressionGraphCatalogNodeId(seedInput);
+  const storedByCatalogId = new Map(
+    stored.nodes
+      .map((node) => [expressionGraphCatalogNodeId(node), node] as const)
+      .filter(([nodeId]) => Boolean(nodeId))
+  );
+  const seedFields = expressionGraphNodeFields(seedInput);
+  const seedKeys = new Set(seedFields.map(expressionFieldKey).filter(Boolean));
+  const storedFields = stored.nodes.flatMap(expressionGraphNodeFields);
+  const legacyKeys = new Set(
+    inputNodeId === "self_state_input"
+      ? ["current_relationship_state"]
+      : []
+  );
+  const storedByFieldKey = new Map(
+    storedFields
+      .map((field) => [expressionFieldKey(field), field] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+  const customFields = storedFields.filter((field, index) => {
+    const fieldKey = expressionFieldKey(field);
+    return (
+      Boolean(fieldKey) &&
+      !seedKeys.has(fieldKey) &&
+      !legacyKeys.has(fieldKey) &&
+      storedFields.findIndex(
+        (candidate) => expressionFieldKey(candidate) === fieldKey
+      ) === index
+    );
+  });
+  const authoritativeFields =
+    inputNodeId === "relationship_stage_config_input"
+      ? [...seedFields.map(cloneJsonValue), ...customFields.map(cloneJsonValue)]
+      : [
+          ...mergeCatalogFieldsPreservingValues(
+            seedFields,
+            seedFields
+              .map((field) => storedByFieldKey.get(expressionFieldKey(field)))
+              .filter(
+                (field): field is Record<string, unknown> => Boolean(field)
+              )
+          ),
+          ...customFields.map(cloneJsonValue),
+        ];
+  const fieldValues = Object.fromEntries(
+    authoritativeFields
+      .map((field) => [
+        expressionFieldKey(field),
+        cloneJsonValue(expressionFieldValue(field)),
+      ] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+
+  const nodes = seed.nodes.map((seedNode) => {
+    const nextNode = cloneJsonValue(seedNode) as Record<string, unknown>;
+    const catalogNodeId = expressionGraphCatalogNodeId(seedNode);
+    const currentNode = storedByCatalogId.get(catalogNodeId);
+    const currentPosition = expressionGraphNodePosition(currentNode);
+    if (currentPosition) setExpressionGraphNodePosition(nextNode, currentPosition);
+    const uiName = expressionGraphNodeUiName(currentNode);
+    if (uiName) setExpressionGraphNodeUiName(nextNode, uiName);
+    if (catalogNodeId === inputNodeId) {
+      setExpressionGraphNodeFields(nextNode, authoritativeFields);
+    }
+    if (
+      RELATIONSHIP_SINGLE_SOURCE_OUTPUT_NODE_IDS.has(catalogNodeId)
+    ) {
+      const schemaNode = expressionGraphSchemaNode(nextNode);
+      if (schemaNode) {
+        const data = isRecord(schemaNode.data) ? { ...schemaNode.data } : {};
+        const outputs = isRecord(data.outputs) ? { ...data.outputs } : {};
+        data.outputs = Object.fromEntries(
+          Object.entries(outputs).map(([key, value]) => {
+            if (!isRecord(value)) return [key, value];
+            const nextOutput: Record<string, unknown> = {
+              ...value,
+              fields: cloneJsonValue(fieldValues),
+              content_revision:
+                RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION,
+            };
+            delete nextOutput.current_relationship_state;
+            if ("relationship_runtime_state_policy" in fieldValues) {
+              nextOutput.relationship_runtime_state_policy = cloneJsonValue(
+                fieldValues.relationship_runtime_state_policy
+              );
+            }
+            return [key, nextOutput];
+          })
+        );
+        schemaNode.data = data;
+      }
+    }
+    return nextNode;
+  });
+  const synchronized = migrateAuthoritativeFieldCompatibilityMirrors({
+    nodes,
+    edges: cloneJsonValue(seed.edges),
+  });
+  return {
+    value: synchronized.value,
+    migrated:
+      stableComparableValue(synchronized.value) !== stableComparableValue(stored),
+  };
+}
+
 export type ParticleExpressionRelativeMappingGraph = {
   nodes: unknown[];
   edges: unknown[];
@@ -1912,12 +2203,14 @@ export function mergeAvailableModuleReferencePointers(
   };
 }
 
-const LAYER8_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = new Set([
+const LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = new Set([
   "language_habit",
   "decision_pattern",
   "interaction_strategy",
   "behavior_habit",
   "emotion_mapper",
+  "user_relationship",
+  "intimacy_level",
 ]);
 
 function compiledModuleGraphNodes(
@@ -1966,7 +2259,7 @@ export function canonicalizeLegacyMaterializedReferencePointers(
     const sourceModule = modulesById.get(sourceModuleId);
     if (
       !sourceModule ||
-      !LAYER8_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS.has(
+      !LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS.has(
         sourceModuleId
       ) ||
       String(sourceModule.layer_id || "") !== sourceLayerId ||
@@ -2007,13 +2300,36 @@ export function canonicalizeLegacyMaterializedReferencePointers(
           .filter(Boolean)
       ),
     ];
-    if (referenceOutputIds.length !== 1) {
+    const moduleOutputIds =
+      referenceOutputIds.length === 0
+        ? [
+            ...new Set(
+              nodes
+                .filter(
+                  (node) =>
+                    String(node.node_type || "") ===
+                    "module_output"
+                )
+                .map((node) =>
+                  String(node.node_id || node.id || "")
+                )
+                .filter(Boolean)
+            ),
+          ]
+        : [];
+    const canonicalOutputIds =
+      referenceOutputIds.length === 1
+        ? referenceOutputIds
+        : moduleOutputIds.length === 1
+          ? moduleOutputIds
+          : [];
+    if (canonicalOutputIds.length !== 1) {
       return cloneJsonValue(reference);
     }
     repairedCount += 1;
     return {
       ...cloneJsonValue(reference),
-      source_node_id: referenceOutputIds[0],
+      source_node_id: canonicalOutputIds[0],
     };
   });
   return { references, repairedCount };

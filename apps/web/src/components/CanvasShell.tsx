@@ -807,15 +807,6 @@ const LAYER11_STATIC_CONFIG_MODULES = {
   },
 } as const;
 const LAYER11_SEMANTIC_REPLACEMENTS: Record<string, Record<string, string>> = {
-  intimacy_level: {
-    stable_companionship: "established_rapport",
-    stableCompanionship: "establishedRapport",
-    "稳定陪伴阶段": "稳定默契阶段",
-    "Stable Companionship": "Established Rapport",
-    "layer11.relationshipStage.stage.stable_companionship.name": "layer11.relationshipStage.stage.established_rapport.name",
-    "layer11.relationshipStage.stage.stable_companionship.description": "layer11.relationshipStage.stage.established_rapport.description",
-    confirmed_collaboration_continuity: "established_rapport_collaboration_continuity",
-  },
   role_positioning: {
     user_confirmation_rules: "trust_user_control_rules",
     userConfirmationRules: "trustUserControlRules",
@@ -842,11 +833,6 @@ const LAYER11_TRUST_USER_CONTROL_DEFAULTS = {
   resident_cannot_claim_user_fully_trusts_it: true,
 };
 const LAYER11_SEMANTIC_LIST_ADDITIONS: Record<string, Record<string, string[]>> = {
-  intimacy_level: {
-    stage_progression_conditions: ["established_rapport_requires_long_term_non_sensitive_evidence"],
-    stage_progression_evidence: ["established_rapport_collaboration_continuity"],
-    forbidden_progression_rules: ["no_relationship_role_as_stage"],
-  },
   module_social: {
     third_party_relationship_analysis_rules: [
       "no_unverified_third_party_label",
@@ -885,10 +871,11 @@ const LAYER11_P2_I18N_PREFIX: Record<string, string> = {
 };
 const LAYER11_REVIEW_FIELD_DESCRIPTIONS: Record<string, Record<string, string>> = {
   intimacy_level: {
-    stage_order: "定义关系阶段的固定顺序，包含初始接触、基础熟悉、稳定默契和深度默契。不负责自动推进或当前阶段判断。本字段属于静态配置，不保存运行状态。",
-    stage_definitions: "定义初始接触、基础熟悉、稳定默契和深度默契各阶段的边界与含义。不负责改变关系角色或执行阶段升级。本字段属于静态配置，不保存运行状态。",
-    stage_progression_conditions: "定义进入稳定默契和深度默契所需的渐进、证据、确认与可逆条件。不负责根据单次互动自动推进。本字段属于静态配置，不保存运行状态。",
-    stage_progression_evidence: "定义支持稳定默契与深度默契判断的长期、稳定、非敏感证据类型。不负责保存实时互动证据或计算阶段。本字段属于静态配置，不保存运行状态。",
+    relationship_stage_source: "引用 Layer 11 用户关系模块中的标准四阶段。用户关系模块是唯一关系阶段事实源，本字段不保存当前用户阶段。",
+    stage_order: "按用户关系模块的初次相识、逐渐熟悉、稳定陪伴、可信任关系四阶段顺序引用，不维护第二套阶段编号。",
+    stage_definitions: "只定义标准四阶段各自的亲密表达、称呼和自我披露边界，不重定义阶段语义或执行阶段升级。",
+    stage_progression_conditions: "定义表达边界如何跟随 Runtime 选择的标准关系阶段，本模块不判断或推进阶段。",
+    stage_progression_evidence: "关系证据由关系边界模块维护，本模块不保存实时证据或计算当前阶段。",
   },
   role_positioning: {
     trust_user_control_rules: "定义用户对信任策略的控制规则，包括拒绝信任恢复、降低信任策略、重置信任规则，以及拒绝居民自行宣称用户已经完全信任。本字段只定义静态控制规则，不保存实时信任等级、信任分数或信任状态。",
@@ -901,7 +888,7 @@ const LAYER11_REVIEW_FIELD_DESCRIPTIONS: Record<string, Record<string, string>> 
   },
 };
 const LAYER11_REVIEW_MODULE_VALIDATION_RULES: Record<string, string[]> = {
-  intimacy_level: ["stage_order_valid", "stage_definitions_complete", "progression_requires_confirmed_evidence", "no_stage_skipping", "no_numeric_intimacy_score", "no_runtime_stage_state", "established_rapport_cannot_change_relationship_mode"],
+  intimacy_level: ["stage_order_valid", "stage_definitions_complete", "progression_requires_confirmed_evidence", "no_stage_skipping", "no_numeric_intimacy_score", "no_runtime_stage_state", "standard_relationship_stage_refs_only", "user_relationship_is_single_stage_fact_source", "intimacy_boundary_cannot_change_relationship_stage"],
   role_positioning: ["trust_dimensions_valid", "trust_evidence_sources_valid", "trust_user_control_preserved", "no_runtime_trust_state", "reset_restores_default_trust_policy", "trust_user_control_rules_required"],
   relationship_rule: ["no_third_party_relationship_analysis", "no_group_discussion_orchestration", "resident_user_conflict_scope_valid", "rejection_response_preserves_user_autonomy", "no_runtime_behavior_state"],
   module_social: ["third_party_analysis_scope_valid", "no_active_group_turn_taking", "no_multi_resident_orchestration", "no_resident_user_conflict_repair_override", "no_third_party_sensitive_profile"],
@@ -964,18 +951,6 @@ function normalizeLayer11SemanticParamsForCompile(
   let nextParams = replaceLayer11SemanticValue(params, replacements) as Record<string, unknown>;
   if ("fields" in nextParams) {
     nextParams = { ...nextParams, fields: normalizeLayer11SemanticFieldsForCompile(nextParams.fields, module.module_id) };
-  }
-  if (module.module_id === "intimacy_level") {
-    if (catalogNodeId === "relationship_stage_progression_rule") {
-      nextParams = {
-        ...nextParams,
-        progression_conditions: ensureLayer11ListItems(nextParams.progression_conditions, ["established_rapport_requires_long_term_non_sensitive_evidence"]),
-        progression_evidence: ensureLayer11ListItems(nextParams.progression_evidence, ["established_rapport_collaboration_continuity"]),
-      };
-    }
-    if (catalogNodeId === "relationship_stage_boundary_validation") {
-      nextParams = { ...nextParams, validation_rules: ensureLayer11ListItems(nextParams.validation_rules, ["established_rapport_cannot_change_relationship_mode"]) };
-    }
   }
   if (module.module_id === "role_positioning" && catalogNodeId === "trust_boundary_validation") {
     nextParams = { ...nextParams, validation_rules: ensureLayer11ListItems(nextParams.validation_rules, ["trust_user_control_rules_required"]) };
@@ -1182,6 +1157,30 @@ function normalizeLayer11P2CompiledNodes(module: ModuleCatalogEntryV04, nodes: R
   }));
   const fields = materializeLayer11P2CompiledFields(normalizedFieldRegistry, inputParams.fields);
   const fieldKeys = normalizedFieldRegistry.map(layer11P2FieldKeyForCompile).filter(Boolean);
+  const fieldValues = Object.fromEntries(
+    fields.map((field) => [layer11P2FieldKeyForCompile(field), field.field_value])
+  );
+  const serializedFieldValues = JSON.stringify(fieldValues);
+  const containsRelationshipRuntimeStateKey = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(containsRelationshipRuntimeStateKey);
+    if (!isRecord(value)) return false;
+    if (["current_relationship_stage", "relationship_score", "intimacy_score"].some((key) => key in value)) {
+      return true;
+    }
+    return Object.values(value).some(containsRelationshipRuntimeStateKey);
+  };
+  const standardStages = ["initial_acquaintance", "growing_familiarity", "stable_companionship", "trusted_relationship"];
+  const intimacySource = isRecord(fieldValues.relationship_stage_source) ? fieldValues.relationship_stage_source : {};
+  const intimacyDefinitions = isRecord(fieldValues.stage_definitions) ? Object.keys(fieldValues.stage_definitions) : [];
+  const validationPassed =
+    !containsRelationshipRuntimeStateKey(fieldValues) &&
+    (module.module_id !== "intimacy_level" || (
+      intimacySource.source_module_id === "user_relationship" &&
+      intimacySource.authority === "reference_only" &&
+      JSON.stringify(fieldValues.stage_order) === JSON.stringify(standardStages) &&
+      JSON.stringify(intimacyDefinitions) === JSON.stringify(standardStages) &&
+      !["initial_contact", "basic_familiarity", "established_rapport", "deep_rapport"].some((stage) => serializedFieldValues.includes(stage))
+    ));
   return nodes.map((node) => {
     const params = isRecord(node.params) ? node.params : {};
     const nodeId = String(node.node_id || "");
@@ -1198,6 +1197,9 @@ function normalizeLayer11P2CompiledNodes(module: ModuleCatalogEntryV04, nodes: R
             description: typeof node.i18n_keys === "object" && node.i18n_keys ? String((node.i18n_keys as Record<string, unknown>).description || "") : "",
           },
           ...(typeof params.text === "string" && params.text.trim() ? { text: params.text } : {}),
+          ...(typeof params.content_revision === "string" && params.content_revision
+            ? { content_revision: params.content_revision }
+            : {}),
         },
       };
     }
@@ -1267,9 +1269,9 @@ function normalizeLayer11P2CompiledNodes(module: ModuleCatalogEntryV04, nodes: R
               ...outputs,
               [outputKey]: {
                 ...output,
-                validation_status: "warning",
-                risk_items: ["validation_not_executed"],
-                correction_suggestions: ["run_validation_before_use"],
+                validation_status: validationPassed ? "pass" : "warning",
+                risk_items: validationPassed ? [] : ["layer11_static_configuration_invalid"],
+                correction_suggestions: validationPassed ? [] : ["review_layer11_static_configuration"],
                 config_version: "0.1",
               },
             }
