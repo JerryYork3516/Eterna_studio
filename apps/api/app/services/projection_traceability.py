@@ -464,6 +464,42 @@ PROJECTION_FIELD_MAPPINGS: tuple[Dict[str, Any], ...] = (
         "projection_type": "derived_read_only",
     },
     {
+        "mapping_id": "narrative_memory_projection",
+        "source_layer": "layer_5",
+        "source_module": (
+            "event_memory",
+            "memory_update",
+            "memory_access_control",
+        ),
+        "source_output": (
+            "event_memory",
+            "memory_update_policy",
+            "memory_access_policy_result",
+        ),
+        "source_field": (
+            "memory_types; lifecycle_states; candidate and consent rules; "
+            "deduplication, conflict, supersession, deletion, retrieval, "
+            "expression, model and runtime authority; boundary references"
+        ),
+        "source_path": (
+            "payload.modules.event_memory.outputs.event_memory; "
+            "payload.modules.memory_update.outputs.memory_update_policy; "
+            "payload.modules.memory_access_control.outputs."
+            "memory_access_policy_result"
+        ),
+        "target_path": "payload.narrative_memory_projection",
+        "transform": "build_narrative_memory_projection",
+        "alias_rule": (
+            "Layer 5 remains authoritative; Layer 3, 8, and 11 are "
+            "validated reference identifiers only"
+        ),
+        "missing_fallback": (
+            "omit optional projection for legacy compatibility"
+        ),
+        "consumer": "RuntimeCore narrative-memory policy",
+        "projection_type": "derived_read_only",
+    },
+    {
         "mapping_id": "runtime_self_and_capability_boundaries",
         "source_layer": "layer_12",
         "source_module": ("self_awareness", "growth_plan"),
@@ -601,8 +637,8 @@ def projection_field_mapping_errors() -> list[str]:
                     )
                 else:
                     source_ids.add(source_id)
-    if len(PROJECTION_FIELD_MAPPINGS) != 15:
+    if len(PROJECTION_FIELD_MAPPINGS) != 16:
         errors.append(
-            "projection registry must contain exactly 15 mappings"
+            "projection registry must contain exactly 16 mappings"
         )
     return errors

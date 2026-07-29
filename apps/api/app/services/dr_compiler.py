@@ -54,6 +54,7 @@ from ..dr.v3.dr_v0_3_schema import (
     LatticeConfigV03,
     MemoryConfigV03,
     MemoryPolicyV03,
+    NarrativeMemoryProjectionV03,
     ResidentBlueprintV03,
     ResidentIdentityV03,
     RelationshipProgressionProjectionV03,
@@ -176,6 +177,9 @@ from .visual_expression_projection import (
 from .relationship_progression_projection import (
     build_relationship_progression_projection,
 )
+from .narrative_memory_projection import (
+    build_narrative_memory_projection,
+)
 from .capability_status_governance import (
     STAGE7_4_12_A4_CONTENT_REVISION,
     build_capability_status_governance,
@@ -223,6 +227,7 @@ _V03_AUDIT_CHECK_NAMES = (
     "capability_status_check",
     "formal_schema_check",
     "security_configuration_check",
+    "narrative_memory_instance_gate_check",
     "identity_literal_export_gate_check",
     "empty_layer_status_check",
     "file_size_check",
@@ -386,7 +391,15 @@ _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = frozenset(
 )
 _LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = (
     _LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS
-    | frozenset({"user_relationship", "intimacy_level"})
+    | frozenset(
+        {
+            "user_relationship",
+            "intimacy_level",
+            "event_memory",
+            "memory_update",
+            "memory_access_control",
+        }
+    )
 )
 _LAYER8_OPTIONAL_DIALOGUE_RUNTIME_PROFILE_ID = "dialogue_runtime_profile"
 _LAYER8_EXCLUDED_BEHAVIOR_MODULE_IDS = ("behavior_policy_slot",)
@@ -908,6 +921,18 @@ def _canonical_reference_source_node_id(
         local_source_node_id = source_node_id[len(legacy_prefix) :]
         if local_source_node_id in node_ids:
             return local_source_node_id
+
+    legacy_local_aliases = {
+        (
+            "memory_update",
+            "narrative_memory_update_reference_output",
+        ): "memory_update_output",
+    }
+    aliased_source_node_id = legacy_local_aliases.get(
+        (source_module_id, local_source_node_id)
+    )
+    if aliased_source_node_id in node_ids:
+        return aliased_source_node_id
 
     suffix_matches = [
         node_id for node_id in node_ids if node_id.split("::")[-1] == local_source_node_id
@@ -3033,7 +3058,9 @@ def _assemble_runtime_dialogue_policy_values(
             },
             "narrative_memory_usage_rules": {
                 "event_memory": _selected_mapping(
-                    event, "save_allowed", "save_forbidden"
+                    event,
+                    "save_allowed",
+                    "save_forbidden",
                 ),
                 "relationship_memory": _selected_mapping(
                     relationship_memory,
@@ -5437,14 +5464,20 @@ def _v03_version_findings(
     return findings
 
 
-def _identity_hardcode_terms(payload: Dict[str, Any]) -> Dict[str, str]:
+def _identity_hardcode_terms(
+    payload: Dict[str, Any],
+    *,
+    include_compatibility_fallback: bool,
+) -> Dict[str, str]:
     layer_outputs = _as_dict(_as_dict(payload.get("graph_snapshot")).get("layer_outputs"))
     identity_profile = _as_dict(layer_outputs.get("identity_profile"))
     basic_fields = _identity_fields(identity_profile, "basic_identity")
     resident_identity = _as_dict(payload.get("resident_identity"))
     terms: Dict[str, str] = {}
     for field_id in ("name", "pinyin", "nickname", "display_alias", "codename", "export_name", "resident_id"):
-        value = _nonempty_str(basic_fields.get(field_id)) or _nonempty_str(resident_identity.get(field_id))
+        value = _nonempty_str(basic_fields.get(field_id))
+        if not value and include_compatibility_fallback:
+            value = _nonempty_str(resident_identity.get(field_id))
         if value:
             terms[field_id] = value
     if "pinyin" not in terms:
@@ -5703,8 +5736,15 @@ def _identity_hardcode_findings(
     collection: Dict[str, Any],
     payload: Dict[str, Any],
     root_projections: Optional[Dict[str, Any]] = None,
+    *,
+    include_compatibility_fallback: bool = True,
 ) -> List[Dict[str, str]]:
-    terms = _identity_hardcode_terms(payload)
+    terms = _identity_hardcode_terms(
+        payload,
+        include_compatibility_fallback=(
+            include_compatibility_fallback
+        ),
+    )
     if not terms:
         return [
             _finding(
@@ -5766,6 +5806,51 @@ def _identity_hardcode_findings(
                         text,
                     )
                 )
+            if source_kind == "structure_key":
+                exact_match = (
+                    normalized_text.casefold()
+                    == normalized_term.casefold()
+                )
+                keyed_config_container = any(
+                    marker in field_id.lower()
+                    for marker in (
+                        ".profiles.",
+                        ".presets.",
+                        ".templates.",
+                        ".options.",
+                        ".references.",
+                    )
+                )
+                return exact_match or (
+                    keyed_config_container
+                    and bool(
+                        re.match(
+                            rf"^{re.escape(normalized_term.casefold())}"
+                            rf"(?:[^a-z0-9]|$)",
+                            normalized_text.casefold(),
+                        )
+                    )
+                )
+            if field == "resident_id" and re.search(
+                r"[^A-Za-z0-9]", normalized_term
+            ):
+                if (
+                    normalized_text.casefold()
+                    == normalized_term.casefold()
+                ):
+                    return True
+                if (
+                    source_kind == "identifier"
+                    and _identity_config_identifier_path(field_id)
+                ):
+                    return bool(
+                        re.match(
+                            rf"^{re.escape(normalized_term.casefold())}"
+                            rf"(?:[^a-z0-9]|$)",
+                            normalized_text.casefold(),
+                        )
+                    )
+                return False
             if len(normalized_term) >= 5:
                 return True
             if source_kind in {"structure_key", "projection"}:
@@ -8141,6 +8226,46 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
                 diagnostic["path"],
             )
         )
+    (
+        narrative_memory_projection_raw,
+        narrative_memory_diagnostics,
+    ) = build_narrative_memory_projection(
+        collection.get("modules", [])
+    )
+    narrative_memory_projection = (
+        NarrativeMemoryProjectionV03.model_validate(
+            narrative_memory_projection_raw
+        ).model_dump(mode="json")
+        if narrative_memory_projection_raw is not None
+        else None
+    )
+    narrative_memory_gate_findings = []
+    for diagnostic in narrative_memory_diagnostics:
+        finding = _finding(
+            diagnostic["status"],
+            diagnostic["code"],
+            diagnostic["message"],
+            diagnostic["path"],
+        )
+        if (
+            diagnostic["code"]
+            == "DR_NARRATIVE_MEMORY_INSTANCE_DATA_FORBIDDEN"
+        ):
+            narrative_memory_gate_findings.append(finding)
+        else:
+            findings.append(finding)
+    if not narrative_memory_gate_findings:
+        narrative_memory_gate_findings.append(
+            _finding(
+                "PASS",
+                "NARRATIVE_MEMORY_INSTANCE_GATE_CHECK_PASSED",
+                (
+                    "Narrative-memory instance export gate passed; "
+                    "no per-user narrative-memory data was found."
+                ),
+                "payload.modules",
+            )
+        )
     _validate_first_interaction_max_active_prompts(collection, findings)
     _synchronize_first_presence_module_output(collection, findings)
     blueprint = assemble_blueprint(collection, resident_name=resident_name)
@@ -8319,6 +8444,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         payload["relationship_progression_projection"] = (
             relationship_progression_projection
         )
+    if narrative_memory_projection is not None:
+        payload["narrative_memory_projection"] = (
+            narrative_memory_projection
+        )
     payload["audit_policy"][
         "runtime_dialogue_projection_expected"
     ] = runtime_dialogue_projection is not None
@@ -8350,6 +8479,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
         "duplicate_source_check": _v03_duplicate_source_findings(dr),
         "memory_support_level_check": _v03_memory_support_level_findings(dr),
         "capability_status_check": _v03_capability_status_findings(dr),
+        "narrative_memory_instance_gate_check": (
+            narrative_memory_gate_findings
+        ),
         "identity_literal_export_gate_check": (
             _identity_hardcode_findings(
                 collection,
@@ -8359,6 +8491,9 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
                         visual_expression_mapping
                     )
                 },
+                include_compatibility_fallback=(
+                    resident_name is not None
+                ),
             )
         ),
         "empty_layer_status_check": (

@@ -329,27 +329,33 @@ EVENT_MEMORY_MODULE_ID = "event_memory"
 EVENT_MEMORY_OUTPUT_KEY = "event_memory"
 EVENT_MEMORY_NODE_ORDER = (
     "input",
-    "classifier",
-    "importance_evaluation",
-    "summary_policy",
-    "lifecycle_policy",
+    "type_recognition",
+    "user_source_validation",
+    "future_value_evaluation",
+    "sensitive_information_check",
+    "user_consent_judgement",
     "output",
+    "reference_output",
 )
 EVENT_MEMORY_NODE_IDS = {
-    "input": "event_memory_input",
-    "classifier": "event_classifier",
-    "importance_evaluation": "event_importance_evaluation",
-    "summary_policy": "event_summary_policy",
-    "lifecycle_policy": "event_lifecycle_policy",
+    "input": "narrative_event_input",
+    "type_recognition": "narrative_memory_type_recognition",
+    "user_source_validation": "narrative_memory_user_source_validation",
+    "future_value_evaluation": "narrative_memory_future_value_evaluation",
+    "sensitive_information_check": "narrative_memory_sensitive_information_check",
+    "user_consent_judgement": "narrative_memory_user_consent_judgement",
     "output": "event_memory_output",
+    "reference_output": "narrative_memory_reference_output",
 }
 EVENT_MEMORY_NODE_TYPES = {
     "input": "text_config",
-    "classifier": "structure_normalize",
-    "importance_evaluation": "validation",
-    "summary_policy": "memory_policy",
-    "lifecycle_policy": "update_rule",
+    "type_recognition": "structure_normalize",
+    "user_source_validation": "validation",
+    "future_value_evaluation": "validation",
+    "sensitive_information_check": "validation",
+    "user_consent_judgement": "memory_policy",
     "output": "module_output",
+    "reference_output": "reference_output",
 }
 RELATIONSHIP_MEMORY_MODULE_ID = "relationship_memory"
 RELATIONSHIP_MEMORY_OUTPUT_KEY = "relationship_memory"
@@ -2011,6 +2017,27 @@ RELATIONSHIP_PROGRESSION_PROJECTION_CONTENT_REVISION = (
 )
 RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION = (
     "stage7_4_13_relationship_single_source_runtime_state_fix_v1"
+)
+NARRATIVE_MEMORY_RULES_CONTENT_REVISION = (
+    "stage7_4_14_narrative_memory_rules_v0_1"
+)
+NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION = (
+    "stage7_4_14_narrative_memory_extension_compatibility_fix_v1"
+)
+NARRATIVE_MEMORY_TYPES = (
+    "shared_experience",
+    "confirmed_plan",
+    "important_progress",
+    "confirmed_emotional_event",
+    "mutual_commitment",
+    "user_marked_important",
+)
+NARRATIVE_MEMORY_LIFECYCLE_STATES = (
+    "candidate",
+    "active",
+    "superseded",
+    "deleted",
+    "rejected",
 )
 STAGE7_4_12_IDENTITY_LITERAL_EXPORT_GATE_FIX_REVISION = (
     "stage7_4_12_identity_literal_export_gate_fix_v1"
@@ -6928,6 +6955,9 @@ def _memory_access_control_module() -> ModuleV04:
             "confidence": "layer5.memoryAccessControl.field.confidence",
             "require_confirmation": "layer5.memoryAccessControl.field.requireConfirmation",
             "timestamp": "layer5.memoryAccessControl.field.timestamp",
+            "current_topic": "layer5.memoryAccessControl.field.currentTopic",
+            "requested_memory_types": "layer5.memoryAccessControl.field.requestedMemoryTypes",
+            "maximum_results": "layer5.memoryAccessControl.field.maximumResults",
         },
         "operations": {
             "read": "layer5.memoryAccessControl.operation.read",
@@ -6941,6 +6971,14 @@ def _memory_access_control_module() -> ModuleV04:
             "event_memory": "layer5.memoryAccessControl.memoryType.event",
             "relationship_memory": "layer5.memoryAccessControl.memoryType.relationship",
             "interaction_log": "layer5.memoryAccessControl.memoryType.interactionLog",
+            **{
+                memory_type: f"layer5.eventMemory.memoryType.{memory_type}"
+                for memory_type in NARRATIVE_MEMORY_TYPES
+            },
+        },
+        "lifecycle": {
+            state: f"layer5.eventMemory.lifecycle.{state}"
+            for state in NARRATIVE_MEMORY_LIFECYCLE_STATES
         },
         "decisions": {
             "allow": "layer5.memoryAccessControl.decision.allow",
@@ -6959,15 +6997,112 @@ def _memory_access_control_module() -> ModuleV04:
             output_key: "layer5.memoryAccessControl.output.memoryAccessPolicyResult",
         },
     }
+    narrative_memory_extension = {
+        "schema_version": "0.1",
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
+        "allowed_memory_types": list(NARRATIVE_MEMORY_TYPES),
+        "memory_lifecycle_states": list(
+            NARRATIVE_MEMORY_LIFECYCLE_STATES
+        ),
+        "retrieval_policy": {
+            "request_scope": "narrative_memory_retrieval_request",
+            "allowed_lifecycle_states": ["active"],
+            "excluded_lifecycle_states": [
+                "candidate",
+                "superseded",
+                "deleted",
+                "rejected",
+            ],
+            "rules": [
+                "retrieve_only_when_relevant_to_current_topic",
+                "use_few_most_relevant_active_memories_per_turn",
+                "do_not_frequently_initiate_memory_references",
+                "adopt_latest_user_correction_immediately",
+            ],
+        },
+        "expression_policy": {
+            "rules": [
+                "never_claim_to_remember_forever",
+                (
+                    "never_reference_unsaved_deleted_or_"
+                    "rejected_content"
+                ),
+                (
+                    "do_not_use_narrative_memory_to_upgrade_"
+                    "relationship_stage"
+                ),
+            ],
+            "relationship_stage_transition_allowed": False,
+        },
+        "model_authority": {
+            "model_can_propose_candidate_only": True,
+            "model_can_write_memory": False,
+            "model_can_update_memory": False,
+            "model_can_delete_memory": False,
+        },
+        "runtime_authority": {
+            "runtime_is_final_decision_owner": True,
+        },
+        "user_control": {
+            "single_item_delete": True,
+            "clear_all": True,
+            "deleted_content_recovery_from_inference_or_transcript": False,
+        },
+        "references": [
+            {
+                "source_layer_id": "layer_3",
+                "source_module_id": DATA_SAFETY_MODULE_ID,
+                "source_node_id": "data_boundary_config_output",
+                "usage": "retrieval_sensitive_boundary",
+            },
+            {
+                "source_layer_id": "layer_3",
+                "source_module_id": RISK_RESPONSE_MODULE_ID,
+                "source_node_id": RISK_RESPONSE_NODE_IDS["module_output"],
+                "usage": "retrieval_risk_boundary",
+            },
+            {
+                "source_layer_id": "layer_8",
+                "source_module_id": LANGUAGE_BEHAVIOR_MODULE_ID,
+                "source_node_id": LANGUAGE_BEHAVIOR_NODE_IDS["module_output"],
+                "usage": "memory_dialogue_expression_boundary",
+            },
+            {
+                "source_layer_id": "layer_8",
+                "source_module_id": INTERACTION_BEHAVIOR_MODULE_ID,
+                "source_node_id": INTERACTION_BEHAVIOR_NODE_IDS["module_output"],
+                "usage": "memory_invocation_strategy",
+            },
+            {
+                "source_layer_id": "layer_11",
+                "source_module_id": "relationship_rule",
+                "source_node_id": "relationship_behavior_config_output",
+                "usage": "forbid_memory_driven_relationship_upgrade",
+            },
+        ],
+        "contains_user_memory_records": False,
+    }
     access_policy_result = {
         "output_key": output_key,
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
         "decision": "confirm",
         "reason": "policy_requires_explicit_user_permission",
         "confidence": 0.8,
         "memory_type": "short_term_memory",
         "require_confirmation": True,
         "request_contract": {
-            "fields": ["resident_id", "operation", "namespace", "memory_type", "content", "source"],
+            "fields": [
+                "resident_id",
+                "operation",
+                "namespace",
+                "memory_type",
+                "content",
+                "source",
+            ],
             "operations": ["read", "write", "update", "delete"],
         },
         "permission_policy": {
@@ -6975,7 +7110,13 @@ def _memory_access_control_module() -> ModuleV04:
             "missing_user_authorization": "confirm",
             "sensitive_information": "deny",
         },
-        "memory_categories": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"],
+        "memory_categories": [
+            "short_term_memory",
+            "preference_memory",
+            "event_memory",
+            "relationship_memory",
+            "interaction_log",
+        ],
         "sensitive_policy": {
             "safe": "allow",
             "confirm_required": "confirm",
@@ -6983,33 +7124,75 @@ def _memory_access_control_module() -> ModuleV04:
             "default_for_inferred_fact": "deny",
         },
         "recall_claim_policy": deepcopy(MEMORY_RECALL_CLAIM_POLICY),
-        "policy_actions": ["remember", "session_only", "ask_confirmation", "deny"],
+        "policy_actions": [
+            "remember",
+            "session_only",
+            "ask_confirmation",
+            "deny",
+        ],
         "audit_policy": {
-            "record_fields": ["operation", "memory_type", "decision", "reason", "timestamp"],
-            "forbidden_fields": ["secret", "raw_sensitive_content", "api_key", "token", "credential"],
+            "record_fields": [
+                "operation",
+                "memory_type",
+                "decision",
+                "reason",
+                "timestamp",
+            ],
+            "forbidden_fields": [
+                "secret",
+                "raw_sensitive_content",
+                "api_key",
+                "token",
+                "credential",
+            ],
         },
+        "narrative_memory_extension": narrative_memory_extension,
         **no_execution_metadata,
     }
     node_params = {
         "request_input": {
             "i18n_keys": param_i18n_keys,
-            "request_fields": ["resident_id", "operation", "namespace", "memory_type", "content", "source"],
+            "request_fields": [
+                "resident_id",
+                "operation",
+                "namespace",
+                "memory_type",
+                "content",
+                "source",
+            ],
             "operations": ["read", "write", "update", "delete"],
             "request_scope": "runtime_memory_access_request",
             "no_runtime_api_change": True,
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
         },
         "user_permission_check": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["request_input"],
             "required_fields": ["resident_id", "operation"],
-            "validation_rules": ["explicit_user_remember_allows", "missing_user_authorization_requires_confirm", "sensitive_information_denies"],
-            "permission_outcomes": {"explicit_remember": "allow", "unauthorized": "confirm", "sensitive": "deny"},
+            "validation_rules": [
+                "explicit_user_remember_allows",
+                "missing_user_authorization_requires_confirm",
+                "sensitive_information_denies",
+            ],
+            "permission_outcomes": {
+                "explicit_remember": "allow",
+                "unauthorized": "confirm",
+                "sensitive": "deny",
+            },
         },
         "type_classifier": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["user_permission_check"],
-            "normalize_rules": ["classify_memory_type", "emit_memory_category", "allow_declared_memory_categories_only"],
-            "memory_categories": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"],
+            "normalize_rules": [
+                "classify_memory_type",
+                "emit_memory_category",
+                "allow_declared_memory_categories_only",
+            ],
+            "memory_categories": list(
+                access_policy_result["memory_categories"]
+            ),
             "output": "memory_category",
         },
         "sensitive_check": {
@@ -7031,15 +7214,25 @@ def _memory_access_control_module() -> ModuleV04:
                 "financial_privacy",
                 "unconfirmed_inference",
             ],
-            "sensitive_levels": ["safe", "confirm_required", "deny"],
+            "sensitive_levels": [
+                "safe",
+                "confirm_required",
+                "deny",
+            ],
             "output": "sensitive_level",
         },
         "policy_match": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["sensitive_check"],
             "policy_source": "memory_policy",
-            "policy_actions": ["remember", "session_only", "ask_confirmation", "deny"],
-            "priority": ["explicit_authorization", "user_preference", "normal_dialogue"],
+            "policy_actions": list(
+                access_policy_result["policy_actions"]
+            ),
+            "priority": [
+                "explicit_authorization",
+                "user_preference",
+                "normal_dialogue",
+            ],
             "inferred_fact_default": "deny",
         },
         "access_decision": {
@@ -7047,13 +7240,23 @@ def _memory_access_control_module() -> ModuleV04:
             "input": node_ids["policy_match"],
             "decision_values": ["allow", "confirm", "deny"],
             "outputs": ["decision", "reason", "confidence"],
-            "update_rules": ["combine_permission_type_sensitivity_policy", "deny_overrides_confirm", "confirm_overrides_allow"],
+            "update_rules": [
+                "combine_permission_type_sensitivity_policy",
+                "deny_overrides_confirm",
+                "confirm_overrides_allow",
+            ],
         },
         "audit": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["access_decision"],
-            "audit_fields": ["operation", "memory_type", "decision", "reason", "timestamp"],
-            "forbidden_audit_fields": ["secret", "raw_sensitive_content", "api_key", "token", "credential"],
+            "audit_fields": list(
+                access_policy_result["audit_policy"]["record_fields"]
+            ),
+            "forbidden_audit_fields": list(
+                access_policy_result["audit_policy"][
+                    "forbidden_fields"
+                ]
+            ),
             "audit_scope": "reason_record_only",
         },
         "output": {
@@ -7066,6 +7269,7 @@ def _memory_access_control_module() -> ModuleV04:
                 "confidence": "number",
                 "memory_type": "string",
                 "require_confirmation": "boolean",
+                "narrative_memory_extension": "policy_object",
             },
         },
     }
@@ -7111,7 +7315,13 @@ def _memory_access_control_module() -> ModuleV04:
         category="memory",
         is_placeholder=False,
         color_status="green",
-        tags=["memory", "access_control", "stage7_4_7"],
+        tags=[
+            "memory",
+            "access_control",
+            "stage7_4_7",
+            "narrative_memory",
+            "stage7_4_14",
+        ],
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -7149,12 +7359,17 @@ def _memory_access_control_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
             "compile_time_only": True,
             "mock_only": True,
             "no_execution": True,
             "no_provider_call": True,
             "no_memory_read_write": True,
             "no_credential_storage": True,
+            "text_rules_only": True,
+            "contains_user_memory_records": False,
         },
         mock_only=True,
         no_execution=True,
@@ -7501,6 +7716,9 @@ def _event_memory_module() -> ModuleV04:
         "no_memory_read_write": True,
         "no_credential_storage": True,
         "no_personality_auto_change": True,
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
     }
     param_i18n_keys = {
         "fields": {
@@ -7512,12 +7730,16 @@ def _event_memory_module() -> ModuleV04:
             "event_summary": "layer5.eventMemory.field.eventSummary",
             "confidence": "layer5.eventMemory.field.confidence",
             "importance": "layer5.eventMemory.field.importance",
+            "memory_type": "layer5.eventMemory.field.memoryType",
+            "candidate_summary": "layer5.eventMemory.field.candidateSummary",
+            "source_turn_reference": "layer5.eventMemory.field.sourceTurnReference",
+            "importance_reason": "layer5.eventMemory.field.importanceReason",
+            "sensitivity_level": "layer5.eventMemory.field.sensitivityLevel",
+            "requires_user_consent": "layer5.eventMemory.field.requiresUserConsent",
         },
         "event_types": {
-            "project": "layer5.eventMemory.eventType.project",
-            "milestone": "layer5.eventMemory.eventType.milestone",
-            "interaction": "layer5.eventMemory.eventType.interaction",
-            "personal_story": "layer5.eventMemory.eventType.personalStory",
+            memory_type: f"layer5.eventMemory.memoryType.{memory_type}"
+            for memory_type in NARRATIVE_MEMORY_TYPES
         },
         "importance": {
             "high": "layer5.eventMemory.importance.high",
@@ -7525,16 +7747,121 @@ def _event_memory_module() -> ModuleV04:
             "low": "layer5.eventMemory.importance.low",
         },
         "lifecycle": {
-            "active": "layer5.eventMemory.lifecycle.active",
-            "archived": "layer5.eventMemory.lifecycle.archived",
-            "forgotten": "layer5.eventMemory.lifecycle.forgotten",
+            state: f"layer5.eventMemory.lifecycle.{state}"
+            for state in NARRATIVE_MEMORY_LIFECYCLE_STATES
         },
         "output": {
             output_key: "layer5.eventMemory.output.eventMemory",
         },
     }
+    narrative_memory_extension = {
+        "schema_version": "0.1",
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
+        "allowed_memory_types": list(NARRATIVE_MEMORY_TYPES),
+        "candidate_evidence_rules": {
+            "requirements": [
+                "explicit_user_statement",
+                "has_future_continuation_value",
+                "traceable_to_real_user_turn",
+                "not_denied_or_withdrawn_by_user",
+                "complies_with_safety_and_memory_policy",
+            ],
+            "excluded_inputs": [
+                "ordinary_small_talk",
+                "one_off_question_answer",
+                "model_inference",
+                "unconfirmed_emotion_judgement",
+            ],
+            "candidate_fields": [
+                "memory_type",
+                "candidate_summary",
+                "source_turn_reference",
+                "importance_reason",
+                "sensitivity_level",
+                "requires_user_consent",
+            ],
+        },
+        "memory_lifecycle_states": list(
+            NARRATIVE_MEMORY_LIFECYCLE_STATES
+        ),
+        "model_authority": {
+            "model_can_propose_candidate_only": True,
+            "model_can_write_memory": False,
+            "model_can_update_memory": False,
+            "model_can_delete_memory": False,
+        },
+        "runtime_authority": {
+            "runtime_is_final_decision_owner": True,
+        },
+        "consent_policy": {
+            "explicit_remember_request_raises_candidate_priority": True,
+            "explicit_remember_request_bypasses_safety": False,
+            "sensitive_or_ambiguous_requires_explicit_user_consent": True,
+            "user_rejection_state": "rejected",
+            "rejected_candidate_auto_reproposal": False,
+        },
+        "forbidden_content_rules": [
+            "password",
+            "verification_code",
+            "api_key",
+            "payment_credential",
+            "precise_identity_credential",
+            "authentication_information",
+            "inferred_health_relationship_or_emotion_conclusion",
+            "full_dialogue_transcript",
+            "provider_request",
+            "internal_reasoning",
+            "provider_trace",
+            "user_requested_not_to_save",
+            "generated_from_count_duration_or_relationship_stage_only",
+        ],
+        "sensitivity_policy": {
+            "permanently_forbidden_categories": [
+                "password",
+                "verification_code",
+                "api_key",
+                "payment_credential",
+                "precise_identity_credential",
+                "authentication_information",
+            ],
+            (
+                "other_sensitive_or_ambiguous_requires_"
+                "explicit_user_consent"
+            ): True,
+            "safety_policy_validation_still_required": True,
+            "legacy_sensitive_event_alias": {
+                "status": "compatibility_alias",
+                "interpretation": (
+                    "sensitive_or_ambiguous_requires_explicit_"
+                    "user_consent_and_safety_validation"
+                ),
+                "not_a_blanket_allow": True,
+                "not_a_blanket_deny": True,
+            },
+        },
+        "references": [
+            {
+                "source_layer_id": "layer_3",
+                "source_module_id": DATA_SAFETY_MODULE_ID,
+                "source_node_id": "data_boundary_config_output",
+                "usage": "candidate_write_safety_boundary",
+            },
+            {
+                "source_layer_id": "layer_3",
+                "source_module_id": RISK_RESPONSE_MODULE_ID,
+                "source_node_id": RISK_RESPONSE_NODE_IDS["module_output"],
+                "usage": "candidate_risk_boundary",
+            },
+        ],
+        "contains_user_memory_records": False,
+    }
     event_policy = {
         "output_key": output_key,
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
         "fields": {
             "event_type": "",
             "event_summary": "",
@@ -7544,70 +7871,131 @@ def _event_memory_module() -> ModuleV04:
             "importance": "medium",
             "lifecycle_status": "active",
         },
-        "event_types": ["project", "milestone", "interaction", "personal_story"],
+        "field_aliases": {
+            "event_summary": "candidate_summary",
+        },
+        "event_types": [
+            "project",
+            "milestone",
+            "interaction",
+            "personal_story",
+        ],
         "importance_levels": ["high", "medium", "low"],
         "lifecycle_states": ["active", "archived", "forgotten"],
         "save_allowed": ["brief_summary", "timestamp", "event_meaning"],
-        "save_forbidden": ["full_chat_log", "one_off_small_talk", "sensitive_event", "unconfirmed_inference", "raw_sensitive_content"],
+        "save_forbidden": [
+            "full_chat_log",
+            "one_off_small_talk",
+            "unconfirmed_inference",
+            "raw_sensitive_content",
+        ],
+        "save_forbidden_compatibility_aliases": {
+            "sensitive_event": deepcopy(
+                narrative_memory_extension["sensitivity_policy"][
+                    "legacy_sensitive_event_alias"
+                ]
+            )
+        },
+        "narrative_memory_extension": narrative_memory_extension,
         **no_execution_metadata,
     }
     node_params = {
         "input": {
             "i18n_keys": param_i18n_keys,
-            "input_scope": "candidate_event",
-            "accepted_fields": ["event_content", "source", "timestamp", "context"],
+            "input_scope": "narrative_event_candidate",
+            "accepted_fields": list(
+                narrative_memory_extension[
+                    "candidate_evidence_rules"
+                ]["candidate_fields"]
+            ),
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
         },
-        "classifier": {
+        "type_recognition": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["input"],
-            "normalize_rules": ["extract_event_type", "summarize_event", "preserve_source", "estimate_confidence"],
-            "event_types": ["project", "milestone", "interaction", "personal_story"],
-            "outputs": ["event_type", "event_summary", "source", "confidence"],
+            "memory_types": list(NARRATIVE_MEMORY_TYPES),
+            "normalize_rules": ["allow_declared_narrative_memory_types_only"],
         },
-        "importance_evaluation": {
+        "user_source_validation": {
             "i18n_keys": param_i18n_keys,
-            "input": node_ids["classifier"],
-            "high_value_rules": ["explicit_user_remember_request", "long_term_goal", "important_experience"],
-            "low_value_rules": ["ordinary_chat", "temporary_emotion"],
-            "importance": ["high", "medium", "low"],
+            "input": node_ids["type_recognition"],
+            "validation_rules": [
+                "explicit_user_statement_required",
+                "source_turn_reference_must_trace_to_real_user_turn",
+                "user_denial_or_withdrawal_rejects_candidate",
+                "model_inference_never_forms_candidate",
+            ],
         },
-        "summary_policy": {
+        "future_value_evaluation": {
             "i18n_keys": param_i18n_keys,
-            "input": node_ids["importance_evaluation"],
-            "save_allowed": ["brief_summary", "timestamp", "event_meaning"],
-            "save_forbidden": ["full_chat_log", "raw_sensitive_content", "sensitive_event", "unconfirmed_inference"],
-            "no_full_chat_log": True,
-            "no_sensitive_event_storage": True,
+            "input": node_ids["user_source_validation"],
+            "value_rules": ["has_future_continuation_value"],
+            "excluded_candidates": list(
+                narrative_memory_extension[
+                    "candidate_evidence_rules"
+                ]["excluded_inputs"]
+            ),
         },
-        "lifecycle_policy": {
+        "sensitive_information_check": {
             "i18n_keys": param_i18n_keys,
-            "input": node_ids["summary_policy"],
-            "lifecycle_states": ["active", "archived", "forgotten"],
-            "long_term_rule": "important_events_persist",
-            "decay_rule": "ordinary_events_may_decay",
+            "input": node_ids["future_value_evaluation"],
+            "forbidden_save": list(
+                narrative_memory_extension[
+                    "forbidden_content_rules"
+                ]
+            ),
+            "sensitivity_policy": deepcopy(
+                narrative_memory_extension["sensitivity_policy"]
+            ),
+            "boundary_references": ["layer_3.data_boundary", "layer_3.risk_response"],
+        },
+        "user_consent_judgement": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["sensitive_information_check"],
+            "consent_policy": dict(
+                narrative_memory_extension["consent_policy"]
+            ),
+            "model_authority": dict(
+                narrative_memory_extension["model_authority"]
+            ),
+            "runtime_authority": dict(
+                narrative_memory_extension["runtime_authority"]
+            ),
         },
         "output": {
             "i18n_keys": param_i18n_keys,
-            "input": node_ids["lifecycle_policy"],
+            "input": node_ids["user_consent_judgement"],
             "output_key": output_key,
             "output_schema": {
-                "event_type": "string",
-                "event_summary": "string",
-                "source": "string",
-                "timestamp": "string",
-                "confidence": "number",
-                "importance": "high_medium_or_low",
-                "lifecycle_status": "active_archived_or_forgotten",
+                "memory_type": "controlled_string",
+                "candidate_summary": "brief_string",
+                "event_summary": "compatibility_alias_of_candidate_summary",
+                "source_turn_reference": "user_turn_reference",
+                "importance_reason": "brief_string",
+                "sensitivity_level": "controlled_string",
+                "requires_user_consent": "boolean",
             },
+        },
+        "reference_output": {
+            "i18n_keys": param_i18n_keys,
+            "input": node_ids["output"],
+            "references": list(
+                narrative_memory_extension["references"]
+            ),
+            "output_key": output_key,
         },
     }
     node_i18n_suffix = {
         "input": "input",
-        "classifier": "classifier",
-        "importance_evaluation": "importanceEvaluation",
-        "summary_policy": "summaryPolicy",
-        "lifecycle_policy": "lifecyclePolicy",
+        "type_recognition": "typeRecognition",
+        "user_source_validation": "userSourceValidation",
+        "future_value_evaluation": "futureValueEvaluation",
+        "sensitive_information_check": "sensitiveInformationCheck",
+        "user_consent_judgement": "userConsentJudgement",
         "output": "output",
+        "reference_output": "referenceOutput",
     }
     nodes = []
     for index, role in enumerate(EVENT_MEMORY_NODE_ORDER):
@@ -7626,7 +8014,7 @@ def _event_memory_module() -> ModuleV04:
                     "description": f"layer5.eventMemory.node.{node_i18n_suffix[role]}.description",
                     "type_name": f"node.type.{node_type}",
                 },
-                "outputs": {output_key: event_policy, "module_output": output_key} if role == "output" else {},
+                "outputs": {output_key: event_policy, "module_output": output_key} if role in {"output", "reference_output"} else {},
                 "metadata": no_execution_metadata,
             }
         )
@@ -7641,7 +8029,7 @@ def _event_memory_module() -> ModuleV04:
         category="memory",
         is_placeholder=False,
         color_status="green",
-        tags=["memory", "event", "stage7_4_7"],
+        tags=["memory", "event", "narrative_memory", "stage7_4_14"],
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -7658,7 +8046,7 @@ def _event_memory_module() -> ModuleV04:
             "output_key": output_key,
             "compile_time_only": True,
         },
-        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Important shared event memory."}],
+        output_schema=[{"key": output_key, "type": "object", "required": True, "description": "Narrative memory candidate rules; contains no user memory records."}],
         ui_config={"shell_version": "module_shell_v1", "classification": "core", "execution_entry": "slot_only"},
         i18n_keys={
             "display_name": "layer5.eventMemory.module.title",
@@ -7669,6 +8057,9 @@ def _event_memory_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
             "compile_time_only": True,
             "mock_only": True,
             "no_execution": True,
@@ -7676,6 +8067,8 @@ def _event_memory_module() -> ModuleV04:
             "no_memory_read_write": True,
             "no_credential_storage": True,
             "no_personality_auto_change": True,
+            "text_rules_only": True,
+            "contains_user_memory_records": False,
         },
         mock_only=True,
         no_execution=True,
@@ -7897,8 +8290,17 @@ def _memory_update_module() -> ModuleV04:
         "no_vector_memory": True,
         "no_personality_growth": True,
         "no_multi_resident_memory_share": True,
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
     }
-    allowed_operations = ["create", "update", "delete", "confirm", "archive"]
+    allowed_operations = [
+        "create",
+        "update",
+        "delete",
+        "confirm",
+        "archive",
+    ]
     param_i18n_keys = {
         "fields": {
             "operation": "layer5.memoryUpdate.field.operation",
@@ -7912,6 +8314,10 @@ def _memory_update_module() -> ModuleV04:
             "requires_confirmation": "layer5.memoryUpdate.field.requiresConfirmation",
             "write_boundary": "layer5.memoryUpdate.field.writeBoundary",
             "timestamp": "layer5.memoryUpdate.field.timestamp",
+            "candidate_reference": "layer5.memoryUpdate.field.candidateReference",
+            "current_memory_reference": "layer5.memoryUpdate.field.currentMemoryReference",
+            "latest_user_statement_reference": "layer5.memoryUpdate.field.latestUserStatementReference",
+            "requested_operation": "layer5.memoryUpdate.field.requestedOperation",
         },
         "operations": {
             "create": "layer5.memoryUpdate.operation.create",
@@ -7925,12 +8331,101 @@ def _memory_update_module() -> ModuleV04:
             "confirm": "layer5.memoryUpdate.decision.confirm",
             "deny": "layer5.memoryUpdate.decision.deny",
         },
+        "memory_types": {
+            memory_type: f"layer5.eventMemory.memoryType.{memory_type}"
+            for memory_type in NARRATIVE_MEMORY_TYPES
+        },
+        "lifecycle": {
+            state: f"layer5.eventMemory.lifecycle.{state}"
+            for state in NARRATIVE_MEMORY_LIFECYCLE_STATES
+        },
         "output": {
             output_key: "layer5.memoryUpdate.output.memoryUpdatePolicy",
         },
     }
+    narrative_memory_extension = {
+        "schema_version": "0.1",
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
+        "allowed_memory_types": list(NARRATIVE_MEMORY_TYPES),
+        "memory_lifecycle_states": list(
+            NARRATIVE_MEMORY_LIFECYCLE_STATES
+        ),
+        "allowed_operations": [
+            "activate",
+            "merge",
+            "supersede",
+            "delete",
+            "reject",
+            "clear_all",
+        ],
+        "allowed_transitions": [
+            ["candidate", "active"],
+            ["active", "superseded"],
+            ["active", "deleted"],
+            ["superseded", "deleted"],
+            ["candidate", "rejected"],
+        ],
+        "forbidden_transitions": [
+            ["deleted", "active"],
+            ["rejected", "active"],
+        ],
+        "deduplication_policy": {
+            "same_event": "deduplicate_or_merge",
+        },
+        "conflict_resolution_policy": {
+            (
+                "latest_explicit_user_statement"
+            ): "supersede_older_information",
+            "superseded_is_not_current_fact": True,
+        },
+        "supersession_policy": {
+            "latest_explicit_user_statement_wins": True,
+            "older_conflicting_memory_state": "superseded",
+        },
+        "deletion_policy": {
+            "single_item_delete": True,
+            "clear_all": True,
+            "deleted_is_retrievable": False,
+            "restore_from_model_inference": False,
+            "restore_from_historical_transcript": False,
+        },
+        "rejected_policy": {
+            "rejected_is_retrievable": False,
+            "automatic_reproposal": False,
+            "automatic_restore": False,
+        },
+        "model_authority": {
+            "model_can_propose_candidate_only": True,
+            "model_can_write_memory": False,
+            "model_can_update_memory": False,
+            "model_can_delete_memory": False,
+        },
+        "runtime_authority": {
+            "runtime_is_final_decision_owner": True,
+        },
+        "references": [
+            {
+                "source_layer_id": "layer_3",
+                "source_module_id": DATA_SAFETY_MODULE_ID,
+                "source_node_id": "data_boundary_config_output",
+                "usage": "memory_update_safety_boundary",
+            },
+            {
+                "source_layer_id": "layer_11",
+                "source_module_id": "relationship_rule",
+                "source_node_id": "relationship_behavior_config_output",
+                "usage": "forbid_memory_driven_relationship_upgrade",
+            },
+        ],
+        "contains_user_memory_records": False,
+    }
     update_policy = {
         "output_key": output_key,
+        "content_revision": (
+            NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+        ),
         "allowed_operations": allowed_operations,
         "decision_values": ["allow", "confirm", "deny"],
         "policy_priority": {
@@ -7942,7 +8437,9 @@ def _memory_update_module() -> ModuleV04:
             "inferred_fact": "deny",
         },
         "confirmation_policy": {
-            "explicit_user_remember_request": "allow_without_second_confirmation",
+            (
+                "explicit_user_remember_request"
+            ): "allow_without_second_confirmation",
             "ambiguous_preference": "confirm",
             "sensitive_information": "confirm_or_deny",
             "inferred_fact": "deny",
@@ -7954,33 +8451,57 @@ def _memory_update_module() -> ModuleV04:
             "low_confidence_over_high_confidence": "deny",
         },
         "audit_policy": {
-            "record_fields": ["operation", "memory_type", "decision", "reason", "source", "confidence", "timestamp"],
-            "forbidden_fields": ["api_key", "token", "credential", "raw_sensitive_content"],
+            "record_fields": [
+                "operation",
+                "memory_type",
+                "decision",
+                "reason",
+                "source",
+                "confidence",
+                "timestamp",
+            ],
+            "forbidden_fields": [
+                "api_key",
+                "token",
+                "credential",
+                "raw_sensitive_content",
+            ],
         },
         "write_boundary": "local_memory_store_only",
+        "narrative_memory_extension": narrative_memory_extension,
         **no_execution_metadata,
     }
     node_params = {
         "request_input": {
             "i18n_keys": param_i18n_keys,
             "input_scope": "candidate_memory_update",
-            "accepted_fields": ["operation", "memory_type", "memory_key", "memory_value", "source", "confidence"],
+            "accepted_fields": [
+                "operation",
+                "memory_type",
+                "memory_key",
+                "memory_value",
+                "source",
+                "confidence",
+            ],
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
         },
         "operation_classifier": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["request_input"],
-            "normalize_rules": ["classify_update_operation", "allow_declared_update_operations_only"],
+            "normalize_rules": [
+                "classify_update_operation",
+                "allow_declared_update_operations_only",
+            ],
             "operations": allowed_operations,
         },
         "confirmation_check": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["operation_classifier"],
-            "confirmation_rules": {
-                "explicit_user_remember_request": "allow_without_second_confirmation",
-                "ambiguous_preference": "confirm",
-                "sensitive_information": "confirm_or_deny",
-                "inferred_fact": "deny",
-            },
+            "confirmation_rules": deepcopy(
+                update_policy["confirmation_policy"]
+            ),
         },
         "conflict_check": {
             "i18n_keys": param_i18n_keys,
@@ -7995,21 +8516,21 @@ def _memory_update_module() -> ModuleV04:
         "policy_apply": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["conflict_check"],
-            "strategy": {
-                "explicit_user_request_priority": "highest",
-                "confirmed_preference": "high",
-                "project_context": "high",
-                "relationship_state": "gradual",
-                "temporary_emotion": "session_only",
-                "inferred_fact": "deny",
-            },
-            "write_boundary": "local_memory_store_only",
+            "strategy": deepcopy(update_policy["policy_priority"]),
+            "write_boundary": update_policy["write_boundary"],
+            "narrative_memory_extension": deepcopy(
+                narrative_memory_extension
+            ),
         },
         "audit_record": {
             "i18n_keys": param_i18n_keys,
             "input": node_ids["policy_apply"],
-            "record_fields": ["operation", "memory_type", "decision", "reason", "source", "confidence", "timestamp"],
-            "forbidden_fields": ["api_key", "token", "credential", "raw_sensitive_content"],
+            "record_fields": list(
+                update_policy["audit_policy"]["record_fields"]
+            ),
+            "forbidden_fields": list(
+                update_policy["audit_policy"]["forbidden_fields"]
+            ),
             "no_runtime_trace_to_dr": True,
         },
         "output": {
@@ -8024,6 +8545,7 @@ def _memory_update_module() -> ModuleV04:
                 "confidence": "number",
                 "requires_confirmation": "boolean",
                 "write_boundary": "local_memory_store_only",
+                "narrative_memory_extension": "policy_object",
             },
         },
     }
@@ -8068,7 +8590,7 @@ def _memory_update_module() -> ModuleV04:
         category="memory",
         is_placeholder=False,
         color_status="green",
-        tags=["memory", "update", "stage7_4_7"],
+        tags=["memory", "update", "narrative_memory", "stage7_4_14"],
         module_graph={
             "shell_version": "module_shell_v1",
             "nodes": nodes,
@@ -8110,6 +8632,9 @@ def _memory_update_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "module_class": "core",
+            "content_revision": (
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+            ),
             "compile_time_only": True,
             "mock_only": True,
             "no_execution": True,
@@ -8123,6 +8648,8 @@ def _memory_update_module() -> ModuleV04:
             "no_vector_memory": True,
             "no_personality_growth": True,
             "no_multi_resident_memory_share": True,
+            "text_rules_only": True,
+            "contains_user_memory_records": False,
         },
         mock_only=True,
         no_execution=True,

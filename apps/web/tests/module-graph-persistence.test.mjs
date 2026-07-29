@@ -30,6 +30,7 @@ import {
   normalizeEmotionalDialogueExampleIsolation,
   migrateLinxuanFirstInteractionEnabledValue,
   migrateLinxuanFirstGreetingValue,
+  migrateNarrativeMemoryRulesGraph,
   normalizeCatalogNodeId,
   preserveStoredModuleEdges,
   preserveStoredModuleNodePosition,
@@ -42,6 +43,7 @@ import {
   STAGE7_4_12_A4_COMPATIBILITY_AUTHORITY_STATUS_GOVERNANCE_REVISION,
   RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION,
   RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION,
+  NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION,
   synchronizeAuthoritativeFieldCompatibilityParams,
   REMOVED_LINXUAN_FIRST_GREETING_VARIANT,
   updateFirstInteractionEnabled,
@@ -197,6 +199,156 @@ test("Stage 7.4.13 relationship graph migration preserves resident fields and is
     migrateRelationshipFormationRulesGraph(first.value, seed);
   assert.equal(repeated.migrated, false);
   assert.deepEqual(repeated.value, first.value);
+});
+
+test("Stage 7.4.14 narrative-memory migration rebuilds rules, preserves user fields, and is idempotent", () => {
+  const chain = [
+    "narrative_event_input",
+    "narrative_memory_type_recognition",
+    "narrative_memory_user_source_validation",
+    "narrative_memory_future_value_evaluation",
+    "narrative_memory_sensitive_information_check",
+    "narrative_memory_user_consent_judgement",
+    "event_memory_output",
+    "narrative_memory_reference_output",
+  ];
+  const seed = {
+    nodes: chain.map((nodeId, index) =>
+      relationshipGraphNode(
+        nodeId,
+        index === 0
+          ? {
+              content_revision:
+                NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION,
+            }
+          : {}
+      )
+    ),
+    edges: chain.slice(0, -1).map((source, index) => ({
+      source,
+      target: chain[index + 1],
+    })),
+  };
+  const stored = {
+    nodes: [
+      relationshipGraphNode("event_memory_input", {
+        fields: [
+          {
+            field_key: "resident_authored_memory_policy_note",
+            field_value: "保留用户填写的记忆策略说明",
+          },
+        ],
+        legacy_fields: [
+          {
+            field_key: "resident_authored_memory_policy_note",
+            field_value: "旧镜像",
+          },
+        ],
+      }),
+      relationshipGraphNode("event_memory_output"),
+    ],
+    edges: [{ source: "event_memory_input", target: "event_memory_output" }],
+  };
+  const before = JSON.parse(JSON.stringify(stored));
+
+  const first = migrateNarrativeMemoryRulesGraph(stored, seed);
+  assert.equal(first.migrated, true);
+  assert.deepEqual(stored, before);
+  assert.deepEqual(
+    first.value.nodes.map((node) => node.data.schemaNode.node_id),
+    chain
+  );
+  assert.deepEqual(first.value.edges, seed.edges);
+  const inputParams = first.value.nodes[0].data.schemaNode.data.params;
+  assert.equal(
+    inputParams.fields[0].field_value,
+    "保留用户填写的记忆策略说明"
+  );
+  assert.deepEqual(inputParams.legacy_fields, inputParams.fields);
+  assert.deepEqual(inputParams.legacy_data_fields, inputParams.fields);
+
+  const repeated = migrateNarrativeMemoryRulesGraph(first.value, seed);
+  assert.equal(repeated.migrated, false);
+  assert.deepEqual(repeated.value, first.value);
+});
+
+test("Stage 7.4.14 A3 restores generic access and update chains from A1 stored copies", () => {
+  const cases = [
+    {
+      storedInput: "narrative_memory_change_input",
+      storedOutput: "narrative_memory_update_reference_output",
+      chain: [
+        "memory_update_request_input",
+        "memory_update_operation_classifier",
+        "memory_update_confirmation_check",
+        "memory_update_conflict_check",
+        "memory_update_policy_apply",
+        "memory_update_audit_record",
+        "memory_update_output",
+      ],
+    },
+    {
+      storedInput: "narrative_memory_request_input",
+      storedOutput: "memory_access_output",
+      chain: [
+        "memory_access_request_input",
+        "memory_user_permission_check",
+        "memory_type_classifier",
+        "memory_sensitive_check",
+        "memory_policy_match",
+        "memory_access_decision",
+        "memory_access_audit",
+        "memory_access_output",
+      ],
+    },
+  ];
+  for (const { storedInput, storedOutput, chain } of cases) {
+    const seed = {
+      nodes: chain.map((nodeId, index) =>
+        relationshipGraphNode(
+          nodeId,
+          index === 0
+            ? {
+                content_revision:
+                  NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION,
+              }
+            : {}
+        )
+      ),
+      edges: chain.slice(0, -1).map((source, index) => ({
+        source,
+        target: chain[index + 1],
+      })),
+    };
+    const stored = {
+      nodes: [
+        relationshipGraphNode(storedInput, {
+          fields: [
+            {
+              field_key: "resident_authored_memory_policy_note",
+              field_value: "保留用户填写的记忆策略说明",
+            },
+          ],
+        }),
+        relationshipGraphNode(storedOutput),
+      ],
+      edges: [{ source: storedInput, target: storedOutput }],
+    };
+    const first = migrateNarrativeMemoryRulesGraph(stored, seed);
+    assert.equal(first.migrated, true);
+    assert.deepEqual(
+      first.value.nodes.map((node) => node.data.schemaNode.node_id),
+      chain
+    );
+    assert.equal(
+      first.value.nodes[0].data.schemaNode.data.params.fields[0]
+        .field_value,
+      "保留用户填写的记忆策略说明"
+    );
+    const repeated = migrateNarrativeMemoryRulesGraph(first.value, seed);
+    assert.equal(repeated.migrated, false);
+    assert.deepEqual(repeated.value, first.value);
+  }
 });
 
 test("Stage 7.4.13 relationship single-source migration removes legacy stage state and is idempotent", () => {
@@ -812,6 +964,133 @@ test("compile canonicalizes the legacy Layer 11 intimacy pointer to its sole mod
       "relationship_stage_config_output",
       "relationship_stage_config_output",
     ]
+  );
+  const repeated = canonicalizeLegacyMaterializedReferencePointers(
+    first.references,
+    sourceModules
+  );
+  assert.equal(repeated.repairedCount, 0);
+  assert.deepEqual(repeated.references, first.references);
+});
+
+test("compile canonicalizes stale Layer 5 narrative-memory output pointers", () => {
+  const sourceSpecs = [
+    {
+      moduleId: "event_memory",
+      oldNodeId:
+        "layer_5::event_memory_reference_output_1783773423862_2",
+      outputNodeId: "narrative_memory_reference_output",
+      outputNodeType: "reference_output",
+      count: 2,
+    },
+    {
+      moduleId: "memory_update",
+      oldNodeId:
+        "layer_5::memory_update_reference_output_1783773617996_2",
+      outputNodeId: "memory_update_output",
+      outputNodeType: "module_output",
+      count: 4,
+    },
+    {
+      moduleId: "memory_access_control",
+      oldNodeId:
+        "layer_5::memory_access_control_reference_output_1783771957851_2",
+      outputNodeId: "memory_access_output",
+      outputNodeType: "module_output",
+      count: 9,
+    },
+  ];
+  const sourceModules = sourceSpecs.map((source) => ({
+    module_id: source.moduleId,
+    layer_id: "layer_5",
+    module_graph: {
+      nodes: [
+        {
+          node_id: `${source.moduleId}_input`,
+          node_type: "text_config",
+        },
+        {
+          node_id: source.outputNodeId,
+          node_type: source.outputNodeType,
+        },
+      ],
+    },
+  }));
+  const references = sourceSpecs.flatMap((source) =>
+    Array.from({ length: source.count }, (_, index) => ({
+      reference_id: `${source.moduleId}_${index + 1}`,
+      source_layer_id: "layer_5",
+      source_module_id: source.moduleId,
+      source_node_id: source.oldNodeId,
+      source_scope: "module",
+      source_field_paths: [],
+      reference_type: "references",
+      required: true,
+    }))
+  );
+  const before = JSON.parse(JSON.stringify(references));
+
+  const first = canonicalizeLegacyMaterializedReferencePointers(
+    references,
+    sourceModules
+  );
+
+  assert.equal(first.repairedCount, 15);
+  assert.deepEqual(references, before);
+  first.references.forEach((reference) => {
+    const source = sourceSpecs.find(
+      (item) => item.moduleId === reference.source_module_id
+    );
+    assert.ok(source);
+    assert.equal(reference.source_node_id, source.outputNodeId);
+  });
+
+  const repeated = canonicalizeLegacyMaterializedReferencePointers(
+    first.references,
+    sourceModules
+  );
+  assert.equal(repeated.repairedCount, 0);
+  assert.deepEqual(repeated.references, first.references);
+});
+
+test("compile canonicalizes the retired narrative memory-update output pointer", () => {
+  const sourceModules = [
+    {
+      module_id: "memory_update",
+      layer_id: "layer_5",
+      module_graph: {
+        nodes: [
+          {
+            node_id: "memory_update_request_input",
+            node_type: "text_config",
+          },
+          {
+            node_id: "memory_update_output",
+            node_type: "module_output",
+          },
+        ],
+      },
+    },
+  ];
+  const references = Array.from({ length: 4 }, (_, index) => ({
+    reference_id: `layer12_memory_update_${index + 1}`,
+    source_layer_id: "layer_5",
+    source_module_id: "memory_update",
+    source_node_id:
+      "layer_5::memory_update::narrative_memory_update_reference_output",
+    source_scope: "module",
+    source_field_paths: [],
+    reference_type: "references",
+    required: true,
+  }));
+  const first = canonicalizeLegacyMaterializedReferencePointers(
+    references,
+    sourceModules
+  );
+  assert.equal(first.repairedCount, 4);
+  assert.deepEqual(
+    first.references.map((reference) => reference.source_node_id),
+    Array(4).fill("memory_update_output")
   );
   const repeated = canonicalizeLegacyMaterializedReferencePointers(
     first.references,
@@ -3341,7 +3620,7 @@ test("Stage 7.4.12 A2 hydrates one Layer 8 output chain with a revision-gated id
   );
   assert.match(
     bridgeSource,
-    /const layer8OutputMerged = mergeLayer8MaterializedOutputSeed\([\s\S]*?layer8OutputMerged \?\? graphAfterParticleMigration/s
+    /const layer8OutputMerged = mergeLayer8MaterializedOutputSeed\([\s\S]*?layer8OutputMerged \?\? graphAfterNarrativeMemoryMigration/s
   );
 });
 

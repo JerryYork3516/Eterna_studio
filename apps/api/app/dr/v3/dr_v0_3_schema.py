@@ -547,6 +547,242 @@ class RelationshipProjectionV03(V03BaseModel):
     initial_relationship: Dict[str, Any]
 
 
+class NarrativeMemoryPolicyReferenceV03(V03BaseModel):
+    source_layer_id: Literal["layer_3", "layer_8", "layer_11"]
+    source_module_id: str
+    source_node_id: str
+    source_path: str
+    usage: str
+
+
+class NarrativeMemoryCandidateEvidenceRulesV03(V03BaseModel):
+    requirements: List[str]
+    excluded_inputs: List[str]
+    candidate_fields: List[str]
+    explicit_user_statement_required: Literal[True]
+    source_turn_traceability_required: Literal[True]
+
+
+class NarrativeMemoryConsentPolicyV03(V03BaseModel):
+    explicit_remember_request_raises_candidate_priority: Literal[True]
+    explicit_remember_request_bypasses_safety: Literal[False]
+    sensitive_or_ambiguous_requires_explicit_user_consent: Literal[True]
+    user_rejection_state: Literal["rejected"]
+    rejected_candidate_auto_reproposal: Literal[False]
+    user_forget_request_target_state: Literal["deleted"]
+
+
+class NarrativeMemorySensitiveEventAliasV03(V03BaseModel):
+    status: Literal["compatibility_alias"]
+    interpretation: Literal[
+        (
+            "sensitive_or_ambiguous_requires_explicit_"
+            "user_consent_and_safety_validation"
+        )
+    ]
+    not_a_blanket_allow: Literal[True]
+    not_a_blanket_deny: Literal[True]
+
+
+class NarrativeMemorySensitivityPolicyV03(V03BaseModel):
+    sensitive_or_ambiguous_requires_explicit_user_consent: Literal[True]
+    permanently_forbidden_categories: List[str]
+    safety_boundary_enforced: Literal[True]
+    legacy_sensitive_event_alias: (
+        NarrativeMemorySensitiveEventAliasV03
+    )
+
+
+class NarrativeMemoryDeduplicationPolicyV03(V03BaseModel):
+    same_event_action: Literal["deduplicate_or_merge"]
+    duplicate_events_are_merged: Literal[True]
+
+
+class NarrativeMemoryConflictResolutionPolicyV03(V03BaseModel):
+    latest_explicit_user_statement: Literal[
+        "supersede_older_information"
+    ]
+    user_latest_explicit_statement_has_priority: Literal[True]
+
+
+class NarrativeMemorySupersessionPolicyV03(V03BaseModel):
+    older_conflicting_memory_state: Literal["superseded"]
+    superseded_memory_is_current_fact: Literal[False]
+    superseded_memory_retrievable: Literal[False]
+
+
+class NarrativeMemoryDeletionPolicyV03(V03BaseModel):
+    single_item_delete: Literal[True]
+    clear_all: Literal[True]
+    deleted_is_retrievable: Literal[False]
+    restore_from_model_inference: Literal[False]
+    restore_from_historical_transcript: Literal[False]
+    deleted_memory_retrievable: Literal[False]
+    deleted_memory_enters_model_context: Literal[False]
+
+
+class NarrativeMemoryRetrievalPolicyV03(V03BaseModel):
+    allowed_lifecycle_states: List[str]
+    excluded_lifecycle_states: List[str]
+    rules: List[str]
+    deleted_memory_retrievable: Literal[False]
+    rejected_memory_retrievable: Literal[False]
+    deleted_or_rejected_enters_model_context: Literal[False]
+
+
+class NarrativeMemoryExpressionPolicyV03(V03BaseModel):
+    rules: List[str]
+    relationship_stage_transition_allowed: Literal[False]
+    never_claim_permanent_memory: Literal[True]
+
+
+class NarrativeMemoryModelAuthorityV03(V03BaseModel):
+    model_can_propose_candidate_only: Literal[True]
+    model_can_write_memory: Literal[False]
+    model_can_update_memory: Literal[False]
+    model_can_delete_memory: Literal[False]
+
+
+class NarrativeMemoryRuntimeAuthorityV03(V03BaseModel):
+    runtime_is_final_decision_owner: Literal[True]
+
+
+class NarrativeMemoryProjectionV03(V03BaseModel):
+    schema_version: Literal["0.1"]
+    content_revision: Literal[
+        "stage7_4_14_narrative_memory_projection_v0_1"
+    ]
+    derived: Literal[True]
+    read_only: Literal[True]
+    source_paths: List[str]
+    enabled: Literal[True]
+    allowed_memory_types: List[str]
+    memory_lifecycle_states: List[str]
+    candidate_evidence_rules: NarrativeMemoryCandidateEvidenceRulesV03
+    forbidden_content_rules: List[str]
+    consent_policy: NarrativeMemoryConsentPolicyV03
+    sensitivity_policy: NarrativeMemorySensitivityPolicyV03
+    deduplication_policy: NarrativeMemoryDeduplicationPolicyV03
+    conflict_resolution_policy: NarrativeMemoryConflictResolutionPolicyV03
+    supersession_policy: NarrativeMemorySupersessionPolicyV03
+    deletion_policy: NarrativeMemoryDeletionPolicyV03
+    retrieval_policy: NarrativeMemoryRetrievalPolicyV03
+    expression_policy: NarrativeMemoryExpressionPolicyV03
+    model_authority: NarrativeMemoryModelAuthorityV03
+    runtime_authority: NarrativeMemoryRuntimeAuthorityV03
+    relationship_boundary_refs: List[
+        NarrativeMemoryPolicyReferenceV03
+    ]
+    safety_boundary_refs: List[NarrativeMemoryPolicyReferenceV03]
+    dialogue_boundary_refs: List[NarrativeMemoryPolicyReferenceV03]
+    deleted_memory_retrievable: Literal[False]
+    rejected_candidate_reproposal_allowed: Literal[False]
+    relationship_stage_transition_allowed: Literal[False]
+    full_dialogue_storage_allowed: Literal[False]
+    single_item_delete_supported: Literal[True]
+    clear_all_supported: Literal[True]
+    contains_user_memory_records: Literal[False]
+
+    @model_validator(mode="after")
+    def _narrative_memory_projection_is_static_and_safe(
+        self,
+    ) -> "NarrativeMemoryProjectionV03":
+        if self.allowed_memory_types != [
+            "shared_experience",
+            "confirmed_plan",
+            "important_progress",
+            "confirmed_emotional_event",
+            "mutual_commitment",
+            "user_marked_important",
+        ]:
+            raise ValueError(
+                "allowed_memory_types must contain exactly the six "
+                "Stage 7.4.14 narrative-memory types in stable order"
+            )
+        if self.memory_lifecycle_states != [
+            "candidate",
+            "active",
+            "superseded",
+            "deleted",
+            "rejected",
+        ]:
+            raise ValueError(
+                "memory_lifecycle_states must contain exactly candidate, "
+                "active, superseded, deleted, and rejected"
+            )
+        if self.candidate_evidence_rules.candidate_fields != [
+            "memory_type",
+            "candidate_summary",
+            "source_turn_reference",
+            "importance_reason",
+            "sensitivity_level",
+            "requires_user_consent",
+        ]:
+            raise ValueError(
+                "narrative-memory candidates must use the closed six-field "
+                "contract"
+            )
+        if self.retrieval_policy.allowed_lifecycle_states != ["active"]:
+            raise ValueError(
+                "only active narrative memory may be retrieved"
+            )
+        if self.retrieval_policy.excluded_lifecycle_states != [
+            "candidate",
+            "superseded",
+            "deleted",
+            "rejected",
+        ]:
+            raise ValueError(
+                "candidate, superseded, deleted, and rejected memory must "
+                "remain outside retrieval context"
+            )
+        if {
+            reference.source_layer_id
+            for reference in self.safety_boundary_refs
+        } != {"layer_3"}:
+            raise ValueError(
+                "safety_boundary_refs must reference Layer 3 only"
+            )
+        if {
+            reference.source_layer_id
+            for reference in self.dialogue_boundary_refs
+        } != {"layer_8"}:
+            raise ValueError(
+                "dialogue_boundary_refs must reference Layer 8 only"
+            )
+        if {
+            reference.source_layer_id
+            for reference in self.relationship_boundary_refs
+        } != {"layer_11"}:
+            raise ValueError(
+                "relationship_boundary_refs must reference Layer 11 only"
+            )
+        required_forbidden = {
+            "password",
+            "verification_code",
+            "api_key",
+            "payment_credential",
+            "precise_identity_credential",
+            "authentication_information",
+            "inferred_health_relationship_or_emotion_conclusion",
+            "full_dialogue_transcript",
+            "provider_request",
+            "internal_reasoning",
+            "provider_trace",
+            "user_requested_not_to_save",
+            "generated_from_count_duration_or_relationship_stage_only",
+        }
+        if not required_forbidden.issubset(
+            set(self.forbidden_content_rules)
+        ):
+            raise ValueError(
+                "forbidden_content_rules must cover credentials, inferred "
+                "conclusions, full dialogue, internal traces, user refusal, "
+                "and count/duration/relationship-stage generation"
+            )
+        return self
+
+
 class RelationshipPolicyReferenceV03(V03BaseModel):
     reference_id: str
     source_layer_id: Literal["layer_3", "layer_5", "layer_12"]
@@ -876,6 +1112,9 @@ class DRPayloadV03(V03BaseModel):
     runtime_dialogue_projection: Optional[RuntimeDialogueProjectionV03] = None
     relationship_progression_projection: Optional[
         RelationshipProgressionProjectionV03
+    ] = None
+    narrative_memory_projection: Optional[
+        NarrativeMemoryProjectionV03
     ] = None
 
 

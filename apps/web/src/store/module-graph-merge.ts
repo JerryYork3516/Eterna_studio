@@ -44,6 +44,10 @@ export const RELATIONSHIP_FORMATION_RULES_CONTENT_REVISION =
   "stage7_4_13_relationship_formation_rules_v0_1";
 export const RELATIONSHIP_SINGLE_SOURCE_RUNTIME_STATE_FIX_REVISION =
   "stage7_4_13_relationship_single_source_runtime_state_fix_v1";
+export const NARRATIVE_MEMORY_RULES_CONTENT_REVISION =
+  "stage7_4_14_narrative_memory_rules_v0_1";
+export const NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION =
+  "stage7_4_14_narrative_memory_extension_compatibility_fix_v1";
 
 export type Layer8BehaviorTextConfig = {
   nodeId: string;
@@ -1490,6 +1494,115 @@ export function migrateRelationshipFormationRulesGraph(
   };
 }
 
+export type NarrativeMemoryRulesGraph = {
+  nodes: unknown[];
+  edges: unknown[];
+};
+
+const NARRATIVE_MEMORY_INPUT_NODE_IDS = new Set([
+  "narrative_event_input",
+  "memory_update_request_input",
+  "memory_access_request_input",
+  // A1 stored instances are recognized and rebuilt to the frozen generic
+  // access/update chains from the current catalog seed.
+  "narrative_memory_change_input",
+  "narrative_memory_request_input",
+]);
+
+/**
+ * Rebuild the three catalog-owned Layer 5 narrative-memory rule chains once.
+ * Any resident-authored field values are retained, while rules and topology
+ * come from the current catalog seed. The graph contains policy only.
+ */
+export function migrateNarrativeMemoryRulesGraph(
+  stored: NarrativeMemoryRulesGraph,
+  seed: NarrativeMemoryRulesGraph
+): { value: NarrativeMemoryRulesGraph; migrated: boolean } {
+  const seedInput = seed.nodes.find((node) =>
+    NARRATIVE_MEMORY_INPUT_NODE_IDS.has(
+      expressionGraphCatalogNodeId(node)
+    )
+  );
+  if (
+    expressionGraphNodeParams(seedInput).content_revision !==
+    NARRATIVE_MEMORY_EXTENSION_COMPATIBILITY_FIX_REVISION
+  ) {
+    return { value: stored, migrated: false };
+  }
+
+  const allStoredFields = stored.nodes.flatMap(expressionGraphNodeFields);
+  const storedFieldByKey = new Map(
+    allStoredFields
+      .map((field) => [expressionFieldKey(field), field] as const)
+      .filter(([fieldKey]) => Boolean(fieldKey))
+  );
+  const storedByCatalogId = new Map(
+    stored.nodes
+      .map((node) => [expressionGraphCatalogNodeId(node), node] as const)
+      .filter(([nodeId]) => Boolean(nodeId))
+  );
+  const seedFieldKeys = new Set(
+    seed.nodes
+      .flatMap(expressionGraphNodeFields)
+      .map(expressionFieldKey)
+      .filter(Boolean)
+  );
+  const customFields = allStoredFields.filter((field, index) => {
+    const fieldKey = expressionFieldKey(field);
+    return (
+      Boolean(fieldKey) &&
+      !seedFieldKeys.has(fieldKey) &&
+      allStoredFields.findIndex(
+        (candidate) => expressionFieldKey(candidate) === fieldKey
+      ) === index
+    );
+  });
+
+  const nodes = seed.nodes.map((seedNode) => {
+    const nextNode = cloneJsonValue(seedNode) as Record<string, unknown>;
+    const catalogNodeId = expressionGraphCatalogNodeId(seedNode);
+    const currentNode = storedByCatalogId.get(catalogNodeId);
+    const currentPosition = expressionGraphNodePosition(currentNode);
+    if (currentPosition) {
+      setExpressionGraphNodePosition(nextNode, currentPosition);
+    }
+    const uiName = expressionGraphNodeUiName(currentNode);
+    if (uiName) {
+      setExpressionGraphNodeUiName(nextNode, uiName);
+    }
+    const seedFields = expressionGraphNodeFields(seedNode);
+    if (seedFields.length) {
+      const currentFields = seedFields
+        .map((field) => storedFieldByKey.get(expressionFieldKey(field)))
+        .filter((field): field is Record<string, unknown> => Boolean(field));
+      setExpressionGraphNodeFields(
+        nextNode,
+        mergeCatalogFieldsPreservingValues(seedFields, currentFields)
+      );
+    } else if (
+      NARRATIVE_MEMORY_INPUT_NODE_IDS.has(catalogNodeId) &&
+      customFields.length
+    ) {
+      setExpressionGraphNodeFields(
+        nextNode,
+        customFields.map((field) => cloneJsonValue(field))
+      );
+    }
+    return nextNode;
+  });
+  const rebuilt = {
+    nodes,
+    edges: cloneJsonValue(seed.edges),
+  };
+  const synchronized = migrateAuthoritativeFieldCompatibilityMirrors(rebuilt);
+  return {
+    value: synchronized.value,
+    migrated:
+      stableComparableValue(synchronized.value) !==
+      stableComparableValue(stored),
+  };
+}
+
 const RELATIONSHIP_SINGLE_SOURCE_INPUT_NODE_IDS = new Set([
   "relationship_stage_config_input",
   "self_state_input",
@@ -2211,6 +2324,15 @@ const LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS = new Set([
   "emotion_mapper",
   "user_relationship",
   "intimacy_level",
+  "event_memory",
+  "memory_update",
+  "memory_access_control",
+]);
+const LEGACY_LOCAL_REFERENCE_OUTPUT_ALIASES = new Map([
+  [
+    "memory_update::narrative_memory_update_reference_output",
+    "memory_update_output",
+  ],
 ]);
 
 function compiledModuleGraphNodes(
@@ -2257,6 +2379,21 @@ export function canonicalizeLegacyMaterializedReferencePointers(
     const sourceLayerId = String(reference.source_layer_id || "");
     const sourceNodeId = String(reference.source_node_id || "");
     const sourceModule = modulesById.get(sourceModuleId);
+    const localPrefix =
+      `${sourceLayerId}::${sourceModuleId}::`;
+    const localSourceNodeId = sourceNodeId.startsWith(localPrefix)
+      ? sourceNodeId.slice(localPrefix.length)
+      : sourceNodeId;
+    const legacyAliasTarget =
+      LEGACY_LOCAL_REFERENCE_OUTPUT_ALIASES.get(
+        `${sourceModuleId}::${localSourceNodeId}`
+      );
+    const isLegacyOutputPointer =
+      isLegacyMaterializedReferenceOutputId(
+        sourceNodeId,
+        sourceLayerId,
+        sourceModuleId
+      ) || Boolean(legacyAliasTarget);
     if (
       !sourceModule ||
       !LEGACY_MATERIALIZED_REFERENCE_OUTPUT_MODULE_IDS.has(
@@ -2266,11 +2403,7 @@ export function canonicalizeLegacyMaterializedReferencePointers(
       String(reference.source_scope || "module") !== "module" ||
       (Array.isArray(reference.source_field_paths) &&
         reference.source_field_paths.length > 0) ||
-      !isLegacyMaterializedReferenceOutputId(
-        sourceNodeId,
-        sourceLayerId,
-        sourceModuleId
-      )
+      !isLegacyOutputPointer
     ) {
       return cloneJsonValue(reference);
     }
@@ -2288,6 +2421,16 @@ export function canonicalizeLegacyMaterializedReferencePointers(
     });
     if (nodeIds.has(sourceNodeId)) {
       return cloneJsonValue(reference);
+    }
+    if (
+      legacyAliasTarget &&
+      nodeIds.has(legacyAliasTarget)
+    ) {
+      repairedCount += 1;
+      return {
+        ...cloneJsonValue(reference),
+        source_node_id: legacyAliasTarget,
+      };
     }
     const referenceOutputIds = [
       ...new Set(

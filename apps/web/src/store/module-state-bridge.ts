@@ -21,6 +21,7 @@ import {
   filterDanglingModuleGraphEdges,
   migrateExpressionStateSemanticsGraph,
   migrateParticleExpressionRelativeMappingGraph,
+  migrateNarrativeMemoryRulesGraph,
   migrateRelationshipFormationRulesGraph,
   migrateRelationshipSingleSourceRuntimeStateGraph,
   mergeCatalogReferenceDeclarations,
@@ -66,6 +67,11 @@ const RELATIONSHIP_FORMATION_GRAPH_IDS = new Set([
 const RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS = new Set([
   "layer_11::intimacy_level",
   "layer_12::goal_setting",
+]);
+const NARRATIVE_MEMORY_RULES_GRAPH_IDS = new Set([
+  "layer_5::event_memory",
+  "layer_5::memory_update",
+  "layer_5::memory_access_control",
 ]);
 const LAYER8_MATERIALIZED_OUTPUT_MODULE_IDS = new Set([
   "language_habit",
@@ -2280,6 +2286,29 @@ function migrateRelationshipFormationRulesSeed(
   };
 }
 
+function migrateNarrativeMemoryRulesSeed(
+  graph: ModuleGraph,
+  initialNodes?: WorkflowNode[],
+  initialEdges?: WorkflowEdge[]
+): ModuleGraph | null {
+  if (
+    !NARRATIVE_MEMORY_RULES_GRAPH_IDS.has(graph.moduleNodeId) ||
+    !initialNodes?.length
+  ) {
+    return null;
+  }
+  const migration = migrateNarrativeMemoryRulesGraph(
+    { nodes: graph.nodes, edges: graph.edges },
+    { nodes: initialNodes, edges: initialEdges ?? [] }
+  );
+  if (!migration.migrated) return null;
+  return {
+    ...graph,
+    nodes: migration.value.nodes as WorkflowNode[],
+    edges: migration.value.edges as WorkflowEdge[],
+  };
+}
+
 function migrateRelationshipSingleSourceRuntimeStateSeed(
   graph: ModuleGraph,
   initialNodes?: WorkflowNode[],
@@ -2646,13 +2675,20 @@ function mergeCatalogSeed(
     initialEdges
   );
   const graphAfterParticleMigration = particleMigrated ?? graphAfterExpressionMigration;
-  const layer8OutputMerged = mergeLayer8MaterializedOutputSeed(
+  const narrativeMemoryMigrated = migrateNarrativeMemoryRulesSeed(
     graphAfterParticleMigration,
     initialNodes,
     initialEdges
   );
+  const graphAfterNarrativeMemoryMigration =
+    narrativeMemoryMigrated ?? graphAfterParticleMigration;
+  const layer8OutputMerged = mergeLayer8MaterializedOutputSeed(
+    graphAfterNarrativeMemoryMigration,
+    initialNodes,
+    initialEdges
+  );
   const graphAfterLayer8OutputMerge =
-    layer8OutputMerged ?? graphAfterParticleMigration;
+    layer8OutputMerged ?? graphAfterNarrativeMemoryMigration;
   const relationshipMigrated = migrateRelationshipFormationRulesSeed(
     graphAfterLayer8OutputMerge,
     initialNodes,
@@ -2695,6 +2731,7 @@ function mergeCatalogSeed(
     relationshipSingleSourceMigrated ??
     relationshipMigrated ??
     layer8OutputMerged ??
+    narrativeMemoryMigrated ??
     particleMigrated ??
     expressionMigrated
   );
@@ -3890,7 +3927,8 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
         moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
         moduleNodeId === PARTICLE_AVATAR_GRAPH_ID ||
         RELATIONSHIP_FORMATION_GRAPH_IDS.has(moduleNodeId) ||
-        RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId)
+        RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId) ||
+        NARRATIVE_MEMORY_RULES_GRAPH_IDS.has(moduleNodeId)
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }
@@ -3930,7 +3968,8 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
           moduleNodeId === EXPRESSION_STATE_GRAPH_ID ||
           moduleNodeId === PARTICLE_AVATAR_GRAPH_ID ||
           RELATIONSHIP_FORMATION_GRAPH_IDS.has(moduleNodeId) ||
-          RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId)
+          RELATIONSHIP_SINGLE_SOURCE_GRAPH_IDS.has(moduleNodeId) ||
+          NARRATIVE_MEMORY_RULES_GRAPH_IDS.has(moduleNodeId)
       ) {
         saveModuleGraphState(moduleNodeId, mergedGraph.nodes, mergedGraph.edges);
       }

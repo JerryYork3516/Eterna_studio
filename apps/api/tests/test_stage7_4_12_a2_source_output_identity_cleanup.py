@@ -396,14 +396,12 @@ def test_old_layer8_graphs_gain_one_output_chain_and_migration_is_idempotent():
         ]
 
 
-def test_twenty_nine_required_references_resolve_to_nonempty_reference_outputs():
+def test_twenty_nine_legacy_references_resolve_and_stable_explicit_pointers_are_preserved():
     modules = _modules()
     targets = [
         (
             module_id,
-            _module(modules, module_id)["module_graph"]["nodes"][1][
-                "node_id"
-            ],
+            f"layer_8::{module_id}_reference_output_1783861767696_2",
         )
         for module_id in LAYER8_OUTPUT_SPECS
     ]
@@ -483,8 +481,8 @@ def test_twenty_nine_required_references_resolve_to_nonempty_reference_outputs()
     interaction_output = _node(
         interaction_module, interaction_reference["source_node_id"]
     )
-    assert interaction_output["node_type"] == "reference_output"
-    assert interaction_output["outputs"]["interaction_behavior_config"]
+    assert interaction_reference["source_node_id"] == "interaction_behavior_core_rules"
+    assert interaction_output["node_type"] == "text_config"
 
 
 def test_emotion_reaction_schema_migrates_to_the_real_wrapped_output():
