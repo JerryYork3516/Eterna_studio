@@ -9,6 +9,7 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test:abstract-bust": "node --experimental-strip-types --test tests/abstract-bust-blueprint.test.mjs",
+    "test:visual-builder": "node --experimental-strip-types --test tests/visual-builder-foundation.test.mjs",
     "test:module-graph": "node --experimental-strip-types --test tests/module-graph-persistence.test.mjs"
   },
   "dependencies": {

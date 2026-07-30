@@ -1,7 +1,5 @@
-"use client";
-
-import { CanvasShell } from "@/components/CanvasShell";
+import { StudioWorkspaceShell } from "@/components/StudioWorkspaceShell";
 
 export default function Home() {
-  return <CanvasShell />;
+  return <StudioWorkspaceShell />;
 }
