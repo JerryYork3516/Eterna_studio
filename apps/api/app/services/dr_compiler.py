@@ -34,6 +34,10 @@ from .daily_companion_runtime import (
     extract_dialogue_runtime_profile,
     validate_dialogue_runtime_profile,
 )
+from .abstract_bust_blueprint import (
+    AbstractBustBlueprintValidationError,
+    normalize_abstract_bust_blueprint,
+)
 from .projection_traceability import (
     STAGE7_4_12_FINAL_SCHEMA_TRACEABILITY_GATE_FIX_REVISION,
     build_projection_traceability,
@@ -3865,6 +3869,163 @@ def _set_visual_field_copies(
                 ) or _nonempty_str(field.get("field_id"))
                 if candidate_key == field_key:
                     _set_visual_field_value(field, value)
+
+
+_ABSTRACT_BUST_BLUEPRINT_FIELD_KEY = "abstract_bust_blueprint"
+_ABSTRACT_BUST_ERROR_CODES = {
+    "unknown_generator_version": (
+        "DR_ABSTRACT_BUST_GENERATOR_VERSION_UNKNOWN"
+    ),
+    "invalid_root_type": "DR_ABSTRACT_BUST_BLUEPRINT_TYPE_INVALID",
+    "invalid_type": "DR_ABSTRACT_BUST_BLUEPRINT_TYPE_INVALID",
+    "invalid_json": "DR_ABSTRACT_BUST_BLUEPRINT_TYPE_INVALID",
+    "non_finite_number": "DR_ABSTRACT_BUST_BLUEPRINT_NON_FINITE",
+    "unknown_field": "DR_ABSTRACT_BUST_BLUEPRINT_UNKNOWN_FIELD",
+}
+
+
+def _abstract_bust_finding_path(
+    error: AbstractBustBlueprintValidationError,
+) -> str:
+    root = (
+        "payload.modules.particle_avatar.config."
+        "abstract_bust_blueprint"
+    )
+    if error.path == "$":
+        return root
+    if error.path.startswith("$."):
+        return f"{root}{error.path[1:]}"
+    return root
+
+
+def _project_abstract_bust_blueprint(
+    collection: Dict[str, Any],
+    findings: List[Dict[str, str]],
+) -> Optional[Dict[str, Any]]:
+    """Normalize the saved Layer 10 Blueprint and prepare its DR projection."""
+
+    modules = [
+        candidate
+        for candidate in collection.get("modules", [])
+        if isinstance(candidate, dict)
+        and candidate.get("module_id") == PARTICLE_AVATAR_MODULE_ID
+    ]
+    if not modules:
+        return None
+    if len(modules) != 1:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_ABSTRACT_BUST_MODULE_DUPLICATE",
+                (
+                    "AbstractBustBlueprint source is ambiguous because "
+                    "particle_avatar is not unique."
+                ),
+                "payload.modules",
+            )
+        )
+        return None
+
+    module = modules[0]
+    config_nodes = [
+        node
+        for node in _module_graph_nodes(module)
+        if _module_graph_node_id(node)
+        == PARTICLE_AVATAR_NODE_IDS["config_input"]
+    ]
+    if not config_nodes:
+        return None
+    if len(config_nodes) != 1:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_ABSTRACT_BUST_BLUEPRINT_INVALID",
+                (
+                    "AbstractBustBlueprint source is ambiguous because "
+                    "particle_visual_config_input is not unique."
+                ),
+                (
+                    "payload.modules.particle_avatar.module_graph."
+                    "nodes.particle_visual_config_input"
+                ),
+            )
+        )
+        return None
+
+    params = (
+        config_nodes[0].get("params")
+        if isinstance(config_nodes[0].get("params"), dict)
+        else {}
+    )
+    fields = (
+        params.get("fields")
+        if isinstance(params.get("fields"), list)
+        else []
+    )
+    blueprint_fields = [
+        field
+        for field in fields
+        if isinstance(field, dict)
+        and field.get("field_key") == _ABSTRACT_BUST_BLUEPRINT_FIELD_KEY
+    ]
+    if not blueprint_fields:
+        return None
+    if len(blueprint_fields) != 1:
+        findings.append(
+            _finding(
+                "FAIL",
+                "DR_ABSTRACT_BUST_BLUEPRINT_INVALID",
+                (
+                    "AbstractBustBlueprint source is ambiguous because "
+                    "the configured field is not unique."
+                ),
+                (
+                    "payload.modules.particle_avatar.module_graph.nodes."
+                    "particle_visual_config_input.params.fields."
+                    "abstract_bust_blueprint"
+                ),
+            )
+        )
+        return None
+
+    field = blueprint_fields[0]
+    raw_value = (
+        field.get("value")
+        if "value" in field
+        else field.get("field_value")
+    )
+    try:
+        normalized = normalize_abstract_bust_blueprint(raw_value)
+    except AbstractBustBlueprintValidationError as error:
+        findings.append(
+            _finding(
+                "FAIL",
+                _ABSTRACT_BUST_ERROR_CODES.get(
+                    error.code,
+                    "DR_ABSTRACT_BUST_BLUEPRINT_INVALID",
+                ),
+                (
+                    "AbstractBustBlueprint validation failed "
+                    f"({error.code})."
+                ),
+                _abstract_bust_finding_path(error),
+            )
+        )
+        return None
+
+    _set_visual_field_copies(
+        module,
+        _ABSTRACT_BUST_BLUEPRINT_FIELD_KEY,
+        normalized,
+    )
+    config = (
+        module.get("config")
+        if isinstance(module.get("config"), dict)
+        else {}
+    )
+    config[_ABSTRACT_BUST_BLUEPRINT_FIELD_KEY] = deepcopy(normalized)
+    module["config"] = config
+    return deepcopy(normalized)
 
 
 def _synchronize_expression_state_module_output(
@@ -8183,6 +8344,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     _synchronize_a4_module_status_classifications(collection)
     _synchronize_expression_state_module_output(collection, findings)
     _synchronize_particle_avatar_module_output(collection, findings)
+    abstract_bust_blueprint = _project_abstract_bust_blueprint(
+        collection,
+        findings,
+    )
     visual_expression_mapping_raw, visual_expression_diagnostics = (
         build_visual_expression_mapping(collection.get("modules", []))
     )
@@ -8314,6 +8479,10 @@ def _v3_compile_dr(canvas: Dict[str, Any], resident_name: Optional[str] = None) 
     required_capabilities = list(STAGE_7_4_REQUIRED_SLOT_TYPES)
     runtime_requirements, provider_requirements = build_v03_runtime_contract(collection["slots"])
     payload = {"resident_identity": {"resident_id": resident_id, "name": resident_name_final, "resident_type": "digital_resident", "primary_language": "zh", "symbolic_origin": "Eterna Studio", "city_symbol": "Aftelle", "personality_summary": blueprint.get("disclosure") or "AI-generated digital resident; synthetic persona.", "domain_focus": ["memory", "lattice", "voice", "screen_guidance"]}, "resident_blueprint": {"resident_id": resident_id, "resident_name": resident_name_final, "description": resident.get("description"), "source_workflow_name": collection["workflow"].get("name"), "ui_language": _normalize_ui_language(collection["workflow"].get("metadata", {}).get("ui_language")) if isinstance(collection["workflow"].get("metadata"), dict) else None, "tags": collection["workflow"].get("metadata", {}).get("tags", []) if isinstance(collection["workflow"].get("metadata"), dict) else []}, "13_layers_snapshot": collection["layers"], "modules": collection["modules"], "nodes": collection["nodes"], "node_snapshot": collection["nodes"], "slots": collection["slots"], "edges": collection["edges"], "graph_snapshot": _build_lightweight_graph_snapshot(collection), "runtime_requirements": runtime_requirements, "provider_requirements": provider_requirements, "memory_policy": {}, "memory_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "namespace": "default", "storage_backend": "sqlite", "memory_types": ["short_term_memory", "preference_memory", "event_memory", "relationship_memory", "interaction_log"], "interaction_log": {"enabled": True, "append_only": True}, "preference_memory": {"enabled": True, "mode": "kv"}, "mock_only": True}, "lattice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "resident_id": resident_id, "emotion": "neutral", "energy": 0.5, "attention": "self", "motion": "idle_breathing", "voice_state": "idle", "particle_density": 0.5, "color_palette": ["#7aa2f7", "#5dd39e", "#f2a65a"], "focus_target": "none", "state_transition_policy": "mock_transition"}, "voice_config": {"schema_version": DR_SCHEMA_VERSION_V0_3, "tts_profile": {"provider": "mock", "voice_id": "mock_voice"}, "voice_profile": {"voice_id": "mock_voice", "speed": 1.0, "timbre": "neutral"}, "voice_state_schema": {"voice_state": ["idle", "speaking", "listening", "muted"]}, "voice_lattice_sync_policy": {"sync_policy": "mirror", "trace_keys": ["voice_state", "lattice_state.voice_state"]}, "speech_event_schema": {"placeholder": True, "event_type": "speech.input_event", "fields": ["text", "locale", "source", "timestamp"]}, "subtitle_policy": {"enabled": True, "mode": "mock"}}, "screen_capability_declaration": _v3_screen_capability(), "safety_policy": {"no_secret_in_dr": True, "no_direct_provider_binding": True, "mock_screen_only": True, "user_data_not_embedded": True, "not_executable": True, "notes": ["mock-only screen guidance", "no real screen read", "no auto click"]}, "audit_policy": {"mode": "declarative", "source": "compile_audit", "requires_review": False}, "runtime_plan": _v3_runtime_plan(), "fallback_routes": [{"capability": "llm", "route": "llm_mock", "mode": "mock", "notes": "fallback reasoning"}, {"capability": "memory", "route": "memory_mock", "mode": "mock", "notes": "fallback memory"}, {"capability": "tts", "route": "tts_mock", "mode": "mock", "notes": "fallback TTS"}, {"capability": "lattice", "route": "lattice_mock", "mode": "mock", "notes": "fallback lattice"}, {"capability": "screen_mock", "route": "screen_mock", "mode": "mock", "notes": "fallback screen guidance"}]}
+    if abstract_bust_blueprint is not None:
+        payload[_ABSTRACT_BUST_BLUEPRINT_FIELD_KEY] = deepcopy(
+            abstract_bust_blueprint
+        )
     payload["voice_config"] = derive_voice_config_status(
         payload["voice_config"]
     )

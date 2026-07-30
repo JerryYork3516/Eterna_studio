@@ -387,7 +387,7 @@ def test_frontend_and_backend_share_optional_clamp_and_rejection_rules():
     assert frontend == backend
 
 
-def test_layer10_blueprint_stays_in_authoritative_payload_modules_only():
+def test_layer10_blueprint_is_module_authority_with_read_only_root_projection():
     modules = [module.model_dump(mode="json") for module in get_module_catalog()]
     dr = compile_dr_v0_3(
         {
@@ -417,7 +417,14 @@ def test_layer10_blueprint_stays_in_authoritative_payload_modules_only():
         fields["abstract_bust_blueprint"]["field_value"]
         == default_abstract_bust_blueprint_dict()
     )
-    assert "abstract_bust_blueprint" not in dr["payload"]
+    assert (
+        particle["config"]["abstract_bust_blueprint"]
+        == fields["abstract_bust_blueprint"]["field_value"]
+    )
+    assert (
+        dr["payload"]["abstract_bust_blueprint"]
+        == particle["config"]["abstract_bust_blueprint"]
+    )
     assert "abstract_bust_blueprint" not in particle["outputs"]["particle_mapping_config"]
     serialized_dr = json.dumps(dr, ensure_ascii=False)
     assert "visualAssetBinding" not in serialized_dr

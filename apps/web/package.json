@@ -11,6 +11,7 @@
     "test:abstract-bust": "node --experimental-strip-types --test tests/abstract-bust-blueprint.test.mjs",
     "test:abstract-bust-generator": "node --experimental-strip-types --test tests/abstract-bust-generator.test.mjs",
     "test:abstract-bust-editor": "node --experimental-strip-types --test tests/abstract-bust-editor.test.mjs",
+    "test:abstract-bust-dr-projection": "node --experimental-strip-types --test tests/abstract-bust-dr-projection.test.mjs",
     "test:visual-asset-binding": "node --experimental-strip-types --test tests/visual-asset-binding.test.mjs tests/canvas-graph-persistence-b5.test.mjs",
     "test:visual-builder": "node --experimental-strip-types --test tests/visual-builder-foundation.test.mjs",
     "test:module-graph": "node --experimental-strip-types --test tests/module-graph-persistence.test.mjs"

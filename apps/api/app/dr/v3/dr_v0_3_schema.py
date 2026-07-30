@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ...models.v0_4 import SCHEMA_VERSION_V0_4, PROTOCOL_VERSION_V0_4
+from ...services.abstract_bust_blueprint import AbstractBustBlueprint
 
 DR_FILE_TYPE = "digital_resident"
 DR_VERSION_V0_3 = "0.3"
@@ -1116,6 +1117,35 @@ class DRPayloadV03(V03BaseModel):
     narrative_memory_projection: Optional[
         NarrativeMemoryProjectionV03
     ] = None
+    abstract_bust_blueprint: Optional[AbstractBustBlueprint] = None
+
+    @model_validator(mode="after")
+    def _abstract_bust_projection_is_read_only(self) -> "DRPayloadV03":
+        if self.abstract_bust_blueprint is None:
+            return self
+
+        particle_modules = [
+            module
+            for module in self.modules
+            if module.module_id == "particle_avatar"
+        ]
+        if len(particle_modules) != 1:
+            raise ValueError(
+                "abstract_bust_blueprint requires exactly one "
+                "payload.modules particle_avatar authority"
+            )
+        module_blueprint = particle_modules[0].config.get(
+            "abstract_bust_blueprint"
+        )
+        if (
+            module_blueprint
+            != self.abstract_bust_blueprint.model_dump(mode="json")
+        ):
+            raise ValueError(
+                "abstract_bust_blueprint is a read-only projection and must "
+                "equal payload.modules particle_avatar config"
+            )
+        return self
 
 
 class DRDocumentV03(V03BaseModel):
