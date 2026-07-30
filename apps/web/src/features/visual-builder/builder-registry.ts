@@ -1,4 +1,8 @@
 import { ABSTRACT_BUST_GENERATOR_VERSION } from "@eterna/shared-schema/abstract-bust-blueprint";
+import {
+  generateAbstractBust,
+  type AbstractBustGenerator,
+} from "./builders/abstract-particle-bust/index.ts";
 
 export type VisualBuilderStatus = "available" | "unavailable";
 
@@ -23,6 +27,12 @@ const ABSTRACT_PARTICLE_BUST_BUILDER = Object.freeze({
 export const VISUAL_BUILDER_DEFINITIONS: readonly VisualBuilderDefinition[] =
   Object.freeze([ABSTRACT_PARTICLE_BUST_BUILDER]);
 
+const VISUAL_BUILDER_GENERATORS: Readonly<
+  Record<typeof ABSTRACT_PARTICLE_BUST_BUILDER_ID, AbstractBustGenerator>
+> = Object.freeze({
+  [ABSTRACT_PARTICLE_BUST_BUILDER_ID]: generateAbstractBust,
+});
+
 export function getVisualBuilderDefinition(
   builderId: string
 ): VisualBuilderDefinition | null {
@@ -41,4 +51,22 @@ export function requireVisualBuilderDefinition(
     throw new Error(`Unknown or unavailable visual builder: ${builderId}`);
   }
   return definition;
+}
+
+export function getVisualBuilderGenerator(
+  builderId: string
+): AbstractBustGenerator | null {
+  return builderId === ABSTRACT_PARTICLE_BUST_BUILDER_ID
+    ? VISUAL_BUILDER_GENERATORS[ABSTRACT_PARTICLE_BUST_BUILDER_ID]
+    : null;
+}
+
+export function requireVisualBuilderGenerator(
+  builderId: string
+): AbstractBustGenerator {
+  const generator = getVisualBuilderGenerator(builderId);
+  if (!generator) {
+    throw new Error(`Unknown visual builder generator: ${builderId}`);
+  }
+  return generator;
 }
