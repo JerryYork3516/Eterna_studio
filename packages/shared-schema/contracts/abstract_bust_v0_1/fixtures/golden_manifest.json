@@ -1,0 +1,16 @@
+{
+  "algorithm": "fnv1a64_float32_le_xyz_index_order",
+  "particle_count": 12000,
+  "generator_version": "abstract_bust_v0_1",
+  "fixtures": {
+    "default.json": "a8d8df344c507342",
+    "neutral.json": "a8d8df344c507342",
+    "feminine.json": "82687870d3f143d6",
+    "masculine.json": "a36d71fbe04c1bfb",
+    "hair_none.json": "a8d8df344c507342",
+    "hair_short.json": "131f78a9633ad3a5",
+    "hair_medium.json": "7cb039bd9d9f4164",
+    "hair_long.json": "fb7360f1490bb06c",
+    "hair_tied.json": "3ee009cdb1e91a21"
+  }
+}

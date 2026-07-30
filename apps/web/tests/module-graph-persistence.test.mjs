@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION,
   canonicalizeLegacyMaterializedReferencePointers,
   firstInteractionEnabledValue,
   DIALOGUE_RUNTIME_PROFILE_ID,
@@ -49,7 +50,11 @@ import {
   updateFirstInteractionEnabled,
 } from "../src/store/module-graph-merge.ts";
 import {
+  getDefaultAbstractBustBlueprint,
+} from "../../../packages/shared-schema/src/abstract-bust-blueprint.ts";
+import {
   attachedModuleIdsFromLayerModules,
+  deserializeCanvasState,
   hasEditorMigrationMarker,
   importCanvasState,
   recoverCanvasStateFromDigitalResident,
@@ -3242,16 +3247,23 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   };
   const parameterNames = Object.keys(relativeLimits);
   const seedFields = [
-    ["user_current_base_color", ""],
-    ["resident_default_base_color", "#7aa2f7"],
-    ["primary_color", ""],
-    ["secondary_color", ""],
-    ["highlight_color", ""],
-  ].map(([field_key, field_value]) => ({
-    field_key,
-    field_value,
-    field_type: "text",
-  }));
+    {
+      field_key: "abstract_bust_blueprint",
+      field_value: getDefaultAbstractBustBlueprint(),
+      field_type: "object",
+    },
+    ...[
+      ["user_current_base_color", ""],
+      ["resident_default_base_color", "#7aa2f7"],
+      ["primary_color", ""],
+      ["secondary_color", ""],
+      ["highlight_color", ""],
+    ].map(([field_key, field_value]) => ({
+      field_key,
+      field_value,
+      field_type: "text",
+    })),
+  ];
   for (const [state, defaults] of Object.entries(relativeDefaults)) {
     parameterNames.forEach((parameter, index) => {
       const [minimum, maximum] = relativeLimits[parameter];
@@ -3313,6 +3325,8 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
             ? {
                 mode: "generic_fields",
                 content_revision: PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                abstract_bust_blueprint_content_revision:
+                  ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION,
                 source_priority_revision:
                   PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION,
                 validation_compatibility_revision:
@@ -3425,6 +3439,10 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
     PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
   );
   assert.equal(
+    input.data.params.abstract_bust_blueprint_content_revision,
+    ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+  );
+  assert.equal(
     input.data.params.validation_compatibility_revision,
     EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION
   );
@@ -3443,6 +3461,10 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   );
   const valueOf = (fieldKey) =>
     fields.find((field) => field.field_key === fieldKey)?.field_value;
+  assert.deepEqual(
+    valueOf("abstract_bust_blueprint"),
+    getDefaultAbstractBustBlueprint()
+  );
   assert.equal(valueOf("resident_default_base_color"), "#2468ac");
   assert.equal(valueOf("user_current_base_color"), "#010203");
   assert.equal(valueOf("primary_color"), "#112233");
@@ -3465,7 +3487,12 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   assert.equal(valueOf("legacy_custom_text"), "保留旧参数中的用户视觉备注。");
   assert.deepEqual(valueOf("resident_visual_note"), { keep: true });
   assert.equal(valueOf("color"), undefined);
-  assert.equal(seedNodes[0].data.params.fields[1].field_value, "#7aa2f7");
+  assert.equal(
+    seedNodes[0].data.params.fields.find(
+      (field) => field.field_key === "resident_default_base_color"
+    ).field_value,
+    "#7aa2f7"
+  );
   for (const [parameter, [minimum, maximum]] of Object.entries(relativeLimits)) {
     const field = fields.find((candidate) =>
       candidate.field_key.endsWith(`_${parameter}`)
@@ -3521,6 +3548,57 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
     "#97531f"
   );
 
+  const authoredBlueprint = JSON.parse(JSON.stringify(stored));
+  const authoredBlueprintValue = getDefaultAbstractBustBlueprint();
+  authoredBlueprintValue.presentation = "feminine";
+  authoredBlueprintValue.head.width = 0.3;
+  authoredBlueprintValue.shoulders.width = 0.64;
+  authoredBlueprint.nodes[0].data.schemaNode.data.params.fields.push({
+    field_key: "abstract_bust_blueprint",
+    field_value: authoredBlueprintValue,
+    field_type: "object",
+  });
+  const authoredBlueprintMigration =
+    migrateParticleExpressionRelativeMappingGraph(authoredBlueprint, seed);
+  const migratedBlueprint =
+    authoredBlueprintMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "abstract_bust_blueprint"
+    ).field_value;
+  assert.equal(migratedBlueprint.presentation, "feminine");
+  assert.equal(migratedBlueprint.head.width, 0.3);
+  assert.equal(migratedBlueprint.shoulders.width, 0.64);
+  assert.equal("head_width" in migratedBlueprint, false);
+  assert.equal("shoulders_width" in migratedBlueprint, false);
+
+  const clampedBlueprint = JSON.parse(JSON.stringify(authoredBlueprint));
+  const clampedBlueprintField =
+    clampedBlueprint.nodes[0].data.schemaNode.data.params.fields.find(
+      (field) => field.field_key === "abstract_bust_blueprint"
+    );
+  clampedBlueprintField.field_value.head.width = 9;
+  clampedBlueprintField.field_value.shoulders.width = -9;
+  const clampedBlueprintMigration =
+    migrateParticleExpressionRelativeMappingGraph(clampedBlueprint, seed);
+  const clampedBlueprintValue =
+    clampedBlueprintMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "abstract_bust_blueprint"
+    ).field_value;
+  assert.equal(clampedBlueprintValue.head.width, 0.32);
+  assert.equal(clampedBlueprintValue.shoulders.width, 0.52);
+
+  const invalidBlueprint = JSON.parse(JSON.stringify(authoredBlueprint));
+  invalidBlueprint.nodes[0].data.schemaNode.data.params.fields.find(
+    (field) => field.field_key === "abstract_bust_blueprint"
+  ).field_value.private_shape = true;
+  const invalidBlueprintMigration =
+    migrateParticleExpressionRelativeMappingGraph(invalidBlueprint, seed);
+  assert.deepEqual(
+    invalidBlueprintMigration.value.nodes[0].data.params.fields.find(
+      (field) => field.field_key === "abstract_bust_blueprint"
+    ).field_value,
+    getDefaultAbstractBustBlueprint()
+  );
+
   const reopened = migrateParticleExpressionRelativeMappingGraph(migrated.value, seed);
   assert.equal(reopened.migrated, false);
   assert.equal(reopened.value, migrated.value);
@@ -3565,6 +3643,27 @@ test("Stage 7.4.11 rebuilds legacy particle configuration once and preserves res
   );
   assert.equal(priorityReopened.migrated, false);
   assert.equal(priorityReopened.value, priorityMigrated.value);
+
+  const persisted = serializeCanvasState({
+    moduleGraphs: {
+      [instanceId]: {
+        moduleId: instanceId,
+        nodes: migrated.value.nodes,
+        edges: migrated.value.edges,
+      },
+    },
+  });
+  const restored = deserializeCanvasState(
+    JSON.parse(JSON.stringify(persisted))
+  );
+  const restoredFields =
+    restored.moduleGraphs[instanceId].nodes[0].data.params.fields;
+  assert.deepEqual(
+    restoredFields.find(
+      (field) => field.field_key === "abstract_bust_blueprint"
+    ).field_value,
+    getDefaultAbstractBustBlueprint()
+  );
 
   const bridgeSource = readFileSync(
     new URL("../src/store/module-state-bridge.ts", import.meta.url),

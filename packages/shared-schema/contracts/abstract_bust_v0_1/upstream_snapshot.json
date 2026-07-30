@@ -1,0 +1,55 @@
+{
+  "upstream_project": "Eterna_aftelle",
+  "upstream_commit": "c81b801b5ab3b53ed4733ac92add5ffaffd11395",
+  "generator_version": "abstract_bust_v0_1",
+  "files": {
+    "abstract_bust_blueprint_v0_1.md": {
+      "upstream_path": "docs/abstract_bust_blueprint_v0_1.md",
+      "sha256": "48ab94a4c02a843b004c9b2259c4a6e3dd5eb29c7557e15f7145411c23aa2600"
+    },
+    "abstract_bust_blueprint_v0_1.schema.json": {
+      "upstream_path": "docs/schemas/abstract_bust_blueprint_v0_1.schema.json",
+      "sha256": "900c85e7b2e67bf0ec086a0fdcf3072a4a2e826a483f1c8b7aaa70370e131f0e"
+    },
+    "fixtures/default.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/default.json",
+      "sha256": "bb654cb2b0517a1c0f681b06e740c2bc2214beb1aedc60f49104794dcfeeb221"
+    },
+    "fixtures/feminine.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/feminine.json",
+      "sha256": "176bdecb718b4774f45f21ba836a9971f9d31a60fd64e4ba5793d0fd009d79f0"
+    },
+    "fixtures/golden_manifest.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/golden_manifest.json",
+      "sha256": "051fef4e7e941502f5561e844d31a1ce124faec8acbde381f051eebf92f77643"
+    },
+    "fixtures/hair_long.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/hair_long.json",
+      "sha256": "3521f2a0ea4aef9fd4b9a25976415ab1a17aadc8c66252dcd1e96dc41d2eba46"
+    },
+    "fixtures/hair_medium.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/hair_medium.json",
+      "sha256": "9fc331420d0c74272b8326d3bdad68fffbd9103e85296f006ba9e00d50e391cc"
+    },
+    "fixtures/hair_none.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/hair_none.json",
+      "sha256": "b88b0bb8142e607993f431dc5721c8d646c3dba465f2c3e08407410517b6e5bb"
+    },
+    "fixtures/hair_short.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/hair_short.json",
+      "sha256": "ebe50deba5d6ce5cc9eaf49b39ecf6262bc9acade68e6e36c0ca0db4ca477c22"
+    },
+    "fixtures/hair_tied.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/hair_tied.json",
+      "sha256": "384e68457ca1e42e8cab8e18734b20a28c5bf2193c5a8cd47f5a0947967a171e"
+    },
+    "fixtures/masculine.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/masculine.json",
+      "sha256": "fb9ef0d9986103abbf211ba661b9552b2609fe07408e27f72715e507d7e290e8"
+    },
+    "fixtures/neutral.json": {
+      "upstream_path": "docs/fixtures/abstract_bust_v0_1/neutral.json",
+      "sha256": "bb654cb2b0517a1c0f681b06e740c2bc2214beb1aedc60f49104794dcfeeb221"
+    }
+  }
+}

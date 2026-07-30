@@ -1,3 +1,9 @@
+import {
+  AbstractBustBlueprintValidationError,
+  getDefaultAbstractBustBlueprint,
+  normalizeAbstractBustBlueprint,
+} from "@eterna/shared-schema/abstract-bust-blueprint";
+
 export function preserveStoredModuleEdges<T>(storedEdges: T[] | undefined, seedEdges: T[] | undefined): T[] {
   return Array.isArray(storedEdges) ? storedEdges : seedEdges ?? [];
 }
@@ -32,6 +38,8 @@ export const EXPRESSION_STATE_SEMANTICS_CONTENT_REVISION =
   "stage7_4_11_expression_state_semantics_v1";
 export const PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION =
   "stage7_4_11_particle_expression_relative_mapping_v1";
+export const ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION =
+  "stage7_4_15_b1_abstract_bust_blueprint_v0_1";
 export const PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION =
   "stage7_4_11_particle_mapping_source_priority_fix_v1";
 export const EXPRESSION_VISUAL_VALIDATION_COMPATIBILITY_REVISION =
@@ -141,6 +149,7 @@ const PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID = "particle_visual_config_input";
 const PARTICLE_EXPRESSION_RELATIVE_MAPPING_NODE_ID =
   "particle_expression_state_relative_mapping";
 const PARTICLE_RESIDENT_DEFAULT_BASE_COLOR_FIELD_KEY = "resident_default_base_color";
+const ABSTRACT_BUST_BLUEPRINT_FIELD_KEY = "abstract_bust_blueprint";
 const LEGACY_PARTICLE_BASE_COLOR_FIELD_KEYS = new Set(["color", "base_color"]);
 const PARTICLE_RELATIVE_FIELD_RANGES: Array<{
   suffix: string;
@@ -193,6 +202,7 @@ const LEGACY_PARTICLE_PARAM_RESERVED_KEYS = new Set([
   "field_registry",
   "mode",
   "content_revision",
+  "abstract_bust_blueprint_content_revision",
   "references",
   "configuration_only",
   "config_mode",
@@ -2009,10 +2019,31 @@ function normalizeParticleRelativeFields(
   });
 }
 
+function normalizeParticleAbstractBustBlueprintField(
+  fields: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return fields.map((field) => {
+    if (particleFieldKey(field) !== ABSTRACT_BUST_BLUEPRINT_FIELD_KEY) {
+      return field;
+    }
+    try {
+      return setParticleFieldValue(
+        field,
+        normalizeAbstractBustBlueprint(particleFieldValue(field))
+      );
+    } catch (error) {
+      if (!(error instanceof AbstractBustBlueprintValidationError)) {
+        throw error;
+      }
+      return setParticleFieldValue(field, getDefaultAbstractBustBlueprint());
+    }
+  });
+}
+
 /**
- * Rebuild the catalog-owned Stage 7.4.11 particle configuration graph once.
- * Catalog structure comes from the seed; resident-authored values and editor
- * layout remain resident-owned.
+ * Rebuild the catalog-owned particle configuration graph once for the frozen
+ * expression and AbstractBustBlueprint revisions. Catalog structure comes from
+ * the seed; resident-authored values and editor layout remain resident-owned.
  */
 export function migrateParticleExpressionRelativeMappingGraph(
   stored: ParticleExpressionRelativeMappingGraph,
@@ -2027,11 +2058,19 @@ export function migrateParticleExpressionRelativeMappingGraph(
       PARTICLE_EXPRESSION_RELATIVE_MAPPING_NODE_ID
   );
   const seedRevision = particleGraphNodeParams(seedInput).content_revision;
+  const seedAbstractBustRevision =
+    particleGraphNodeParams(seedInput).abstract_bust_blueprint_content_revision;
   const seedValidationRevision =
     particleGraphNodeParams(seedInput).validation_compatibility_revision;
   const seedSourcePriorityRevision =
     particleGraphNodeParams(seedMapping).source_priority_revision;
   if (seedRevision !== PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION) {
+    return { value: stored, migrated: false };
+  }
+  if (
+    seedAbstractBustRevision !==
+    ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+  ) {
     return { value: stored, migrated: false };
   }
   if (
@@ -2057,6 +2096,9 @@ export function migrateParticleExpressionRelativeMappingGraph(
   );
   if (
     particleGraphNodeParams(storedInput).content_revision === seedRevision &&
+    particleGraphNodeParams(storedInput)
+      .abstract_bust_blueprint_content_revision ===
+      seedAbstractBustRevision &&
     particleGraphNodeParams(storedInput).validation_compatibility_revision ===
       seedValidationRevision &&
     particleGraphNodeParams(storedMapping).source_priority_revision ===
@@ -2136,6 +2178,9 @@ export function migrateParticleExpressionRelativeMappingGraph(
       nodeSeedFields,
       new Set(storedFieldByKey.keys())
     );
+    if (catalogNodeId === PARTICLE_VISUAL_CONFIG_INPUT_NODE_ID) {
+      mergedFields = normalizeParticleAbstractBustBlueprintField(mergedFields);
+    }
     setParticleGraphNodeFields(nextNode, mergedFields);
     return nextNode;
   });

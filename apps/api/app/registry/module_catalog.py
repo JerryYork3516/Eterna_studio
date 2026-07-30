@@ -21,6 +21,10 @@ from ..models.v0_4 import (
     SlotType,
     STAGE7_4_12_A2_CONTENT_REVISION,
 )
+from ..services.abstract_bust_blueprint import (
+    ABSTRACT_BUST_GENERATOR_VERSION,
+    default_abstract_bust_blueprint_dict,
+)
 
 IDENTITY_CORE_NODE_TYPES = ("field_input", "structure_normalize", "validation", "update_rule", "module_output")
 CONTENT_SAFETY_MODULE_ID = "humanistic_content_safety_config_v0_1"
@@ -4336,6 +4340,9 @@ def _interaction_behavior_module() -> ModuleV04:
 
 PARTICLE_AVATAR_MODULE_ID = "particle_avatar"
 PARTICLE_AVATAR_OUTPUT_KEY = "particle_mapping_config"
+ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION = (
+    "stage7_4_15_b1_abstract_bust_blueprint_v0_1"
+)
 PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION = (
     "stage7_4_11_particle_expression_relative_mapping_v1"
 )
@@ -4594,7 +4601,33 @@ def _particle_avatar_module() -> ModuleV04:
             ],
         ),
     ]
-    fields = [*color_fields, *relative_fields, *transition_fields]
+    abstract_bust_field = field(
+        "abstract_bust_blueprint",
+        default_abstract_bust_blueprint_dict(),
+        "object",
+        "abstractBustBlueprint",
+        required=True,
+        group="abstractBust",
+    )
+    abstract_bust_field["contract"] = {
+        "generator_version": ABSTRACT_BUST_GENERATOR_VERSION,
+        "schema_path": (
+            "packages/shared-schema/contracts/abstract_bust_v0_1/"
+            "abstract_bust_blueprint_v0_1.schema.json"
+        ),
+        "default_fixture_path": (
+            "packages/shared-schema/contracts/abstract_bust_v0_1/"
+            "fixtures/default.json"
+        ),
+        "upstream_project": "Eterna_aftelle",
+        "upstream_commit": "c81b801b5ab3b53ed4733ac92add5ffaffd11395",
+    }
+    fields = [
+        abstract_bust_field,
+        *color_fields,
+        *relative_fields,
+        *transition_fields,
+    ]
 
     references = [
         {
@@ -4708,6 +4741,9 @@ def _particle_avatar_module() -> ModuleV04:
             "reference_input",
             {
                 "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+                "abstract_bust_blueprint_content_revision": (
+                    ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+                ),
                 "source_priority_revision": (
                     PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
                 ),
@@ -4959,6 +4995,9 @@ def _particle_avatar_module() -> ModuleV04:
         config={
             "shell_version": "module_shell_v1",
             "content_revision": PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION,
+            "abstract_bust_blueprint_content_revision": (
+                ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+            ),
             "source_priority_revision": (
                 PARTICLE_MAPPING_SOURCE_PRIORITY_FIX_REVISION
             ),

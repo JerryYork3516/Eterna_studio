@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.models.v0_4 import CANONICAL_LAYERS, ProtocolStatus
 from app.registry.module_catalog import (
+    ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION,
     BEHAVIOR_SAFETY_MODULE_ID,
     BEHAVIOR_SAFETY_OUTPUT_KEY,
     DATA_SAFETY_MODULE_ID,
@@ -45,6 +46,10 @@ from app.registry.module_catalog import (
     TASK_BEHAVIOR_MODULE_ID,
     get_module_catalog,
     validate_module_catalog,
+)
+from app.services.abstract_bust_blueprint import (
+    ABSTRACT_BUST_GENERATOR_VERSION,
+    default_abstract_bust_blueprint_dict,
 )
 from app.registry.node_registry import get_node_definition
 
@@ -3138,8 +3143,28 @@ def test_layer10_particle_avatar_uses_relative_expression_mapping_contract():
     assert config_input["params"]["content_revision"] == (
         PARTICLE_EXPRESSION_RELATIVE_MAPPING_CONTENT_REVISION
     )
+    assert config_input["params"]["abstract_bust_blueprint_content_revision"] == (
+        ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+    )
     fields = {
         field["field_key"]: field for field in config_input["params"]["fields"]
+    }
+    abstract_bust = fields["abstract_bust_blueprint"]
+    assert abstract_bust["field_type"] == "object"
+    assert abstract_bust["required"] is True
+    assert abstract_bust["field_value"] == default_abstract_bust_blueprint_dict()
+    assert abstract_bust["contract"] == {
+        "generator_version": ABSTRACT_BUST_GENERATOR_VERSION,
+        "schema_path": (
+            "packages/shared-schema/contracts/abstract_bust_v0_1/"
+            "abstract_bust_blueprint_v0_1.schema.json"
+        ),
+        "default_fixture_path": (
+            "packages/shared-schema/contracts/abstract_bust_v0_1/"
+            "fixtures/default.json"
+        ),
+        "upstream_project": "Eterna_aftelle",
+        "upstream_commit": "c81b801b5ab3b53ed4733ac92add5ffaffd11395",
     }
     assert fields["resident_default_base_color"]["field_value"] == "#7aa2f7"
     assert fields["user_current_base_color"]["field_value"] == ""
@@ -3295,6 +3320,9 @@ def test_layer10_particle_avatar_uses_relative_expression_mapping_contract():
         "lifecycle_state_source",
         "particle_base_color_source",
     ]
+    assert module.config["abstract_bust_blueprint_content_revision"] == (
+        ABSTRACT_BUST_BLUEPRINT_CONTENT_REVISION
+    )
 
     assert module.outputs == {
         PARTICLE_AVATAR_OUTPUT_KEY: node_map[

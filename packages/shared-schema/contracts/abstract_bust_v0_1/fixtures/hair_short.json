@@ -1,0 +1,10 @@
+{
+  "generator_version": "abstract_bust_v0_1",
+  "presentation": "neutral",
+  "seed": 2818040094,
+  "head": {"width": 0.265, "height": 0.34, "roundness": 0.5},
+  "neck": {"width": 0.16, "length": 0.2},
+  "shoulders": {"width": 0.6, "slope": 0.085},
+  "torso": {"width": 0.54, "thickness": 0.28, "length": 0.76, "taper": 0.3},
+  "hair": {"style": "short", "volume": 0.55, "length": 0.65}
+}
