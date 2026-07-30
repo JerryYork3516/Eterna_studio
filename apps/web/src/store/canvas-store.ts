@@ -15,8 +15,14 @@ import { hydrateRuntimeResult, type RuntimeDebugSummary } from "@/lib/runtime-hy
 import { api, type DRCompileResult, type DRLoadResult, type LLMProfileInput, type LLMProfilesView, type MemoryClearResult, type MemoryViewResult } from "@/lib/api";
 import { sanitizeWorkflow, withUpdatedWorkflowGraph } from "@/lib/workflow";
 import { loadWorkflow, saveWorkflow } from "@/lib/persistence";
-import { loadCanvasStateFromLocalStorage, saveCanvasStateToLocalStorage } from "@/lib/canvas-persistence";
-import type { ModuleGraphState } from "@/lib/canvas-persistence";
+import {
+  fingerprintModuleGraph as fingerprintPersistedModuleGraph,
+  loadCanvasStateFromLocalStorage,
+  saveCanvasStateToLocalStorage,
+  saveModuleGraphStateAtomically,
+  type ModuleGraphState,
+  type ModuleGraphStudioMetadata,
+} from "@/lib/canvas-persistence";
 import { filterDanglingModuleGraphEdges } from "@/store/module-graph-merge";
 
 type LogLevel = RunLog["level"];
@@ -282,10 +288,62 @@ export type ModuleGraph = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   viewport?: { x: number; y: number; zoom: number };
+  studioMetadata?: ModuleGraphStudioMetadata;
 };
 
 // P1-FIX：ModuleGraphs 集合
 export type ModuleGraphsState = Record<string, ModuleGraph>;
+
+export type ExternalModuleGraphTransactionInput = {
+  moduleNodeId: string;
+  expectedFingerprint: string;
+  expectedInstance: {
+    instanceId: string;
+    moduleId: string;
+    layerId: string;
+  };
+  expectedAssetRevision: number;
+  currentAssetRevision: number;
+  nextGraph: ModuleGraph;
+};
+
+export type ExternalModuleGraphTransactionResult =
+  | {
+      ok: true;
+      revision: number;
+      fingerprint: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | "not_hydrated"
+        | "instance_mismatch"
+        | "graph_missing"
+        | "graph_conflict"
+        | "asset_revision_conflict"
+        | "persistence_failed";
+    };
+
+export function fingerprintModuleGraph(graph: ModuleGraph): string {
+  return fingerprintPersistedModuleGraph({
+    moduleId: graph.moduleNodeId,
+    nodes: graph.nodes,
+    edges: graph.edges,
+    viewport: graph.viewport,
+    studioMetadata: graph.studioMetadata,
+  });
+}
+
+function cloneModuleGraph(graph: ModuleGraph): ModuleGraph {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(graph);
+    } catch {
+      // Module graphs are JSON state; use the JSON fallback below.
+    }
+  }
+  return JSON.parse(JSON.stringify(graph)) as ModuleGraph;
+}
 
 // P1-FIX：类型转换函数
 function convertLegacyModuleGraphs(
@@ -301,6 +359,10 @@ function convertLegacyModuleGraphs(
           nodes: Array.isArray(data.nodes) ? (data.nodes as WorkflowNode[]) : [],
           edges: Array.isArray(data.edges) ? (data.edges as WorkflowEdge[]) : [],
           viewport: data.viewport,
+          studioMetadata:
+            data.studioMetadata && typeof data.studioMetadata === "object" && !Array.isArray(data.studioMetadata)
+              ? (data.studioMetadata as ModuleGraphStudioMetadata)
+              : undefined,
         };
       }
     } catch (e) {
@@ -319,6 +381,8 @@ function convertModuleGraphsToLegacy(
       moduleId,
       nodes: graph.nodes,
       edges: graph.edges,
+      viewport: graph.viewport,
+      studioMetadata: graph.studioMetadata,
     };
   }
   return result;
@@ -373,6 +437,8 @@ type CanvasState = {
   
   // P1-FIX：Module Graph State（规范化）
   moduleGraphs: ModuleGraphsState;
+  moduleStateHydrated: boolean;
+  externalModuleGraphRevisions: Record<string, number>;
   
   // P1-FIX：Module Instance Registry（从 CanvasShell 提升到 store）
   layerModules: Record<string, string[]>;
@@ -431,6 +497,9 @@ type CanvasState = {
   // P1-FIX：Module Graph State actions
   setModuleGraphs: (graphs: ModuleGraphsState) => void;
   updateModuleGraph: (moduleNodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[], viewport?: { x: number; y: number; zoom: number }) => void;
+  commitExternalModuleGraphTransaction: (
+    input: ExternalModuleGraphTransactionInput
+  ) => ExternalModuleGraphTransactionResult;
   removeModuleGraph: (moduleNodeId: string) => void;
   
   // P1-FIX：Module Instance Registry actions
@@ -439,6 +508,7 @@ type CanvasState = {
   
   // P1-FIX：Hydration and persistence
   hydrateModuleState: () => void;
+  markModuleStateHydrated: () => void;
   persistModuleState: () => void;
 };
 
@@ -482,6 +552,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   
   // P1-FIX：初始化 Module Graph State
   moduleGraphs: {},
+  moduleStateHydrated: false,
+  externalModuleGraphRevisions: {},
   
   // P1-FIX：初始化 Module Instance Registry
   layerModules: {},
@@ -945,18 +1017,107 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const current = get().moduleGraphs;
     const next = {
       ...current,
-      [moduleNodeId]: { moduleNodeId, nodes, edges, viewport: viewport ?? current[moduleNodeId]?.viewport }
+      [moduleNodeId]: {
+        moduleNodeId,
+        nodes,
+        edges,
+        viewport: viewport ?? current[moduleNodeId]?.viewport,
+        studioMetadata: current[moduleNodeId]?.studioMetadata,
+      }
     };
     set({ moduleGraphs: next });
     console.log("[P1-STORE] updateModuleGraph:", { moduleNodeId, nodeCount: nodes.length, edgeCount: edges.length });
     get().persistModuleState();
+  },
+
+  commitExternalModuleGraphTransaction: (
+    input: ExternalModuleGraphTransactionInput
+  ): ExternalModuleGraphTransactionResult => {
+    const state = get();
+    if (!state.moduleStateHydrated) {
+      return { ok: false, reason: "not_hydrated" };
+    }
+    if (input.expectedAssetRevision !== input.currentAssetRevision) {
+      return { ok: false, reason: "asset_revision_conflict" };
+    }
+
+    const registryEntry = state.moduleInstanceRegistry[input.moduleNodeId];
+    const attachedModuleLocations = Object.entries(state.layerModules).flatMap(
+      ([layerId, moduleIds]) =>
+        moduleIds
+          .filter(
+            (moduleId) => moduleId === input.expectedInstance.moduleId
+          )
+          .map(() => layerId)
+    );
+    const matchingRegistryEntries = Object.values(state.moduleInstanceRegistry).filter(
+      (entry) =>
+        entry.moduleId === input.expectedInstance.moduleId
+    );
+    if (
+      input.expectedInstance.moduleId !== "particle_avatar" ||
+      input.expectedInstance.layerId !== "layer_10" ||
+      input.expectedInstance.instanceId !== input.moduleNodeId ||
+      input.nextGraph.moduleNodeId !== input.moduleNodeId ||
+      !registryEntry ||
+      registryEntry.instanceId !== input.expectedInstance.instanceId ||
+      registryEntry.moduleId !== input.expectedInstance.moduleId ||
+      registryEntry.layerId !== input.expectedInstance.layerId ||
+      attachedModuleLocations.length !== 1 ||
+      attachedModuleLocations[0] !== input.expectedInstance.layerId ||
+      matchingRegistryEntries.length !== 1 ||
+      matchingRegistryEntries[0]?.layerId !== input.expectedInstance.layerId
+    ) {
+      return { ok: false, reason: "instance_mismatch" };
+    }
+
+    const currentGraph = state.moduleGraphs[input.moduleNodeId];
+    if (!currentGraph) {
+      return { ok: false, reason: "graph_missing" };
+    }
+    if (fingerprintModuleGraph(currentGraph) !== input.expectedFingerprint) {
+      return { ok: false, reason: "graph_conflict" };
+    }
+
+    const nextGraph = cloneModuleGraph(input.nextGraph);
+    const saved = saveModuleGraphStateAtomically(
+      input.moduleNodeId,
+      nextGraph.nodes,
+      nextGraph.edges,
+      {
+        viewport: nextGraph.viewport,
+        studioMetadata: nextGraph.studioMetadata,
+      }
+    );
+    if (!saved) {
+      return { ok: false, reason: "persistence_failed" };
+    }
+
+    const revision = (state.externalModuleGraphRevisions[input.moduleNodeId] ?? 0) + 1;
+    set((currentState) => ({
+      moduleGraphs: {
+        ...currentState.moduleGraphs,
+        [input.moduleNodeId]: nextGraph,
+      },
+      externalModuleGraphRevisions: {
+        ...currentState.externalModuleGraphRevisions,
+        [input.moduleNodeId]: revision,
+      },
+    }));
+    return {
+      ok: true,
+      revision,
+      fingerprint: fingerprintModuleGraph(nextGraph),
+    };
   },
   
   removeModuleGraph: (moduleNodeId: string) => {
     const current = get().moduleGraphs;
     const next = { ...current };
     delete next[moduleNodeId];
-    set({ moduleGraphs: next });
+    const externalModuleGraphRevisions = { ...get().externalModuleGraphRevisions };
+    delete externalModuleGraphRevisions[moduleNodeId];
+    set({ moduleGraphs: next, externalModuleGraphRevisions });
     console.log("[P1-STORE] removeModuleGraph:", { moduleNodeId });
     get().persistModuleState();
   },
@@ -990,6 +1151,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         layerModules: stored.layerModules ?? {},
         moduleInstanceRegistry: stored.moduleInstanceRegistry ?? {},
         moduleGraphs: convertLegacyModuleGraphs(stored.moduleGraphs ?? {}),
+        moduleStateHydrated: true,
       });
       console.log("[P1-STORE] hydrateModuleState: restored", {
         tabCount: stored.moduleTabs?.length ?? 0,
@@ -997,8 +1159,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         instanceCount: Object.keys(stored.moduleInstanceRegistry ?? {}).length,
       });
     } else {
+      set({ moduleStateHydrated: true });
       console.log("[P1-STORE] hydrateModuleState: no stored state found");
     }
+  },
+
+  markModuleStateHydrated: () => {
+    set({ moduleStateHydrated: true });
   },
   
   persistModuleState: () => {

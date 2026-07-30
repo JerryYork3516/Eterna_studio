@@ -3554,6 +3554,40 @@ function migrateExistingGenericFieldsGraphs() {
   }
 }
 
+function hydrateVisualBindingGraphs(
+  registry: Record<string, ModuleInstance>
+) {
+  const store = useCanvasStore.getState();
+  const nextGraphs = { ...store.moduleGraphs };
+  let changed = false;
+  for (const instance of Object.values(registry)) {
+    const isIdentity =
+      instance.layerId === "layer_1" &&
+      instance.moduleId === "module_basic_identity";
+    const isParticle =
+      instance.layerId === "layer_10" &&
+      instance.moduleId === "particle_avatar";
+    if ((!isIdentity && !isParticle) || nextGraphs[instance.instanceId]) {
+      continue;
+    }
+    const persisted = loadModuleGraphState(instance.instanceId);
+    if (!persisted) {
+      continue;
+    }
+    nextGraphs[instance.instanceId] = {
+      moduleNodeId: instance.instanceId,
+      nodes: persisted.nodes as WorkflowNode[],
+      edges: persisted.edges as WorkflowEdge[],
+      viewport: persisted.viewport,
+      studioMetadata: persisted.studioMetadata,
+    };
+    changed = true;
+  }
+  if (changed) {
+    store.setModuleGraphs(nextGraphs);
+  }
+}
+
 function persistedOrHydratedGraph(moduleNodeId: string): ModuleGraph | null {
   const hydrated = useCanvasStore.getState().moduleGraphs[moduleNodeId];
   if (hydrated) {
@@ -3567,6 +3601,8 @@ function persistedOrHydratedGraph(moduleNodeId: string): ModuleGraph | null {
     moduleNodeId,
     nodes: persisted.nodes as WorkflowNode[],
     edges: persisted.edges as WorkflowEdge[],
+    viewport: persisted.viewport,
+    studioMetadata: persisted.studioMetadata,
   };
 }
 
@@ -3858,10 +3894,12 @@ export function initializeModuleState() {
   store.setModuleUiColors(moduleState.moduleUiColors);
   store.setLayerModules(moduleState.layerModules);
   store.setModuleInstanceRegistry(moduleState.moduleInstanceRegistry);
+  hydrateVisualBindingGraphs(moduleState.moduleInstanceRegistry);
   migrateLinxuanFirstInteractionEnabledOnce();
   migrateLinxuanFirstGreetingContentOnce();
   migrateLinxuanFirstGreetingIdentityLiteralsOnce();
   migrateExistingGenericFieldsGraphs();
+  store.markModuleStateHydrated();
   
   console.log("[P1-BRIDGE] initializeModuleState: hydration completed", {
     tabCount: moduleState.moduleTabs.length,
@@ -3900,6 +3938,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
         nodes: initialNodes ?? [],
         edges: initialEdges ?? [],
         viewport: existingGraph.viewport,
+        studioMetadata: existingGraph.studioMetadata,
       };
       store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
       saveModuleGraphState(moduleNodeId, graph.nodes, graph.edges);
@@ -3913,6 +3952,7 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
         nodes: initialNodes ?? [],
         edges: initialEdges ?? [],
         viewport: existingGraph.viewport,
+        studioMetadata: existingGraph.studioMetadata,
       };
       store.updateModuleGraph(moduleNodeId, graph.nodes, graph.edges, graph.viewport);
       console.log("[P1-BRIDGE] ensureModuleGraphExists: replaced empty graph with catalog seed");
@@ -3947,12 +3987,16 @@ export function ensureModuleGraphExists(moduleNodeId: string, initialNodes?: Wor
       moduleNodeId,
       nodes: legacyGraph.nodes as WorkflowNode[],
       edges: legacyGraph.edges as WorkflowEdge[],
+      viewport: legacyGraph.viewport,
+      studioMetadata: legacyGraph.studioMetadata,
     };
     if (shouldReplaceWithCatalogGraph(graph, initialNodes, initialEdges)) {
       const seedGraph: ModuleGraph = {
         moduleNodeId,
         nodes: initialNodes ?? [],
         edges: initialEdges ?? [],
+        viewport: graph.viewport,
+        studioMetadata: graph.studioMetadata,
       };
       store.updateModuleGraph(moduleNodeId, seedGraph.nodes, seedGraph.edges, seedGraph.viewport);
       saveModuleGraphState(moduleNodeId, seedGraph.nodes, seedGraph.edges);

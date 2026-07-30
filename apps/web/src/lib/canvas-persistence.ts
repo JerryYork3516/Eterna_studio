@@ -9,11 +9,22 @@ export type ModuleInstance = {
   layerId: string;
 };
 
+/**
+ * Studio-only module graph metadata.
+ *
+ * This surface is persisted with the editor graph but is deliberately kept
+ * outside graph nodes/edges so the DR compiler cannot project it into a
+ * compiled module.
+ */
+export type ModuleGraphStudioMetadata = Record<string, unknown>;
+
 // P1-FIX：改进 ModuleGraphState 类型定义
 export type ModuleGraphState = {
   moduleId: string;
   nodes: any[];  // 仍然使用 any[]（兼容 Node 类型），但在 store 层使用 WorkflowNode[]
   edges: any[];  // 仍然使用 any[]（兼容 Edge 类型），但在 store 层使用 WorkflowEdge[]
+  viewport?: { x: number; y: number; zoom: number };
+  studioMetadata?: ModuleGraphStudioMetadata;
 };
 
 export type CanvasState = {
@@ -63,6 +74,32 @@ function clonePersistenceValue<T>(value: T): T {
     }
   }
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function canonicalizePersistenceValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizePersistenceValue);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizePersistenceValue(value[key])])
+    );
+  }
+  return value;
+}
+
+/**
+ * Exact, collision-free optimistic-lock token for one JSON module graph.
+ *
+ * The canonical JSON itself is used instead of a digest so a hash collision
+ * cannot allow a stale external transaction to overwrite newer graph edits.
+ */
+export function fingerprintModuleGraph(
+  graph: Pick<ModuleGraphState, "moduleId" | "nodes" | "edges" | "viewport" | "studioMetadata">
+): string {
+  return `canonical-json-v1:${JSON.stringify(canonicalizePersistenceValue(graph))}`;
 }
 
 export function attachedModuleIdsFromLayerModules(layerModules: Record<string, string[]>): string[] {
@@ -538,19 +575,89 @@ export function readCanvasStateFromFile(file: File): Promise<{ success: boolean;
 /**
  * 保存模块内画布图 (nodes + edges) 到 localStorage
  */
-export function saveModuleGraphState(moduleId: string, nodes: unknown[], edges: unknown[]): boolean {
+function moduleGraphStateValue(
+  moduleId: string,
+  nodes: unknown[],
+  edges: unknown[],
+  replacement: Pick<ModuleGraphState, "viewport" | "studioMetadata">
+): string {
+  const nextState: ModuleGraphState = {
+    moduleId,
+    nodes,
+    edges,
+    ...(replacement.viewport ? { viewport: replacement.viewport } : {}),
+    ...(replacement.studioMetadata
+      ? { studioMetadata: replacement.studioMetadata }
+      : {}),
+  };
+  return JSON.stringify(nextState);
+}
+
+export function saveModuleGraphState(
+  moduleId: string,
+  nodes: unknown[],
+  edges: unknown[],
+  replacement?: Pick<ModuleGraphState, "viewport" | "studioMetadata">
+): boolean {
   if (typeof window === "undefined") {
     return false;
   }
 
   try {
     const key = `${MODULE_GRAPH_KEY_PREFIX}${moduleId}`;
-    const nextValue = JSON.stringify({ moduleId, nodes, edges });
+    let previous: Partial<ModuleGraphState> = {};
+    if (replacement === undefined) {
+      const stored = window.localStorage.getItem(key);
+      if (stored) {
+        try {
+          previous = JSON.parse(stored) as Partial<ModuleGraphState>;
+        } catch {
+          // A valid graph write repairs an unreadable legacy value.
+        }
+      }
+    }
+    const viewport = replacement === undefined ? previous.viewport : replacement.viewport;
+    const studioMetadata =
+      replacement === undefined ? previous.studioMetadata : replacement.studioMetadata;
+    const nextValue = moduleGraphStateValue(moduleId, nodes, edges, {
+      viewport,
+      studioMetadata,
+    });
     setLocalStorageWithBackupPrune(key, nextValue);
     removeModuleGraphBackupsForModule(moduleId);
     return true;
   } catch (error) {
     console.error(`Failed to save module graph for ${moduleId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Replace one complete module graph with one localStorage write.
+ *
+ * Unlike routine autosave, this does not prune backups or compact another
+ * storage key on quota failure. That gives external cross-workspace
+ * transactions an all-or-nothing persistence boundary.
+ */
+export function saveModuleGraphStateAtomically(
+  moduleId: string,
+  nodes: unknown[],
+  edges: unknown[],
+  replacement: Pick<ModuleGraphState, "viewport" | "studioMetadata">
+): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const key = `${MODULE_GRAPH_KEY_PREFIX}${moduleId}`;
+    window.localStorage.setItem(
+      key,
+      moduleGraphStateValue(moduleId, nodes, edges, replacement)
+    );
+    return true;
+  } catch (error) {
+    console.error(`Failed to atomically save module graph for ${moduleId}:`, error);
     return false;
   }
 }
@@ -579,6 +686,18 @@ export function loadModuleGraphState(moduleId: string): ModuleGraphState | null 
       moduleId,
       nodes: parsed.nodes,
       edges: parsed.edges,
+      ...(isRecord(parsed.viewport)
+        ? {
+            viewport: {
+              x: Number(parsed.viewport.x) || 0,
+              y: Number(parsed.viewport.y) || 0,
+              zoom: Number(parsed.viewport.zoom) || 1,
+            },
+          }
+        : {}),
+      ...(isRecord(parsed.studioMetadata)
+        ? { studioMetadata: clonePersistenceValue(parsed.studioMetadata) }
+        : {}),
     };
   } catch (error) {
     console.error(`Failed to load module graph for ${moduleId}:`, error);

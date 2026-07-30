@@ -1789,6 +1789,31 @@ function GenericTextInputRenderer({
               field.enum_options?.length &&
               !field.enum_options.some((option) => option.value === field.field_value)
             );
+            const isAbstractBustBlueprintSnapshot =
+              layerId === "layer_10" &&
+              moduleId === "particle_avatar" &&
+              field.field_key === "abstract_bust_blueprint";
+            if (isAbstractBustBlueprintSnapshot) {
+              return (
+                <article
+                  key={`${index}-${field.field_key}`}
+                  className="generic-fields-editor__field-card abstract-bust-blueprint-readonly"
+                  data-readonly-field="abstract_bust_blueprint"
+                >
+                  <div className="generic-fields-editor__field-head">
+                    <strong>{localizedFieldName}</strong>
+                  </div>
+                  <div className="abstract-bust-blueprint-readonly__notice">
+                    {translate(
+                      language,
+                      "residentBuilder.binding.readOnly",
+                      "Blueprint editing is owned by Visual Builder. This Layer 10 value is a read-only adopted snapshot."
+                    )}
+                  </div>
+                  <pre>{JSON.stringify(field.field_value, null, 2)}</pre>
+                </article>
+              );
+            }
             return (
               <article key={`${index}-${field.field_key}`} className="generic-fields-editor__field-card">
               <div className="generic-fields-editor__field-head">

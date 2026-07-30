@@ -355,7 +355,6 @@ test("B4 source uses direct Three.js, reuses resources, and cleans every lifecyc
     "utf8"
   );
   const editorSources = [
-    "src/components/visual-builder/VisualBuilderWorkspace.tsx",
     "src/features/visual-builder/builders/abstract-particle-bust/editor/AbstractBustEditor.tsx",
     "src/features/visual-builder/builders/abstract-particle-bust/editor/AbstractBustInspector.tsx",
     "src/store/visual-builder-store.ts",

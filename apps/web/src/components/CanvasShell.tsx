@@ -41,6 +41,7 @@ import {
 } from "@/store/module-graph-merge";
 import { LayerContainerNode } from "@/components/canvas/LayerContainerNode";
 import { WorkflowNodeCard, WorkflowNodeCardModuleNodesProvider } from "@/components/canvas/WorkflowNodeCard";
+import { VisualAssetBindingSummary } from "@/components/canvas/VisualAssetBindingSummary";
 import { ResidentNeuralGraphPanel } from "@/components/neural-graph/ResidentNeuralGraphPanel";
 import type { StudioAssistantPatch, StudioAssistantRequest } from "@/lib/studioAssistantApi";
 import {
@@ -65,6 +66,11 @@ import {
   handleTabOpened,
   handleTabClosed
 } from "@/store/module-state-bridge";
+import { useVisualBuilderStore } from "@/store/visual-builder-store";
+import {
+  deriveVisualAssetBindingStatus,
+  type VisualAssetBindingStatus,
+} from "@/features/visual-builder/visual-asset-binding";
 
 type MockNodeType =
   | "text_input"
@@ -3295,7 +3301,16 @@ function LayerAssemblyPanelNode({ data }: NodeProps) {
   );
 }
 
-export function CanvasShell() {
+export function CanvasShell({
+  focusModuleIntent = null,
+  onNavigateToVisualAsset,
+}: {
+  focusModuleIntent?: {
+    requestId: number;
+    moduleInstanceId: string;
+  } | null;
+  onNavigateToVisualAsset?: (assetId: string) => void;
+} = {}) {
   const mainFlowRef = useRef<ReactFlowInstance | null>(null);
   const libraryDefaultsAppliedRef = useRef(false);
   const consistencyWarningSignatureRef = useRef("");
@@ -3591,6 +3606,8 @@ export function CanvasShell() {
   const [libraryBodyCollapsed, setLibraryBodyCollapsed] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [requiresDrRecompile, setRequiresDrRecompile] = useState(false);
+  const handledFocusRequestRef = useRef<number | null>(null);
+  const externalGraphRevisionRef = useRef(0);
   const mainHistoryRef = useRef<MainHistoryState>({ past: [], future: [], restoring: false });
   const pushMainHistoryRef = useRef<() => void>(() => undefined);
   const mainSnapshotRef = useRef<MainCanvasSnapshot | null>(null);
@@ -3622,6 +3639,8 @@ export function CanvasShell() {
     memoryView,
     memoryClearResult,
     moduleGraphs,
+    externalModuleGraphRevisions,
+    moduleStateHydrated,
     apiReady,
     setSelectedNode,
     setLanguage,
@@ -3641,8 +3660,31 @@ export function CanvasShell() {
     previewLoadStatus,
     previewLoadError
   } = useCanvasStore();
+  const visualAssets = useVisualBuilderStore((state) => state.visualAssets);
+  const visualBuilderHydrated = useVisualBuilderStore(
+    (state) => state.isHydrated
+  );
 
   const t = useCallback((key: string, fallback?: string) => translate(language, key, fallback), [language]);
+
+  const externalGraphRevision = useMemo(
+    () =>
+      Object.values(externalModuleGraphRevisions).reduce(
+        (total, revision) => total + revision,
+        0
+      ),
+    [externalModuleGraphRevisions]
+  );
+
+  useEffect(() => {
+    if (externalGraphRevision <= externalGraphRevisionRef.current) {
+      externalGraphRevisionRef.current = externalGraphRevision;
+      return;
+    }
+    externalGraphRevisionRef.current = externalGraphRevision;
+    setSaveStatus("dirty");
+    setRequiresDrRecompile(true);
+  }, [externalGraphRevision]);
 
   useEffect(() => {
     mainSnapshotRef.current = {
@@ -3989,6 +4031,12 @@ export function CanvasShell() {
           moduleId: graph.moduleNodeId || instanceId,
           nodes: cloneCanvasValue(graph.nodes),
           edges: cloneCanvasValue(graph.edges),
+          ...(graph.viewport
+            ? { viewport: cloneCanvasValue(graph.viewport) }
+            : {}),
+          ...(graph.studioMetadata
+            ? { studioMetadata: cloneCanvasValue(graph.studioMetadata) }
+            : {}),
         },
       ])
     );
@@ -4043,12 +4091,21 @@ export function CanvasShell() {
             moduleNodeId,
             nodes: cloneCanvasValue(graph.nodes) as WorkflowNode[],
             edges: cloneCanvasValue(graph.edges) as WorkflowEdge[],
+            ...(graph.viewport
+              ? { viewport: cloneCanvasValue(graph.viewport) }
+              : {}),
+            ...(graph.studioMetadata
+              ? { studioMetadata: cloneCanvasValue(graph.studioMetadata) }
+              : {}),
           },
         ];
       })
     );
     for (const [instanceId, graph] of Object.entries(state.moduleGraphs ?? {})) {
-      saveModuleGraphState(instanceId, graph.nodes, graph.edges);
+      saveModuleGraphState(instanceId, graph.nodes, graph.edges, {
+        viewport: graph.viewport,
+        studioMetadata: graph.studioMetadata,
+      });
     }
 
     console.log("[P1-SYNC] Syncing restored canvas state to store");
@@ -4245,6 +4302,33 @@ export function CanvasShell() {
     () => (activeModuleTabId ? resolveModuleNode(activeModuleTabId) : null),
     [activeModuleTabId, resolveModuleNode]
   );
+  const residentVisualBindingStatus = useMemo<VisualAssetBindingStatus | null>(
+    () =>
+      Boolean(
+        activeModuleTabId &&
+          moduleInstanceRegistry[activeModuleTabId]?.moduleId ===
+            "particle_avatar" &&
+          moduleInstanceRegistry[activeModuleTabId]?.layerId === "layer_10"
+      ) &&
+      moduleStateHydrated &&
+      visualBuilderHydrated
+        ? deriveVisualAssetBindingStatus({
+            layerModules,
+            moduleInstanceRegistry,
+            moduleGraphs,
+            visualAssets,
+          })
+        : null,
+    [
+      activeModuleTabId,
+      layerModules,
+      moduleGraphs,
+      moduleInstanceRegistry,
+      moduleStateHydrated,
+      visualAssets,
+      visualBuilderHydrated,
+    ]
+  );
   const activeModuleSubnodes = useMemo(
     () =>
       activeModuleTabId
@@ -4400,6 +4484,69 @@ export function CanvasShell() {
     },
     [appendLog, ensureModuleInstance, findModuleInstance, moduleCatalogById, moduleCatalog, t]
   );
+
+  useEffect(() => {
+    if (
+      !focusModuleIntent ||
+      !moduleCatalog ||
+      !moduleStateHydrated ||
+      handledFocusRequestRef.current === focusModuleIntent.requestId
+    ) {
+      return;
+    }
+
+    const { moduleInstanceId } = focusModuleIntent;
+    const registryMatches = Object.values(moduleInstanceRegistry).filter(
+      (instance) => instance.moduleId === "particle_avatar"
+    );
+    const attachedMatches = Object.entries(layerModules).flatMap(
+      ([layerId, moduleIds]) =>
+        moduleIds
+          .filter((moduleId) => moduleId === "particle_avatar")
+          .map(() => layerId)
+    );
+    const instance = moduleInstanceRegistry[moduleInstanceId];
+    const graph =
+      moduleGraphs[moduleInstanceId] ?? loadModuleGraphState(moduleInstanceId);
+    const targetIsValid =
+      registryMatches.length === 1 &&
+      attachedMatches.length === 1 &&
+      registryMatches[0]?.layerId === "layer_10" &&
+      attachedMatches[0] === "layer_10" &&
+      instance?.instanceId === moduleInstanceId &&
+      instance.moduleId === "particle_avatar" &&
+      instance.layerId === "layer_10" &&
+      Boolean(graph);
+
+    handledFocusRequestRef.current = focusModuleIntent.requestId;
+    if (!targetIsValid) {
+      const message = t(
+        "visualBuilder.binding.error.navigation",
+        "The requested binding target no longer exists."
+      );
+      appendLog(message, "error");
+      window.alert(message);
+      return;
+    }
+
+    setModuleTabs((tabs) =>
+      tabs.includes(moduleInstanceId) ? tabs : [...tabs, moduleInstanceId]
+    );
+    setActiveModuleTabId(moduleInstanceId);
+    setActiveDrawer(null);
+    appendLog(
+      `${t("status.moduleCanvasOpened", "Module canvas opened")}: ${moduleInstanceId}`
+    );
+  }, [
+    appendLog,
+    focusModuleIntent,
+    layerModules,
+    moduleCatalog,
+    moduleGraphs,
+    moduleInstanceRegistry,
+    moduleStateHydrated,
+    t,
+  ]);
 
   useEffect(() => {
     if (!moduleCatalog) {
@@ -6043,6 +6190,47 @@ export function CanvasShell() {
                     onExecutionResult={setResidentPreviewOutput}
                     onAssistantPanelChange={handleModuleAssistantPanelChange}
                     onDebugContextChange={handleModuleDebugTraceContextChange}
+                    visualBindingSummary={
+                      residentVisualBindingStatus ? (
+                        <VisualAssetBindingSummary
+                          binding={
+                            residentVisualBindingStatus.binding ?? null
+                          }
+                          state={residentVisualBindingStatus.state}
+                          residentScopeId={
+                            residentVisualBindingStatus.residentScopeId
+                          }
+                          moduleInstanceId={
+                            residentVisualBindingStatus.moduleInstanceId
+                          }
+                          assetName={
+                            residentVisualBindingStatus.asset?.name ?? null
+                          }
+                          bindingAssetId={
+                            residentVisualBindingStatus.bindingAssetId ?? null
+                          }
+                          error={
+                            residentVisualBindingStatus.state === "invalid"
+                              ? residentVisualBindingStatus.assetMissing
+                                ? t(
+                                    "visualBuilder.binding.error.missingAsset",
+                                    "The bound Visual Asset no longer exists."
+                                  )
+                                : `${t(
+                                    "visualBuilder.binding.disabled.invalid",
+                                    "The resident or Layer 10 target is not valid."
+                                  )}${
+                                    residentVisualBindingStatus.reason
+                                      ? ` (${residentVisualBindingStatus.reason})`
+                                      : ""
+                                  }`
+                              : null
+                          }
+                          onGoVisual={onNavigateToVisualAsset}
+                          t={t}
+                        />
+                      ) : undefined
+                    }
                     onClose={() => {
                       setModuleDebugTraceContext(null);
                       closeModuleTab(activeModuleNode.node_id);
@@ -7931,6 +8119,7 @@ function ModuleCanvasPanel({
   onExecutionResult,
   onAssistantPanelChange,
   onDebugContextChange,
+  visualBindingSummary,
   onClose
 }: {
   moduleNode: WorkflowNode;
@@ -7944,6 +8133,7 @@ function ModuleCanvasPanel({
   onExecutionResult: (result: unknown) => void;
   onAssistantPanelChange: (panel: ModuleAssistantPanelState | null) => void;
   onDebugContextChange: (context: ModuleDebugTraceContext | null) => void;
+  visualBindingSummary?: ReactNode;
   onClose: () => void;
 }) {
   const title = translate(language, moduleNode.title_key, moduleNode.title_fallback);
@@ -7952,6 +8142,9 @@ function ModuleCanvasPanel({
   const [contextMenu, setContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [copiedModuleNode, setCopiedModuleNode] = useState<WorkflowNode | null>(null);
   const storedModuleGraph = useCanvasStore((state) => state.moduleGraphs[moduleNode.node_id]);
+  const externalModuleGraphRevision = useCanvasStore(
+    (state) => state.externalModuleGraphRevisions[moduleNode.node_id] ?? 0
+  );
 
 	  // Seed module sub-canvas from the current v0.4 schema-derived view only.
 	  const initialGraph = useMemo<{ nodes: Node[]; edges: Edge[] }>(() => {
@@ -8016,6 +8209,9 @@ function ModuleCanvasPanel({
   const moduleNodesRef = useRef(moduleNodes);
   const moduleEdgesRef = useRef(moduleEdges);
   const moduleHistoryRef = useRef<FlowHistoryState>({ past: [], future: [], restoring: false });
+  const handledExternalGraphRevisionRef = useRef(
+    externalModuleGraphRevision
+  );
   const [moduleHistoryVersion, setModuleHistoryVersion] = useState(0);
 
   useEffect(() => {
@@ -8025,6 +8221,38 @@ function ModuleCanvasPanel({
   useEffect(() => {
     moduleEdgesRef.current = moduleEdges;
   }, [moduleEdges]);
+
+  useEffect(() => {
+    if (
+      externalModuleGraphRevision <=
+      handledExternalGraphRevisionRef.current
+    ) {
+      return;
+    }
+    handledExternalGraphRevisionRef.current = externalModuleGraphRevision;
+    const externalGraph =
+      useCanvasStore.getState().moduleGraphs[moduleNode.node_id];
+    if (!externalGraph) {
+      return;
+    }
+    const nextNodes = normalizeModuleGraphNodes(externalGraph.nodes ?? []);
+    const nextEdges = normalizeModuleGraphEdges(externalGraph.edges ?? []);
+    moduleHistoryRef.current.restoring = true;
+    moduleHistoryRef.current.past = [];
+    moduleHistoryRef.current.future = [];
+    moduleNodesRef.current = nextNodes;
+    moduleEdgesRef.current = nextEdges;
+    setModuleNodes(nextNodes);
+    setModuleEdges(nextEdges);
+    window.queueMicrotask(() => {
+      moduleHistoryRef.current.restoring = false;
+    });
+  }, [
+    externalModuleGraphRevision,
+    moduleNode.node_id,
+    setModuleEdges,
+    setModuleNodes,
+  ]);
 
   const persistModuleGraphNow = useCallback(
     (nodesToPersist: Node[], edgesToPersist: Edge[] = moduleEdgesRef.current) => {
@@ -9096,6 +9324,7 @@ function ModuleCanvasPanel({
           </button>
         </div>
       </header>
+      {visualBindingSummary}
       <div className="module-canvas-panel__body">
         <div
           className="module-canvas-panel__flow"

@@ -2017,7 +2017,11 @@ test("Canvas import/export and compile paths retain graphs and consume attached 
   const bridgeSource = readFileSync(new URL("../src/store/module-state-bridge.ts", import.meta.url), "utf8");
 
   assert.match(source, /moduleGraphs:\s*exportedGraphs/);
-  assert.match(source, /saveModuleGraphState\(instanceId, graph\.nodes, graph\.edges\)/);
+  assert.match(source, /studioMetadata:\s*cloneCanvasValue\(graph\.studioMetadata\)/);
+  assert.match(
+    source,
+    /saveModuleGraphState\(instanceId, graph\.nodes, graph\.edges, \{[\s\S]*?studioMetadata: graph\.studioMetadata,[\s\S]*?\}\)/s
+  );
   assert.match(source, /store\.setModuleGraphs\(restoredGraphs\)/);
   assert.match(source, /const recovered = await readCanvasStateFromFile\(file\)/);
   assert.match(source, /restoreCanvasState\(recovered\.state\)/);

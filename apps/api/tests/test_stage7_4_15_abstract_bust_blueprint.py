@@ -419,6 +419,10 @@ def test_layer10_blueprint_stays_in_authoritative_payload_modules_only():
     )
     assert "abstract_bust_blueprint" not in dr["payload"]
     assert "abstract_bust_blueprint" not in particle["outputs"]["particle_mapping_config"]
+    serialized_dr = json.dumps(dr, ensure_ascii=False)
+    assert "visualAssetBinding" not in serialized_dr
+    assert "studioMetadata" not in serialized_dr
+    assert "blueprint_digest" not in serialized_dr
     assert dr["visual_expression_mapping"]["abstract_bust_mapping"] == {
         "status": "reserved"
     }

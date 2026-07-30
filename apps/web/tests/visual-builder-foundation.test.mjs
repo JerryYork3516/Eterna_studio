@@ -226,11 +226,11 @@ test("top-level workspace switch keeps both builders mounted and stores isolated
   assert.match(workspaceShell, /setActiveWorkspace\("visual_builder"\)/);
   assert.match(
     workspaceShell,
-    /hidden=\{activeWorkspace !== "resident_builder"\}[\s\S]*?<CanvasShell \/>/
+    /hidden=\{activeWorkspace !== "resident_builder"\}[\s\S]*?<CanvasShell[\s\S]*?\/>/
   );
   assert.match(
     workspaceShell,
-    /hidden=\{activeWorkspace !== "visual_builder"\}[\s\S]*?<VisualBuilderWorkspace \/>/
+    /hidden=\{activeWorkspace !== "visual_builder"\}[\s\S]*?<VisualBuilderWorkspace[\s\S]*?\/>/
   );
   assert.match(
     workspaceShell,
@@ -240,7 +240,7 @@ test("top-level workspace switch keeps both builders mounted and stores isolated
   assert.doesNotMatch(canvasStore, /VisualAsset|selectedVisualAssetId|activeBuilderId/);
 });
 
-test("Visual Builder preview stays outside React Flow, R3F, Layer 10, and DR projection", () => {
+test("Visual Builder preview stays outside React Flow, R3F, DR projection, and persisted preview data", () => {
   const visualWorkspace = readFileSync(
     new URL(
       "src/components/visual-builder/VisualBuilderWorkspace.tsx",
@@ -252,6 +252,7 @@ test("Visual Builder preview stays outside React Flow, R3F, Layer 10, and DR pro
     "src/features/visual-builder/builder-registry.ts",
     "src/features/visual-builder/visual-asset.ts",
     "src/features/visual-builder/visual-builder-persistence.ts",
+    "src/features/visual-builder/visual-asset-binding.ts",
     "src/store/visual-builder-store.ts",
   ]
     .map((path) => readFileSync(new URL(path, root), "utf8"))
@@ -261,10 +262,11 @@ test("Visual Builder preview stays outside React Flow, R3F, Layer 10, and DR pro
   assert.match(visualWorkspace, /function VisualAssetSidebar/);
   assert.match(visualWorkspace, /<AbstractBustEditor/);
   assert.match(visualWorkspace, /function VisualBuilderStatusBar/);
+  assert.match(visualWorkspace, /commitExternalModuleGraphTransaction/);
   assert.doesNotMatch(visualWorkspace, /@xyflow\/react|@react-three/);
   assert.doesNotMatch(
     `${visualWorkspace}\n${visualFeatureSources}`,
-    /particle_avatar|payload\.abstract_bust_blueprint|moduleGraphs|DRCompiler/
+    /payload\.abstract_bust_blueprint|DRCompiler|positions|regions|anchors/
   );
 });
 
