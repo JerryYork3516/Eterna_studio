@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import {
+  AbstractBustEditor,
+  useAbstractBustDraft,
+} from "@/features/visual-builder/builders/abstract-particle-bust/editor/AbstractBustEditor";
+import type { AbstractBustPreviewSummary } from "@/features/visual-builder/builders/abstract-particle-bust/preview/preview-types";
 import {
   getVisualBuilderDefinition,
   type VisualBuilderDefinition,
@@ -11,16 +16,31 @@ import { useCanvasStore } from "@/store/canvas-store";
 import { useVisualBuilderStore } from "@/store/visual-builder-store";
 
 type Translator = (key: string, fallback?: string) => string;
+type SaveStatus = "draft" | "saving" | "failed" | "saved";
+
+const EMPTY_PREVIEW_SUMMARY: AbstractBustPreviewSummary = {
+  particleCount: 0,
+  digest: null,
+  error: null,
+  diagnostics: {
+    initializationMs: 0,
+    lastUpdateMs: 0,
+    generationCount: 0,
+    renderersCreated: 0,
+    renderersDisposed: 0,
+    activeContexts: 0,
+  },
+};
 
 function VisualBuilderHeader({
   builder,
   asset,
-  isDirty,
+  saveStatus,
   t,
 }: {
   builder: VisualBuilderDefinition | null;
   asset: AbstractParticleBustVisualAsset | null;
-  isDirty: boolean;
+  saveStatus: SaveStatus;
   t: Translator;
 }) {
   return (
@@ -44,8 +64,8 @@ function VisualBuilderHeader({
         </div>
         <div>
           <dt>{t("visualBuilder.saveStatus", "Save status")}</dt>
-          <dd className={isDirty ? "is-dirty" : "is-saved"}>
-            {isDirty ? t("save.dirty", "Unsaved") : t("save.saved", "Saved")}
+          <dd className={saveStatus === "saved" ? "is-saved" : "is-dirty"}>
+            {t(`visualBuilder.save.${saveStatus}`, saveStatus)}
           </dd>
         </div>
       </dl>
@@ -55,15 +75,17 @@ function VisualBuilderHeader({
 
 function VisualAssetSidebar({
   assets,
-  selectedAssetId,
+  selectedAsset,
   onCreate,
   onSelect,
+  onRename,
   t,
 }: {
   assets: AbstractParticleBustVisualAsset[];
-  selectedAssetId: string | null;
+  selectedAsset: AbstractParticleBustVisualAsset | null;
   onCreate: () => void;
   onSelect: (assetId: string) => void;
+  onRename: (name: string) => void;
   t: Translator;
 }) {
   return (
@@ -78,20 +100,33 @@ function VisualAssetSidebar({
         </button>
       </div>
       {assets.length ? (
-        <div className="visual-asset-list">
-          {assets.map((asset) => (
-            <button
-              key={asset.asset_id}
-              type="button"
-              className={asset.asset_id === selectedAssetId ? "is-active" : ""}
-              aria-pressed={asset.asset_id === selectedAssetId}
-              onClick={() => onSelect(asset.asset_id)}
-            >
-              <strong>{asset.name}</strong>
-              <span>{asset.appearance_type}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="visual-asset-list">
+            {assets.map((asset) => (
+              <button
+                key={asset.asset_id}
+                type="button"
+                className={
+                  asset.asset_id === selectedAsset?.asset_id ? "is-active" : ""
+                }
+                aria-pressed={asset.asset_id === selectedAsset?.asset_id}
+                onClick={() => onSelect(asset.asset_id)}
+              >
+                <strong>{asset.name}</strong>
+                <span>{asset.appearance_type}</span>
+              </button>
+            ))}
+          </div>
+          {selectedAsset ? (
+            <label className="visual-asset-sidebar__rename">
+              <span>{t("visualBuilder.inspector.assetName", "Asset name")}</span>
+              <input
+                value={selectedAsset.name}
+                onChange={(event) => onRename(event.target.value)}
+              />
+            </label>
+          ) : null}
+        </>
       ) : (
         <div className="visual-builder-empty-copy">
           <strong>{t("visualBuilder.assets.emptyTitle", "No Visual Assets")}</strong>
@@ -107,135 +142,65 @@ function VisualAssetSidebar({
   );
 }
 
-function VisualBuilderViewport({
-  asset,
-  t,
+function VisualBuilderEmptyState({
+  message,
 }: {
-  asset: AbstractParticleBustVisualAsset | null;
-  t: Translator;
+  message: string;
 }) {
   return (
-    <section
-      className="visual-builder-viewport"
-      aria-label={t("visualBuilder.viewport.title", "Visual viewport")}
-    >
+    <section className="visual-builder-viewport">
       <div className="visual-builder-viewport__placeholder">
         <span aria-hidden="true">◇</span>
-        <strong>
-          {asset
-            ? t("visualBuilder.viewport.previewPending", "Preview not available in B2")
-            : t("visualBuilder.viewport.selectAsset", "Select or create a Visual Asset")}
-        </strong>
-        <p>
-          {t(
-            "visualBuilder.viewport.staticDescription",
-            "This workspace does not generate particles or start WebGL."
-          )}
-        </p>
+        <strong>{message}</strong>
       </div>
     </section>
-  );
-}
-
-function InspectorRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="visual-builder-inspector__row">
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  );
-}
-
-function VisualBuilderInspector({
-  builder,
-  asset,
-  onRename,
-  t,
-}: {
-  builder: VisualBuilderDefinition | null;
-  asset: AbstractParticleBustVisualAsset | null;
-  onRename: (name: string) => void;
-  t: Translator;
-}) {
-  return (
-    <aside className="visual-builder-inspector">
-      <div className="visual-builder-section-heading">
-        <div>
-          <strong>{t("visualBuilder.inspector.title", "Inspector")}</strong>
-          <span>{t("visualBuilder.inspector.metadataOnly", "Metadata only")}</span>
-        </div>
-      </div>
-      <dl>
-        <InspectorRow label={t("visualBuilder.inspector.builderId", "Builder ID")}>
-          {builder?.id ?? "—"}
-        </InspectorRow>
-        <InspectorRow
-          label={t("visualBuilder.inspector.protocolVersion", "Protocol version")}
-        >
-          {builder?.generatorVersion ?? "—"}
-        </InspectorRow>
-        <InspectorRow
-          label={t("visualBuilder.inspector.appearanceType", "Appearance type")}
-        >
-          {builder?.appearanceType ?? "—"}
-        </InspectorRow>
-        <InspectorRow label={t("visualBuilder.inspector.assetName", "Asset name")}>
-          {asset ? (
-            <input
-              value={asset.name}
-              aria-label={t("visualBuilder.inspector.assetName", "Asset name")}
-              onChange={(event) => onRename(event.target.value)}
-            />
-          ) : (
-            "—"
-          )}
-        </InspectorRow>
-        <InspectorRow label={t("visualBuilder.inspector.assetId", "Asset ID")}>
-          <code>{asset?.asset_id ?? "—"}</code>
-        </InspectorRow>
-        <InspectorRow label={t("visualBuilder.inspector.revision", "Revision")}>
-          {asset?.revision ?? "—"}
-        </InspectorRow>
-        <InspectorRow label={t("visualBuilder.inspector.updatedAt", "Updated")}>
-          {asset?.updated_at ?? "—"}
-        </InspectorRow>
-      </dl>
-      <div className="visual-builder-inspector__notice">
-        {t(
-          "visualBuilder.inspector.parametersDeferred",
-          "Blueprint controls are deferred to a later stage."
-        )}
-      </div>
-    </aside>
   );
 }
 
 function VisualBuilderStatusBar({
   builder,
   asset,
-  isDirty,
+  draftDirty,
+  preview,
   t,
 }: {
   builder: VisualBuilderDefinition | null;
   asset: AbstractParticleBustVisualAsset | null;
-  isDirty: boolean;
+  draftDirty: boolean;
+  preview: AbstractBustPreviewSummary;
   t: Translator;
 }) {
   return (
-    <footer className="visual-builder-status-bar">
+    <footer
+      className="visual-builder-status-bar"
+      data-preview-contexts={preview.diagnostics.activeContexts}
+      data-preview-generations={preview.diagnostics.generationCount}
+    >
       <span>
         {t("visualBuilder.status.validation", "Validation")}:{" "}
-        <strong>
-          {asset
-            ? t("visualBuilder.status.valid", "Valid")
-            : t("visualBuilder.status.waiting", "Waiting for asset")}
+        <strong className={preview.error ? "is-dirty" : ""}>
+          {preview.error
+            ? t("visualBuilder.status.error", "Error")
+            : asset
+              ? t("visualBuilder.status.valid", "Valid")
+              : t("visualBuilder.status.waiting", "Waiting for asset")}
         </strong>
+      </span>
+      <span>
+        {t("visualBuilder.status.particles", "Particles")}:{" "}
+        <strong>{preview.particleCount || "—"}</strong>
+      </span>
+      <span>
+        {t("visualBuilder.status.digest", "Digest")}:{" "}
+        <strong>{preview.digest ?? "—"}</strong>
+      </span>
+      <span>
+        {t("visualBuilder.status.performance", "Update")}:{" "}
+        <strong>{preview.diagnostics.lastUpdateMs.toFixed(1)} ms</strong>
+      </span>
+      <span>
+        {t("visualBuilder.status.contexts", "Contexts")}:{" "}
+        <strong>{preview.diagnostics.activeContexts}</strong>
       </span>
       <span>
         {t("visualBuilder.status.upstreamProtocol", "Upstream protocol")}:{" "}
@@ -243,8 +208,8 @@ function VisualBuilderStatusBar({
       </span>
       <span>
         {t("visualBuilder.status.changes", "Changes")}:{" "}
-        <strong className={isDirty ? "is-dirty" : "is-saved"}>
-          {isDirty ? t("save.dirty", "Unsaved") : t("save.saved", "Saved")}
+        <strong className={draftDirty ? "is-dirty" : "is-saved"}>
+          {draftDirty ? t("save.dirty", "Unsaved") : t("save.saved", "Saved")}
         </strong>
       </span>
     </footer>
@@ -260,69 +225,125 @@ export function VisualBuilderWorkspace() {
   const activeBuilderId = useVisualBuilderStore(
     (state) => state.activeBuilderId
   );
-  const isDirty = useVisualBuilderStore((state) => state.isDirty);
+  const persistenceDirty = useVisualBuilderStore((state) => state.isDirty);
   const isHydrated = useVisualBuilderStore((state) => state.isHydrated);
   const createAsset = useVisualBuilderStore((state) => state.createVisualAsset);
   const selectAsset = useVisualBuilderStore((state) => state.selectVisualAsset);
   const renameAsset = useVisualBuilderStore((state) => state.renameVisualAsset);
+  const saveBlueprint = useVisualBuilderStore(
+    (state) => state.updateVisualAssetBlueprint
+  );
   const hydrate = useVisualBuilderStore(
     (state) => state.hydrateVisualBuilderState
   );
   const persist = useVisualBuilderStore(
     (state) => state.persistVisualBuilderState
   );
+  const [persistenceFailed, setPersistenceFailed] = useState(false);
+  const [preview, setPreview] = useState(EMPTY_PREVIEW_SUMMARY);
   const t: Translator = (key, fallback) => translate(language, key, fallback);
   const builder = getVisualBuilderDefinition(activeBuilderId);
   const selectedAsset =
     visualAssets.find((asset) => asset.asset_id === selectedVisualAssetId) ??
     null;
+  const draftController = useAbstractBustDraft(selectedAsset);
 
   useEffect(() => {
     hydrate();
   }, [hydrate]);
 
   useEffect(() => {
-    if (!isHydrated || !isDirty) {
-      return;
-    }
-    const timer = window.setTimeout(() => persist(), 250);
+    if (!isHydrated || !persistenceDirty) return;
+    const timer = window.setTimeout(() => {
+      setPersistenceFailed(!persist());
+    }, 250);
     return () => window.clearTimeout(timer);
-  }, [isDirty, isHydrated, persist, selectedVisualAssetId, visualAssets]);
+  }, [
+    isHydrated,
+    persistenceDirty,
+    persist,
+    selectedVisualAssetId,
+    visualAssets,
+  ]);
+
+  const confirmDiscard = () =>
+    !draftController.isDirty ||
+    window.confirm(
+      t(
+        "visualBuilder.confirm.discardDraft",
+        "Discard unsaved Blueprint changes?"
+      )
+    );
 
   const handleCreate = () => {
+    if (!confirmDiscard()) return;
     createAsset(t("visualBuilder.asset.defaultName", "Untitled Visual Asset"));
   };
+
+  const handleSelect = (assetId: string) => {
+    if (assetId === selectedVisualAssetId || !confirmDiscard()) return;
+    selectAsset(assetId);
+  };
+
+  const saveStatus: SaveStatus = draftController.isDirty
+    ? "draft"
+    : persistenceFailed
+      ? "failed"
+      : persistenceDirty
+        ? "saving"
+        : "saved";
 
   return (
     <div className="visual-builder-workspace">
       <VisualBuilderHeader
         builder={builder}
         asset={selectedAsset}
-        isDirty={isDirty}
+        saveStatus={saveStatus}
         t={t}
       />
       <VisualAssetSidebar
         assets={visualAssets}
-        selectedAssetId={selectedVisualAssetId}
+        selectedAsset={selectedAsset}
         onCreate={handleCreate}
-        onSelect={selectAsset}
-        t={t}
-      />
-      <VisualBuilderViewport asset={selectedAsset} t={t} />
-      <VisualBuilderInspector
-        builder={builder}
-        asset={selectedAsset}
+        onSelect={handleSelect}
         onRename={(name) => {
-          if (selectedAsset) {
+          if (selectedAsset && name.trim()) {
             renameAsset(selectedAsset.asset_id, name);
           }
         }}
         t={t}
       />
+      {selectedAsset && builder ? (
+        <AbstractBustEditor
+          controller={draftController}
+          onSave={(blueprint) => {
+            if (saveBlueprint(selectedAsset.asset_id, blueprint)) {
+              setPersistenceFailed(false);
+            }
+          }}
+          onPreviewSummary={setPreview}
+          t={t}
+        />
+      ) : (
+        <VisualBuilderEmptyState
+          message={
+            builder
+              ? t(
+                  "visualBuilder.viewport.selectAsset",
+                  "Select or create a Visual Asset"
+                )
+              : t(
+                  "visualBuilder.error.unknownBuilder",
+                  "The selected visual builder is unavailable"
+                )
+          }
+        />
+      )}
       <VisualBuilderStatusBar
         builder={builder}
         asset={selectedAsset}
-        isDirty={isDirty}
+        draftDirty={draftController.isDirty}
+        preview={preview}
         t={t}
       />
     </div>

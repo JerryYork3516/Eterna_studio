@@ -5,9 +5,11 @@ import {
 } from "@/features/visual-builder/builder-registry";
 import {
   createVisualAsset,
+  updateVisualAssetBlueprint as updateAssetBlueprint,
   updateVisualAssetMetadata as updateAssetMetadata,
   type AbstractParticleBustVisualAsset,
 } from "@/features/visual-builder/visual-asset";
+import type { AbstractBustBlueprint } from "@eterna/shared-schema/abstract-bust-blueprint";
 import {
   createEmptyVisualBuilderSnapshot,
   loadVisualBuilderSnapshot,
@@ -31,6 +33,10 @@ type VisualBuilderState = {
     assetId: string,
     patch: VisualAssetMetadataPatch
   ) => void;
+  updateVisualAssetBlueprint: (
+    assetId: string,
+    blueprint: AbstractBustBlueprint
+  ) => boolean;
   hydrateVisualBuilderState: () => void;
   persistVisualBuilderState: () => boolean;
   resetVisualBuilderState: () => void;
@@ -95,6 +101,27 @@ export const useVisualBuilderStore = create<VisualBuilderState>((set, get) => ({
     if (changed) {
       set({ visualAssets, isDirty: true });
     }
+  },
+
+  updateVisualAssetBlueprint: (assetId, blueprint) => {
+    const current = get().visualAssets;
+    let changed = false;
+    const visualAssets = current.map((asset) => {
+      if (asset.asset_id !== assetId) {
+        return asset;
+      }
+      try {
+        const next = updateAssetBlueprint(asset, blueprint);
+        changed = true;
+        return next;
+      } catch {
+        return asset;
+      }
+    });
+    if (changed) {
+      set({ visualAssets, isDirty: true });
+    }
+    return changed;
   },
 
   hydrateVisualBuilderState: () => {

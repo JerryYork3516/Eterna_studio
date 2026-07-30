@@ -178,3 +178,17 @@ export function updateVisualAssetMetadata(
     revision: asset.revision + 1,
   });
 }
+
+export function updateVisualAssetBlueprint(
+  asset: AbstractParticleBustVisualAsset,
+  blueprint: unknown,
+  now = new Date().toISOString()
+): AbstractParticleBustVisualAsset {
+  const normalizedBlueprint = normalizeAbstractBustBlueprint(blueprint);
+  return normalizeVisualAsset({
+    ...asset,
+    blueprint: normalizedBlueprint,
+    updated_at: now,
+    revision: asset.revision + 1,
+  });
+}

@@ -240,7 +240,7 @@ test("top-level workspace switch keeps both builders mounted and stores isolated
   assert.doesNotMatch(canvasStore, /VisualAsset|selectedVisualAssetId|activeBuilderId/);
 });
 
-test("B2 UI stays outside React Flow, Layer 10, DR projection, and preview generation", () => {
+test("Visual Builder preview stays outside React Flow, R3F, Layer 10, and DR projection", () => {
   const visualWorkspace = readFileSync(
     new URL(
       "src/components/visual-builder/VisualBuilderWorkspace.tsx",
@@ -259,10 +259,9 @@ test("B2 UI stays outside React Flow, Layer 10, DR projection, and preview gener
 
   assert.match(visualWorkspace, /function VisualBuilderHeader/);
   assert.match(visualWorkspace, /function VisualAssetSidebar/);
-  assert.match(visualWorkspace, /function VisualBuilderViewport/);
-  assert.match(visualWorkspace, /function VisualBuilderInspector/);
+  assert.match(visualWorkspace, /<AbstractBustEditor/);
   assert.match(visualWorkspace, /function VisualBuilderStatusBar/);
-  assert.doesNotMatch(visualWorkspace, /@xyflow\/react|@react-three|WebGLRenderer/);
+  assert.doesNotMatch(visualWorkspace, /@xyflow\/react|@react-three/);
   assert.doesNotMatch(
     `${visualWorkspace}\n${visualFeatureSources}`,
     /particle_avatar|payload\.abstract_bust_blueprint|moduleGraphs|DRCompiler/

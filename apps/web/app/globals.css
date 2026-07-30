@@ -6346,3 +6346,222 @@ body[data-studio-workspace="visual_builder"] > .floating-workspace {
   padding: 0 16px;
   font-size: 10px;
 }
+
+/* Stage 7.4.15-B4: schema-driven Abstract Bust editor and Three.js preview. */
+.abstract-bust-editor {
+  display: grid;
+  grid-column: 2 / -1;
+  grid-row: 2;
+  grid-template-columns: minmax(420px, 1fr) 360px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.abstract-bust-editor__viewport-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.abstract-bust-preset-bar {
+  display: flex;
+  z-index: 2;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(32, 33, 35, 0.88);
+  padding: 8px 12px;
+}
+
+.abstract-bust-preset-bar__presets,
+.abstract-bust-preset-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.abstract-bust-preset-bar__presets > span {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.abstract-bust-preset-bar button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+.abstract-bust-preset-bar button.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #111827;
+}
+
+.abstract-bust-preset-bar button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.abstract-bust-preview {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(122, 162, 247, 0.13), transparent 40%),
+    linear-gradient(180deg, rgba(14, 18, 27, 0.72), rgba(9, 12, 18, 0.96));
+}
+
+.abstract-bust-preview__mount,
+.abstract-bust-preview__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.abstract-bust-preview__toolbar {
+  display: flex;
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 50%;
+  gap: 5px;
+  border: 1px solid rgba(122, 162, 247, 0.26);
+  border-radius: 8px;
+  background: rgba(23, 23, 23, 0.86);
+  padding: 5px;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.abstract-bust-preview__toolbar button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+.abstract-bust-preview__toolbar button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.abstract-bust-preview__error {
+  display: grid;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  place-content: center;
+  gap: 8px;
+  background: rgba(14, 16, 22, 0.9);
+  color: var(--muted);
+  text-align: center;
+}
+
+.abstract-bust-preview__error strong {
+  color: var(--danger);
+}
+
+.abstract-bust-inspector {
+  min-width: 0;
+}
+
+.abstract-bust-inspector__section {
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.abstract-bust-inspector__section h2,
+.abstract-bust-inspector__section h3 {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+
+.abstract-bust-inspector__section h2 {
+  position: sticky;
+  z-index: 1;
+  top: -14px;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.38);
+  background: rgba(32, 33, 35, 0.98);
+  padding: 9px 0 7px;
+  text-transform: uppercase;
+}
+
+.abstract-bust-inspector__section h3 {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.abstract-bust-control-group {
+  display: grid;
+}
+
+.abstract-bust-control {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.28);
+  padding: 9px 0;
+}
+
+.abstract-bust-control__label {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.abstract-bust-control select,
+.abstract-bust-control input[type="text"],
+.visual-asset-sidebar__rename input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  color: var(--text);
+  padding: 6px 7px;
+  font-size: 11px;
+}
+
+.abstract-bust-control__numeric {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) 78px;
+  align-items: center;
+  gap: 8px;
+}
+
+.abstract-bust-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.abstract-bust-control__range {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.abstract-bust-control__error {
+  color: var(--danger);
+  font-size: 9px;
+}
+
+.visual-asset-sidebar__rename {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  padding-top: 14px;
+  font-size: 10px;
+}
+
+.visual-builder-status-bar {
+  gap: 18px;
+  overflow-x: auto;
+  white-space: nowrap;
+}

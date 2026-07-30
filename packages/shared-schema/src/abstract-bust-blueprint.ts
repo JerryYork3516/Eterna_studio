@@ -1,11 +1,23 @@
 import schemaDocument from "../contracts/abstract_bust_v0_1/abstract_bust_blueprint_v0_1.schema.json" with { type: "json" };
 import defaultDocument from "../contracts/abstract_bust_v0_1/fixtures/default.json" with { type: "json" };
+import feminineDocument from "../contracts/abstract_bust_v0_1/fixtures/feminine.json" with { type: "json" };
+import masculineDocument from "../contracts/abstract_bust_v0_1/fixtures/masculine.json" with { type: "json" };
+import neutralDocument from "../contracts/abstract_bust_v0_1/fixtures/neutral.json" with { type: "json" };
 
 export const ABSTRACT_BUST_GENERATOR_VERSION = "abstract_bust_v0_1" as const;
 
 export type AbstractBustPresentation = "neutral" | "feminine" | "masculine";
 export type AbstractBustAgeTendency = "youthful" | "balanced" | "mature";
 export type AbstractBustHairStyle = "none" | "short" | "medium" | "long" | "tied";
+
+export type AbstractBustEditorFieldDescriptor = Readonly<{
+  path: string;
+  valueType: "number" | "integer" | "enum";
+  defaultValue: number | string;
+  minimum?: number;
+  maximum?: number;
+  enumValues?: readonly string[];
+}>;
 
 export type AbstractBustBlueprint = {
   generator_version: typeof ABSTRACT_BUST_GENERATOR_VERSION;
@@ -91,6 +103,11 @@ const schema = schemaDocument as unknown as SchemaNode & {
   $defs: Record<string, SchemaNode>;
 };
 const defaultBlueprint = defaultDocument as unknown as AbstractBustBlueprint;
+const presetBlueprints = {
+  neutral: neutralDocument,
+  feminine: feminineDocument,
+  masculine: masculineDocument,
+} as const;
 
 export const ABSTRACT_BUST_PRESENTATIONS = Object.freeze(
   [...((schema.properties?.presentation?.enum ?? []) as AbstractBustPresentation[])]
@@ -136,6 +153,57 @@ function resolveSchema(value: SchemaNode): SchemaNode {
   }
   return resolved;
 }
+
+function collectEditorFields(
+  schemaValue: SchemaNode,
+  path: readonly string[] = []
+): AbstractBustEditorFieldDescriptor[] {
+  const currentSchema = resolveSchema(schemaValue);
+  if (currentSchema.type === "object") {
+    return Object.entries(currentSchema.properties ?? {}).flatMap(
+      ([fieldName, fieldSchema]) => {
+        if (path.length === 0 && fieldName === "generator_version") return [];
+        return collectEditorFields(fieldSchema, [...path, fieldName]);
+      }
+    );
+  }
+
+  const defaultValue = currentSchema.default;
+  const fieldPath = path.join(".");
+  if (currentSchema.enum) {
+    if (typeof defaultValue !== "string") {
+      throw new Error(`Missing enum editor default at ${fieldPath}`);
+    }
+    return [{
+      path: fieldPath,
+      valueType: "enum",
+      defaultValue,
+      enumValues: Object.freeze(currentSchema.enum.map(String)),
+    }];
+  }
+  if (currentSchema.type === "number" || currentSchema.type === "integer") {
+    if (
+      typeof defaultValue !== "number" ||
+      typeof currentSchema.minimum !== "number" ||
+      typeof currentSchema.maximum !== "number"
+    ) {
+      throw new Error(`Incomplete numeric editor schema at ${fieldPath}`);
+    }
+    return [{
+      path: fieldPath,
+      valueType: currentSchema.type,
+      defaultValue,
+      minimum: currentSchema.minimum,
+      maximum: currentSchema.maximum,
+    }];
+  }
+  return [];
+}
+
+export const ABSTRACT_BUST_EDITOR_FIELDS: readonly AbstractBustEditorFieldDescriptor[] =
+  Object.freeze(
+    collectEditorFields(schema).map((field) => Object.freeze(field))
+  );
 
 function fail(code: string, path: string, message: string): never {
   throw new AbstractBustBlueprintValidationError(code, path, message);
@@ -266,4 +334,18 @@ export const parseAbstractBustBlueprint = normalizeAbstractBustBlueprint;
 
 export function getDefaultAbstractBustBlueprint(): AbstractBustBlueprint {
   return normalizeAbstractBustBlueprint(cloneJson(defaultBlueprint));
+}
+
+export function getAbstractBustPresetBlueprint(
+  presentation: AbstractBustPresentation
+): AbstractBustBlueprint {
+  const preset = presetBlueprints[presentation];
+  if (!preset) {
+    fail(
+      "unknown_enum",
+      "$.presentation",
+      `unsupported value ${JSON.stringify(presentation)}`
+    );
+  }
+  return normalizeAbstractBustBlueprint(cloneJson(preset));
 }
