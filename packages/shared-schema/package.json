@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./openapi": "./src/openapi.ts",
-    "./abstract-bust-blueprint": "./src/abstract-bust-blueprint.ts"
+    "./abstract-bust-blueprint": "./src/abstract-bust-blueprint.ts",
+    "./abstract-bust-blueprint-v2": "./src/abstract-bust-blueprint-v2.ts"
   },
   "scripts": {
     "generate": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/openapi.ts",
