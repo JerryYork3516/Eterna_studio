@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eterna.local/schemas/abstract_bust_blueprint_v0_2.schema.json",
+  "title": "AbstractBustBlueprint v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generator_version",
+    "presentation",
+    "seed",
+    "head",
+    "neck",
+    "shoulders",
+    "torso",
+    "hair"
+  ],
+  "properties": {
+    "generator_version": {
+      "const": "abstract_bust_v0_2",
+      "default": "abstract_bust_v0_2"
+    },
+    "particle_count": {
+      "type": "integer",
+      "minimum": 6000,
+      "maximum": 24000,
+      "default": 12000
+    },
+    "presentation": {
+      "enum": ["neutral", "feminine", "masculine"],
+      "default": "neutral"
+    },
+    "age_tendency": {
+      "enum": ["youthful", "balanced", "mature"],
+      "default": "balanced"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "default": 2818040094
+    },
+    "head": {"$ref": "#/$defs/head"},
+    "face": {"$ref": "#/$defs/face"},
+    "neck": {"$ref": "#/$defs/neck"},
+    "shoulders": {"$ref": "#/$defs/shoulders"},
+    "torso": {"$ref": "#/$defs/torso"},
+    "hair": {"$ref": "#/$defs/hair"},
+    "contour": {"$ref": "#/$defs/contour"}
+  },
+  "$defs": {
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "depth", "roundness"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.22, "maximum": 0.32, "default": 0.265},
+        "height": {"type": "number", "minimum": 0.29, "maximum": 0.40, "default": 0.35},
+        "depth": {"type": "number", "minimum": 0.18, "maximum": 0.28, "default": 0.23},
+        "roundness": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.44}
+      }
+    },
+    "face": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eyes", "nose", "mouth", "cheeks", "jaw"],
+      "properties": {
+        "eyes": {"$ref": "#/$defs/eyes"},
+        "nose": {"$ref": "#/$defs/nose"},
+        "mouth": {"$ref": "#/$defs/mouth"},
+        "cheeks": {"$ref": "#/$defs/cheeks"},
+        "jaw": {"$ref": "#/$defs/jaw"}
+      }
+    },
+    "eyes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vertical_position", "spacing", "size", "tilt", "contour_strength"],
+      "properties": {
+        "vertical_position": {"type": "number", "minimum": 0.08, "maximum": 0.26, "default": 0.17},
+        "spacing": {"type": "number", "minimum": 0.14, "maximum": 0.24, "default": 0.19},
+        "size": {"type": "number", "minimum": 0.025, "maximum": 0.065, "default": 0.047},
+        "tilt": {"type": "number", "minimum": -0.35, "maximum": 0.35, "default": 0},
+        "contour_strength": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.56}
+      }
+    },
+    "nose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vertical_position", "width", "length", "prominence"],
+      "properties": {
+        "vertical_position": {"type": "number", "minimum": -0.12, "maximum": 0.08, "default": -0.02},
+        "width": {"type": "number", "minimum": 0.035, "maximum": 0.075, "default": 0.052},
+        "length": {"type": "number", "minimum": 0.075, "maximum": 0.14, "default": 0.108},
+        "prominence": {"type": "number", "minimum": 0, "maximum": 0.06, "default": 0.04}
+      }
+    },
+    "mouth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vertical_position", "width", "curvature", "contour_strength"],
+      "properties": {
+        "vertical_position": {"type": "number", "minimum": -0.42, "maximum": -0.22, "default": -0.32},
+        "width": {"type": "number", "minimum": 0.09, "maximum": 0.17, "default": 0.135},
+        "curvature": {"type": "number", "minimum": -0.30, "maximum": 0.30, "default": 0.035},
+        "contour_strength": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}
+      }
+    },
+    "cheeks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "vertical_position", "prominence"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.24, "maximum": 0.36, "default": 0.3},
+        "vertical_position": {"type": "number", "minimum": -0.16, "maximum": 0.04, "default": -0.08},
+        "prominence": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0.026}
+      }
+    },
+    "jaw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "taper", "length", "roundness"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.17, "maximum": 0.25, "default": 0.205},
+        "taper": {"type": "number", "minimum": 0, "maximum": 0.30, "default": 0.08},
+        "length": {"type": "number", "minimum": 0, "maximum": 0.06, "default": 0.035},
+        "roundness": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.55}
+      }
+    },
+    "neck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "length"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.13, "maximum": 0.20, "default": 0.17},
+        "length": {"type": "number", "minimum": 0.15, "maximum": 0.24, "default": 0.16}
+      }
+    },
+    "shoulders": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "slope"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.52, "maximum": 0.68, "default": 0.58},
+        "slope": {"type": "number", "minimum": 0.04, "maximum": 0.14, "default": 0.105}
+      }
+    },
+    "torso": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "thickness", "length", "taper"],
+      "properties": {
+        "width": {"type": "number", "minimum": 0.45, "maximum": 0.62, "default": 0.52},
+        "thickness": {"type": "number", "minimum": 0.22, "maximum": 0.34, "default": 0.28},
+        "length": {"type": "number", "minimum": 0.64, "maximum": 0.88, "default": 0.68},
+        "taper": {"type": "number", "minimum": 0.18, "maximum": 0.40, "default": 0.32}
+      }
+    },
+    "hair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["style", "volume", "length"],
+      "properties": {
+        "style": {"enum": ["none", "short", "medium", "long", "tied"], "default": "none"},
+        "volume": {"type": "number", "minimum": 0.20, "maximum": 1, "default": 0.55},
+        "length": {"type": "number", "minimum": 0.15, "maximum": 1, "default": 0.5}
+      }
+    },
+    "contour": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["softening", "asymmetry"],
+      "properties": {
+        "softening": {"type": "number", "minimum": 0.75, "maximum": 1, "default": 0.86},
+        "asymmetry": {"type": "number", "minimum": 0, "maximum": 0.018, "default": 0.009}
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "generator_version": "abstract_bust_v0_2",
+  "particle_count": 12000,
+  "presentation": "neutral",
+  "age_tendency": "youthful",
+  "seed": 2818040094,
+  "head": {"width": 0.26, "height": 0.35, "depth": 0.225, "roundness": 0.54},
+  "face": {
+    "eyes": {"vertical_position": 0.18, "spacing": 0.19, "size": 0.049, "tilt": 0, "contour_strength": 0.54},
+    "nose": {"vertical_position": -0.02, "width": 0.05, "length": 0.1, "prominence": 0.035},
+    "mouth": {"vertical_position": -0.315, "width": 0.137, "curvature": 0.045, "contour_strength": 0.48},
+    "cheeks": {"width": 0.29, "vertical_position": -0.07, "prominence": 0.02},
+    "jaw": {"width": 0.195, "taper": 0.1, "length": 0.028, "roundness": 0.68}
+  },
+  "neck": {"width": 0.165, "length": 0.155},
+  "shoulders": {"width": 0.57, "slope": 0.11},
+  "torso": {"width": 0.51, "thickness": 0.275, "length": 0.67, "taper": 0.33},
+  "hair": {"style": "none", "volume": 0.55, "length": 0.5},
+  "contour": {"softening": 0.89, "asymmetry": 0.008}
+}
